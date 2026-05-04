@@ -2,6 +2,7 @@
 
 # ruff: noqa: F821 - `c` is a magic global provided by JupyterHub
 import os
+from urllib.parse import urlparse
 
 from kubespawner import KubeSpawner
 from jhub_apps import theme_template_paths, themes
@@ -12,9 +13,19 @@ from z2jh import get_config
 # bind_url must include the real external hostname so JupyterHub constructs
 # correct OAuth redirect URLs for internal services like jhub-apps.
 # See: nebari's 02-spawner.py for the same pattern.
-domain = get_chart_config("external-url")
-if domain:
-    c.JupyterHub.bind_url = f"https://{domain}"
+external_url = (get_chart_config("external-url") or "").strip()
+if external_url:
+    # Accept either bare hostnames (jupyter.example.com), proper URLs
+    # (https://jupyter.example.com), or common typo form (https//host).
+    if external_url.startswith("https//"):
+        external_url = external_url.replace("https//", "https://", 1)
+    elif external_url.startswith("http//"):
+        external_url = external_url.replace("http//", "http://", 1)
+
+    parsed = urlparse(external_url if "://" in external_url else f"https://{external_url}")
+    host = parsed.netloc or parsed.path
+    scheme = parsed.scheme or "https"
+    c.JupyterHub.bind_url = f"{scheme}://{host}"
 else:
     c.JupyterHub.bind_url = "http://0.0.0.0:8000"
 c.JupyterHub.default_url = "/hub/home"
