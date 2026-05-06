@@ -27,6 +27,16 @@ nebariapp:
       - profile
       - email
       - groups
+    # enforceAtGateway runs the OIDC filter at Envoy Gateway, required by
+    # forwardAccessToken below. forwardAccessToken makes Envoy inject the
+    # user's freshly-refreshed access_token as `Authorization: Bearer` on
+    # every upstream request. Without it, the hub only sees the access_token
+    # captured at OAuth login — Envoy v1.6 doesn't rotate the AccessToken
+    # cookie on background refresh — and downstream calls (e.g. Keycloak
+    # token-exchange for the jhub-apps env selector) fail once it expires
+    # (~5 min after login).
+    enforceAtGateway: true
+    forwardAccessToken: true
   # landingPage controls whether and how this service appears on the Nebari
   # landing page (requires nebari-operator with LandingPageConfig support).
   landingPage:

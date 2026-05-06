@@ -44,17 +44,31 @@ class EnvoyOIDCAuthenticator(Authenticator):
 
     @staticmethod
     def _extract_envoy_cookies(handler):
-        """Extract Envoy Gateway OIDC cookies from the request.
+        """Extract Envoy Gateway OIDC tokens from the request.
 
         Returns (id_token, access_token, refresh_token) — any may be None.
+
+        access_token is preferred from the `Authorization: Bearer` header
+        because Envoy injects a freshly-refreshed token there per request when
+        SecurityPolicy.oidc.forwardAccessToken=true. The `AccessToken-*` cookie
+        content is only updated at OAuth login (Envoy v1.6 doesn't rotate it
+        on background refresh), so the header is the only always-current
+        source. Fall back to the cookie when the header is absent (legacy
+        deployments where forwardAccessToken is off).
         """
         id_token = None
         access_token = None
         refresh_token = None
+
+        # Prefer Authorization: Bearer <fresh access_token> from Envoy.
+        auth_hdr = handler.request.headers.get("Authorization", "")
+        if auth_hdr.lower().startswith("bearer "):
+            access_token = auth_hdr.split(None, 1)[1].strip() or None
+
         for name, value in handler.request.cookies.items():
             if name.startswith("IdToken"):
                 id_token = value.value
-            elif name.startswith("AccessToken"):
+            elif name.startswith("AccessToken") and access_token is None:
                 access_token = value.value
             elif name.startswith("RefreshToken"):
                 refresh_token = value.value
