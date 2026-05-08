@@ -207,10 +207,13 @@ jupyterhub:
       # additional_services: []
       # startup_apps: []
   hub:
-    # Custom Nebari hub image with jhub-apps pre-installed
+    # Custom Nebari hub image with jhub-apps pre-installed.
+    # Tag below is the PR-53 merge-commit SHA at the moment of pinning; the
+    # corresponding immutable digest is sha256:9e45ad6d85414f316c9028d5dc0d5b28dcc296328df7f4f6a9b602314a1f5bad
+    # (carries jhub-apps#676 fall-through patch + forwardAccessToken=true).
     image:
       name: quay.io/nebari/nebari-data-science-pack-jupyterhub
-      tag: "sha-e906f78"
+      tag: "sha-9381aab"
 
     config:
       JupyterHub:
