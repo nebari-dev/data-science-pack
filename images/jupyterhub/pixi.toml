@@ -29,4 +29,4 @@ python-keycloak = "==0.26.1"
 # Pinned to nebari-dev/jhub-apps#676 (fall-through-on-non-HS256-Bearer)
 # until the fix lands in a tagged release. Required for forwardAccessToken: true
 # behind Envoy Gateway.
-jhub-apps = { git = "https://github.com/nebari-dev/jhub-apps.git", rev = "a94b049a9bcc72e2844d5cf0cc2978d4badd2cd5" }
+jhub-apps = { git = "https://github.com/nebari-dev/jhub-apps.git", rev = "5d86277f926136e0ecf253d36b261dd456727855" }

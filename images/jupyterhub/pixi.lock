@@ -202,7 +202,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/fd/c4/813bb09f0985cb21e959f21f2464169eca882656849adf727ac7bb7e1767/jaraco_functools-4.4.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/9a/93/242e2eab5fe682ffcb8b0084bde703a41d51e17ee0f3a31ff0d9d813620a/jedi-0.20.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b2/a3/e137168c9c44d18eff0376253da9f1e9234d0239e0ee230d2fee6cea8e55/jeepney-0.9.0-py3-none-any.whl
-      - pypi: git+https://github.com/nebari-dev/jhub-apps.git?rev=a94b049a9bcc72e2844d5cf0cc2978d4badd2cd5#a94b049a9bcc72e2844d5cf0cc2978d4badd2cd5
+      - pypi: git+https://github.com/nebari-dev/jhub-apps.git?rev=5d86277f926136e0ecf253d36b261dd456727855#5d86277f926136e0ecf253d36b261dd456727855
       - pypi: https://files.pythonhosted.org/packages/b8/42/cf027b4ac873b076189d935b135397675dac80cb29acb13e1ab86ad6c631/json5-0.14.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/38/64/285f20a31679bf547b75602702f7800e74dbabae36ef324f716c02804753/jupyter-1.1.1-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/2d/0b/ceb7694d864abc0a047649aec263878acb9f792e1fec3e676f22dc9015e3/jupyter_client-8.8.0-py3-none-any.whl
@@ -484,7 +484,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/fd/c4/813bb09f0985cb21e959f21f2464169eca882656849adf727ac7bb7e1767/jaraco_functools-4.4.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/9a/93/242e2eab5fe682ffcb8b0084bde703a41d51e17ee0f3a31ff0d9d813620a/jedi-0.20.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b2/a3/e137168c9c44d18eff0376253da9f1e9234d0239e0ee230d2fee6cea8e55/jeepney-0.9.0-py3-none-any.whl
-      - pypi: git+https://github.com/nebari-dev/jhub-apps.git?rev=a94b049a9bcc72e2844d5cf0cc2978d4badd2cd5#a94b049a9bcc72e2844d5cf0cc2978d4badd2cd5
+      - pypi: git+https://github.com/nebari-dev/jhub-apps.git?rev=5d86277f926136e0ecf253d36b261dd456727855#5d86277f926136e0ecf253d36b261dd456727855
       - pypi: https://files.pythonhosted.org/packages/b8/42/cf027b4ac873b076189d935b135397675dac80cb29acb13e1ab86ad6c631/json5-0.14.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/38/64/285f20a31679bf547b75602702f7800e74dbabae36ef324f716c02804753/jupyter-1.1.1-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/2d/0b/ceb7694d864abc0a047649aec263878acb9f792e1fec3e676f22dc9015e3/jupyter_client-8.8.0-py3-none-any.whl
@@ -2210,7 +2210,7 @@ packages:
   - async-timeout ; python_full_version < '3.11' and extra == 'test'
   - trio ; extra == 'trio'
   requires_python: '>=3.7'
-- pypi: git+https://github.com/nebari-dev/jhub-apps.git?rev=a94b049a9bcc72e2844d5cf0cc2978d4badd2cd5#a94b049a9bcc72e2844d5cf0cc2978d4badd2cd5
+- pypi: git+https://github.com/nebari-dev/jhub-apps.git?rev=5d86277f926136e0ecf253d36b261dd456727855#5d86277f926136e0ecf253d36b261dd456727855
   name: jhub-apps
   version: 2025.11.1
   requires_dist:
