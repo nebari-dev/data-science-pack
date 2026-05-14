@@ -114,6 +114,21 @@ def test_logout_url_url_encodes_external_url_safely():
 # Cycle 4 — authorization policy (any KC-authenticated user is allowed)
 # ---------------------------------------------------------------------------
 
+def test_configure_requests_openid_scope_so_userinfo_endpoint_works():
+    """Without the openid scope, KC returns 403 at /userinfo.
+
+    GenericOAuthenticator defaults to an empty scope list, which makes
+    KC omit the openid scope from the issued token; that token can't
+    call /userinfo, so token_to_user blows up with HTTP 403.
+    """
+    c, _ = _configure_with_defaults()
+    scopes = c.KeyCloakOAuthenticator.scope
+    assert "openid" in scopes
+    # Groups + email round out the claims the spawner / env-list rely on.
+    assert "groups" in scopes
+    assert "email" in scopes
+
+
 def test_any_keycloak_authenticated_user_is_allowed_by_default():
     """The gateway path admitted any KC user; this path must match.
 

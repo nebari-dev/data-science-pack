@@ -58,6 +58,10 @@ def configure(
     c.KeyCloakOAuthenticator.token_url = urls["token_url"]
     c.KeyCloakOAuthenticator.userdata_url = urls["userdata_url"]
     c.KeyCloakOAuthenticator.username_claim = "preferred_username"
+    # Explicit scopes — GenericOAuthenticator defaults to [] which omits the
+    # scope param entirely; KC then issues a token without `openid` and
+    # /userinfo returns 403 at token_to_user.
+    c.KeyCloakOAuthenticator.scope = ["openid", "profile", "email", "groups"]
     c.KeyCloakOAuthenticator.claim_groups_key = "groups"
     c.KeyCloakOAuthenticator.admin_groups = set(admin_groups or ["admin"])
     # Persist tokens so refresh_user can use the stored refresh_token.
