@@ -1,222 +1,107 @@
-"""Authenticator for Envoy Gateway OIDC.
+"""JupyterHub authenticator that does its own OAuth flow with Keycloak.
 
-When Envoy Gateway handles OIDC authentication, it stores the ID token
-in a cookie (IdToken-<suffix>). This authenticator reads that cookie,
-decodes the JWT, and extracts the username — so users are automatically
-logged into JupyterHub after authenticating with Keycloak at the gateway.
+This module replaces the earlier EnvoyOIDCAuthenticator path where Envoy
+Gateway acted as the OAuth client. Envoy v1.6 does not rotate cookie
+contents on every request, so `auth_state` went stale for paths that
+bypassed hub (e.g. `/services/japps/*`).
+
+With this module, hub is the OAuth client. JupyterHub's built-in
+refresh_user uses the stored refresh_token to keep auth_state fresh
+without depending on browser cookies or gateway-injected headers.
+
+The chart mounts the operator-created KC client Secret at
+``/etc/oauth/`` (overridable via ``OAUTH_SECRET_DIR``); ``OAUTH_CALLBACK_URL``
+and ``OAUTH_EXTERNAL_URL`` come from chart-rendered envs.
 """
 
 # ruff: noqa: F821 - `c` is a magic global provided by JupyterHub
 
-import base64
-import json
+import os
+from pathlib import Path
+from urllib.parse import quote
 
-from jupyterhub.auth import Authenticator
-from jupyterhub.handlers.login import LogoutHandler
-from z2jh import get_config
-
-
-class EnvoyOIDCLogoutHandler(LogoutHandler):
-    """Redirect to Envoy Gateway's OIDC logout endpoint after JupyterHub logout.
-
-    The base LogoutHandler renders a static "Successfully logged out" page when
-    auto_login is True (to avoid redirect-loop back to auto-login). We override
-    render_logout_page to redirect to Envoy's /logout path instead, which clears
-    the OIDC cookies and terminates the Keycloak session.
-    """
-
-    async def render_logout_page(self):
-        self.redirect("/logout")
+from oauthenticator.generic import GenericOAuthenticator
 
 
-class EnvoyOIDCAuthenticator(Authenticator):
-    """Authenticate users from Envoy Gateway's OIDC IdToken cookie."""
-
-    auto_login = True
-
-    # Re-read cookies every 60s so auth_state stays fresh.
-    # Envoy Gateway refreshes the AccessToken cookie automatically;
-    # this ensures JupyterHub's stored auth_state keeps up.
-    auth_refresh_age = 60
-
-    def get_handlers(self, app):
-        return [("/logout", EnvoyOIDCLogoutHandler)]
-
-    @staticmethod
-    def _extract_envoy_cookies(handler):
-        """Extract Envoy Gateway OIDC tokens from the request.
-
-        Returns (id_token, access_token, refresh_token) — any may be None.
-
-        access_token is preferred from the `Authorization: Bearer` header
-        because Envoy injects a freshly-refreshed token there per request when
-        SecurityPolicy.oidc.forwardAccessToken=true. The `AccessToken-*` cookie
-        content is only updated at OAuth login (Envoy v1.6 doesn't rotate it
-        on background refresh), so the header is the only always-current
-        source. Fall back to the cookie when the header is absent (legacy
-        deployments where forwardAccessToken is off).
-        """
-        id_token = None
-        access_token = None
-        refresh_token = None
-
-        # Prefer Authorization: Bearer <fresh access_token> from Envoy.
-        auth_hdr = handler.request.headers.get("Authorization", "")
-        if auth_hdr.lower().startswith("bearer "):
-            access_token = auth_hdr.split(None, 1)[1].strip() or None
-
-        for name, value in handler.request.cookies.items():
-            if name.startswith("IdToken"):
-                id_token = value.value
-            elif name.startswith("AccessToken") and access_token is None:
-                access_token = value.value
-            elif name.startswith("RefreshToken"):
-                refresh_token = value.value
-        return id_token, access_token, refresh_token
-
-    async def authenticate(self, handler, data=None):
-        # Envoy Gateway stores tokens as cookies after OIDC authentication:
-        #
-        # IdToken (IdToken-<suffix>):
-        #   JWT with user identity claims (sub, email, groups).
-        #   Used here to extract the username and groups.
-        #
-        # AccessToken (AccessToken-<suffix>):
-        #   Short-lived credential (~5 min). Can be exchanged at Keycloak
-        #   for a token with a different audience (RFC 8693).
-        #   Stored in auth_state for the spawner and nebi env listing.
-        #
-        # RefreshToken (RefreshToken-<suffix>):
-        #   Envoy manages this internally (refreshToken: true in SecurityPolicy).
-        #   NOT forwarded to upstream — the cookie is typically absent here.
-        #   Envoy uses it to refresh the AccessToken cookie transparently.
-        id_token, access_token, refresh_token = self._extract_envoy_cookies(handler)
-
-        if not id_token:
-            self.log.warning("No IdToken cookie found")
-            return None
-
-        try:
-            # Decode JWT payload without verification — Envoy already validated it
-            payload_b64 = id_token.split(".")[1]
-            payload_b64 += "=" * (4 - len(payload_b64) % 4)
-            claims = json.loads(base64.urlsafe_b64decode(payload_b64))
-        except Exception:
-            self.log.exception("Failed to decode IdToken JWT")
-            return None
-
-        username = claims.get("preferred_username") or claims.get("sub")
-        if not username:
-            self.log.warning("authenticate: no username claim in IdToken: %s", list(claims.keys()))
-            return None
-
-        # Extract groups from the token (set by the "groups" scope / group mapper)
-        groups = claims.get("groups", [])
-        if not groups:
-            self.log.warning(
-                "authenticate: no groups claim in IdToken for %s "
-                "(check Keycloak client scope / group mapper configuration)",
-                username,
-            )
-        # Keycloak returns groups as paths (e.g. "/admin"), strip leading slash
-        groups = [g.strip("/") for g in groups]
-
-        # Determine admin from group membership
-        admin_groups = set(get_config("custom.admin-groups", ["admin"]))
-        is_admin = bool(admin_groups & set(groups))
-        self.log.info(
-            "authenticate: user=%s groups=%s is_admin=%s",
-            username, groups, is_admin,
-        )
-
-        return {
-            "name": username,
-            "admin": is_admin,
-            "groups": groups,
-            "auth_state": {
-                k: v for k, v in {
-                    "id_token": id_token,
-                    "access_token": access_token,
-                    "refresh_token": refresh_token,
-                    "groups": groups,  # stored so spawner can read at spawn time
-                }.items() if v is not None
-            },
-        }
-
-    async def refresh_user(self, user, handler=None):
-        """Re-read Envoy's OIDC cookies to keep auth_state fresh.
-
-        Envoy Gateway automatically refreshes the AccessToken cookie using
-        its internally managed refresh token.  By reading the fresh cookie
-        here, we update auth_state so downstream consumers (nebi token
-        exchange, spawner hooks) always have a valid access token.
-
-        Called by JupyterHub every `auth_refresh_age` seconds (60s).
-        """
-        if handler is None:
-            # No request context (e.g. internal API call) — can't read cookies
-            self.log.debug("refresh_user: no handler for %s (internal call), returning True", user.name)
-            return True
-
-        id_token, access_token, refresh_token = self._extract_envoy_cookies(handler)
-
-        if not id_token:
-            # This method is called on an already-authenticated user —
-            # JupyterHub has already validated the request (via OAuth token
-            # or API token) before calling refresh_user.  We are NOT doing
-            # authentication here; we're just deciding whether to update
-            # auth_state with fresh Envoy cookies or keep the existing session.
-            #
-            # Envoy OIDC cookies (IdToken, AccessToken) are only present on
-            # browser requests.  Requests from singleuser pods (e.g. activity
-            # pings via JUPYTERHUB_API_TOKEN) have a handler but no cookies.
-            # Returning False here would invalidate the entire session,
-            # causing 403s on all subsequent requests including the browser.
-            #
-            # Instead, skip the auth_state refresh and keep the session alive.
-            # Envoy Gateway handles token refresh independently at the gateway
-            # layer — the next browser request will carry fresh cookies and
-            # update auth_state then.
-            self.log.debug(
-                "refresh_user: no IdToken cookie for %s, skipping auth_state refresh",
-                user.name,
-            )
-            return True
-
-        # Re-parse groups from the refreshed IdToken so auth_state stays current
-        try:
-            payload_b64 = id_token.split(".")[1]
-            payload_b64 += "=" * (4 - len(payload_b64) % 4)
-            claims = json.loads(base64.urlsafe_b64decode(payload_b64))
-            groups = [g.strip("/") for g in claims.get("groups", [])]
-            self.log.debug("refresh_user: refreshed groups for %s: %s", user.name, groups)
-        except Exception:
-            self.log.warning(
-                "refresh_user: failed to parse groups from IdToken for %s "
-                "— auth_state will have empty groups until next full login",
-                user.name,
-                exc_info=True,
-            )
-            groups = []
-
-        auth_state = {
-            k: v for k, v in {
-                "id_token": id_token,
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "groups": groups,
-            }.items() if v is not None
-        }
-
-        self.log.debug(
-            "refresh_user: auth_state refreshed for %s (access_token=%s, groups=%s)",
-            user.name, bool(access_token), groups,
-        )
-        return {"name": user.name, "auth_state": auth_state}
+class KeyCloakOAuthenticator(GenericOAuthenticator):
+    """Marker subclass so traitlets config can target it explicitly."""
 
 
-if get_config("custom.external-url", ""):
-    c.JupyterHub.authenticator_class = EnvoyOIDCAuthenticator
-    # All users who pass Keycloak auth at the gateway are allowed
+def _kc_urls(issuer: str) -> dict:
+    """Derive Keycloak OIDC endpoint URLs from the realm issuer URL."""
+    base = f"{issuer}/protocol/openid-connect"
+    return {
+        "authorize_url": f"{base}/auth",
+        "token_url": f"{base}/token",
+        "userdata_url": f"{base}/userinfo",
+        "end_session_url": f"{base}/logout",
+    }
+
+
+def configure(
+    c,
+    *,
+    issuer: str,
+    client_id: str,
+    client_secret: str,
+    callback_url: str,
+    external_url: str,
+    admin_groups=None,
+):
+    """Wire KeyCloakOAuthenticator onto JupyterHub's `c` config object."""
+    urls = _kc_urls(issuer)
+    c.JupyterHub.authenticator_class = KeyCloakOAuthenticator
+    c.KeyCloakOAuthenticator.client_id = client_id
+    c.KeyCloakOAuthenticator.client_secret = client_secret
+    c.KeyCloakOAuthenticator.oauth_callback_url = callback_url
+    c.KeyCloakOAuthenticator.authorize_url = urls["authorize_url"]
+    c.KeyCloakOAuthenticator.token_url = urls["token_url"]
+    c.KeyCloakOAuthenticator.userdata_url = urls["userdata_url"]
+    c.KeyCloakOAuthenticator.username_claim = "preferred_username"
+    c.KeyCloakOAuthenticator.claim_groups_key = "groups"
+    c.KeyCloakOAuthenticator.admin_groups = set(admin_groups or ["admin"])
+    # Persist tokens so refresh_user can use the stored refresh_token.
+    c.KeyCloakOAuthenticator.enable_auth_state = True
+    c.KeyCloakOAuthenticator.refresh_pre_spawn = True
+    # Refresh ~1 min before KC's 5-min access-token TTL expires.
+    c.KeyCloakOAuthenticator.auth_refresh_age = 240
+    # Hub logout must terminate the upstream Keycloak session, otherwise
+    # the next /hub/ request silently re-uses it. Bounce through KC's
+    # end_session_endpoint with post_logout_redirect_uri pointing back here.
+    c.KeyCloakOAuthenticator.logout_redirect_url = (
+        f"{urls['end_session_url']}"
+        f"?post_logout_redirect_uri={quote(external_url, safe='')}"
+    )
+    # Any KC-authenticated user is admitted (matches prior EnvoyOIDC policy);
+    # tighten via admin_groups / allowed_groups per-deploy if needed.
     c.Authenticator.allow_all = True
-    c.Authenticator.enable_auth_state = True
+
+
+def _read_secret_file(secret_dir: Path, key: str) -> str:
+    """Read a single value out of the operator-mounted KC client Secret."""
+    return (secret_dir / key).read_text().strip()
+
+
+# When loaded by JupyterHub, `c` is a magic global. On host imports (tests),
+# `c` is undefined and the production wiring is skipped.
+#
+# Production wiring is gated TWICE:
+#   1. `c` must exist (real JupyterHub run, not a host import).
+#   2. `OAUTH_CALLBACK_URL` must be set (deployer opted into KC OAuth).
+# Without (2), the chart's default authenticator (dummy) stays in place,
+# so plain `kind` deploys come up without needing the operator Secret.
+try:
+    c  # type: ignore[used-before-def]
+except NameError:
+    pass
+else:
+    if os.environ.get("OAUTH_CALLBACK_URL"):
+        _secret_dir = Path(os.environ.get("OAUTH_SECRET_DIR", "/etc/oauth"))
+        configure(
+            c,  # noqa: F821
+            issuer=_read_secret_file(_secret_dir, "issuer-url"),
+            client_id=_read_secret_file(_secret_dir, "client-id"),
+            client_secret=_read_secret_file(_secret_dir, "client-secret"),
+            callback_url=os.environ["OAUTH_CALLBACK_URL"],
+            external_url=os.environ["OAUTH_EXTERNAL_URL"],
+        )
