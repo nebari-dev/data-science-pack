@@ -21,3 +21,4 @@ venv/
 
 # Pixi
 .pixi/
+.venv-unit/
