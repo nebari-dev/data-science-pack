@@ -31,6 +31,15 @@ log = logging.getLogger(__name__)
 c.KubeSpawner.storage_pvc_ensure = True
 c.KubeSpawner.storage_capacity = get_config("custom.storage-capacity", "20Gi")
 c.KubeSpawner.storage_access_modes = ["ReadWriteOnce"]
+# Without this override, KubeSpawner's default template is
+# `claim-{username}--{servername}`, so for jhub-apps named servers it ensures
+# a per-server PVC — while the `volumes` block below mounts the per-user
+# `claim-{username}`. Users with a pre-existing per-user PVC (legacy
+# JupyterLab launch) survived this mismatch; fresh users hit
+# FailedScheduling because the per-user PVC is never auto-created. Forcing
+# the template to `{username}` makes ensure + mount converge on the same
+# RWO claim, which the pod-affinity rule below keeps to a single node.
+c.KubeSpawner.pvc_name_template = "claim-{username}"
 c.KubeSpawner.volumes = [
     {
         "name": "home",
