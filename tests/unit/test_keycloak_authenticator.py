@@ -93,18 +93,26 @@ def test_configure_leaves_logout_redirect_url_empty_so_handler_runs():
     assert c.KeyCloakOAuthenticator.logout_redirect_url == ""
 
 
-def test_configure_stashes_kc_end_session_pieces_on_authenticator_class():
-    """KeyCloakLogoutHandler reads these at request time.
+def test_configure_attaches_kc_config_to_authenticator_class():
+    """KeyCloakLogoutHandler reads the bundled config at request time.
 
-    They live on the class (not the traitlets `c.` namespace) because
-    traitlets' config-loader rejects unknown names with a warning and
-    never propagates the value into the actual instance.
+    The KeyCloakConfig dataclass replaces the historical pair of stray
+    class attributes (`_kc_end_session_url`, `_kc_post_logout_redirect_uri`)
+    with one cohesive object that derives all KC endpoint URLs from the
+    issuer and carries the post-logout redirect. It lives on the class
+    (not the traitlets `c.` namespace) because traitlets' config-loader
+    rejects unknown names with a warning and never propagates the value
+    into the actual instance.
     """
     _, mod = _configure_with_defaults()
-    assert mod.KeyCloakOAuthenticator._kc_end_session_url == (
-        f"{ISSUER}/protocol/openid-connect/logout"
-    )
-    assert mod.KeyCloakOAuthenticator._kc_post_logout_redirect_uri == EXTERNAL
+    cfg = mod.KeyCloakOAuthenticator.kc_config
+    assert cfg is not None, "configure() must populate kc_config"
+    assert cfg.issuer == ISSUER
+    assert cfg.end_session_url == f"{ISSUER}/protocol/openid-connect/logout"
+    assert cfg.token_url == f"{ISSUER}/protocol/openid-connect/token"
+    assert cfg.authorize_url == f"{ISSUER}/protocol/openid-connect/auth"
+    assert cfg.userdata_url == f"{ISSUER}/protocol/openid-connect/userinfo"
+    assert cfg.post_logout_redirect_uri == EXTERNAL
 
 
 # ---------------------------------------------------------------------------
@@ -146,30 +154,50 @@ def test_keycloak_authenticator_uses_custom_logout_handler():
     assert mod.KeyCloakOAuthenticator.logout_handler is mod.KeyCloakLogoutHandler
 
 
-def test_build_logout_url_includes_id_token_hint_and_post_redirect():
-    c, mod = _configure_with_defaults()
-    url = mod._build_logout_url(
-        end_session_url=f"{ISSUER}/protocol/openid-connect/logout",
-        id_token="header.payload.signature",
-        post_logout_redirect_uri=EXTERNAL,
-    )
+def test_kc_config_build_logout_url_includes_id_token_hint_and_post_redirect():
+    """KeyCloakConfig.build_logout_url owns the end-session URL composition
+    so the logout handler only has to fetch the per-user id_token."""
+    _, mod = _configure_with_defaults()
+    cfg = mod.KeyCloakOAuthenticator.kc_config
+    url = cfg.build_logout_url(id_token="header.payload.signature")
     assert url.startswith(f"{ISSUER}/protocol/openid-connect/logout?")
     assert "id_token_hint=header.payload.signature" in url
     assert "post_logout_redirect_uri=" in url
     assert "https%3A%2F%2Fhub.example.test" in url
 
 
-def test_build_logout_url_omits_id_token_hint_when_missing():
+def test_kc_config_build_logout_url_omits_id_token_hint_when_missing():
     """Token may be absent (legacy session): still produce a usable URL
     that at least clears local cookies and bounces back."""
-    c, mod = _configure_with_defaults()
-    url = mod._build_logout_url(
-        end_session_url=f"{ISSUER}/protocol/openid-connect/logout",
-        id_token=None,
-        post_logout_redirect_uri=EXTERNAL,
-    )
+    _, mod = _configure_with_defaults()
+    cfg = mod.KeyCloakOAuthenticator.kc_config
+    url = cfg.build_logout_url(id_token=None)
     assert "id_token_hint=" not in url
     assert "post_logout_redirect_uri=" in url
+
+
+def test_kc_config_from_issuer_is_pure_and_doesnt_need_configure():
+    """The endpoint derivation is independent of `configure()`; callers
+    can build a KeyCloakConfig directly for testing or alternate setups."""
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "_ga",
+        Path(__file__).resolve().parents[2] / "config" / "jupyterhub" / "00-gateway-auth.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    cfg = mod.KeyCloakConfig.build(
+        issuer="https://kc/realms/r",
+        post_logout_redirect_uri="https://app/",
+    )
+    base = "https://kc/realms/r/protocol/openid-connect"
+    assert cfg.token_url == f"{base}/token"
+    assert cfg.authorize_url == f"{base}/auth"
+    assert cfg.userdata_url == f"{base}/userinfo"
+    assert cfg.end_session_url == f"{base}/logout"
+    assert cfg.post_logout_redirect_uri == "https://app/"
 
 
 def test_any_keycloak_authenticated_user_is_allowed_by_default():

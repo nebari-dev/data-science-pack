@@ -18,6 +18,7 @@ and ``OAUTH_EXTERNAL_URL`` come from chart-rendered envs.
 
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -26,23 +27,54 @@ from oauthenticator.oauth2 import OAuthLogoutHandler
 from tornado.httpclient import HTTPClientError
 
 
-def _build_logout_url(
-    *,
-    end_session_url: str,
-    id_token: str | None,
-    post_logout_redirect_uri: str,
-) -> str:
-    """Build a KC end-session URL with id_token_hint + post_logout_redirect_uri.
+@dataclass(frozen=True)
+class KeyCloakConfig:
+    """All Keycloak strings the authenticator + handlers need at runtime.
 
-    Keycloak v18+ rejects logout without ``id_token_hint`` when a
-    ``post_logout_redirect_uri`` is also given. ``id_token`` may be None
-    if the user's auth_state was never populated (legacy session); fall
-    back to just the redirect.
+    Replaces an earlier pattern where logout pieces lived as stray class
+    attributes on the authenticator (``_kc_end_session_url`` and
+    ``_kc_post_logout_redirect_uri``) while every other endpoint URL was
+    set independently on traitlets. Bundling them lets ``configure()``
+    derive everything from the issuer in one place and means the logout
+    handler only has to grab one object off the authenticator instance.
+
+    Use ``KeyCloakConfig.build(issuer=…, post_logout_redirect_uri=…)`` —
+    the constructor takes already-derived URLs so tests can build odd
+    shapes directly.
     """
-    params = {"post_logout_redirect_uri": post_logout_redirect_uri}
-    if id_token:
-        params["id_token_hint"] = id_token
-    return f"{end_session_url}?{urlencode(params)}"
+
+    issuer: str
+    authorize_url: str
+    token_url: str
+    userdata_url: str
+    end_session_url: str
+    post_logout_redirect_uri: str
+
+    @classmethod
+    def build(cls, *, issuer: str, post_logout_redirect_uri: str) -> "KeyCloakConfig":
+        """Derive every KC endpoint URL from the realm issuer."""
+        base = f"{issuer}/protocol/openid-connect"
+        return cls(
+            issuer=issuer,
+            authorize_url=f"{base}/auth",
+            token_url=f"{base}/token",
+            userdata_url=f"{base}/userinfo",
+            end_session_url=f"{base}/logout",
+            post_logout_redirect_uri=post_logout_redirect_uri,
+        )
+
+    def build_logout_url(self, id_token: str | None) -> str:
+        """Compose the per-user KC end-session URL.
+
+        Keycloak v18+ rejects logout without ``id_token_hint`` when a
+        ``post_logout_redirect_uri`` is also given. ``id_token`` may be
+        None if the user's auth_state was never populated (legacy
+        session); fall back to just the redirect.
+        """
+        params = {"post_logout_redirect_uri": self.post_logout_redirect_uri}
+        if id_token:
+            params["id_token_hint"] = id_token
+        return f"{self.end_session_url}?{urlencode(params)}"
 
 
 class KeyCloakLogoutHandler(OAuthLogoutHandler):
@@ -74,12 +106,7 @@ class KeyCloakLogoutHandler(OAuthLogoutHandler):
         await self.default_handle_logout()
         await self.handle_logout()
         self._jupyterhub_user = None
-        url = _build_logout_url(
-            end_session_url=self.authenticator._kc_end_session_url,
-            id_token=id_token,
-            post_logout_redirect_uri=self.authenticator._kc_post_logout_redirect_uri,
-        )
-        self.redirect(url)
+        self.redirect(self.authenticator.kc_config.build_logout_url(id_token))
 
 
 class KeyCloakOAuthenticator(GenericOAuthenticator):
@@ -92,9 +119,11 @@ class KeyCloakOAuthenticator(GenericOAuthenticator):
 
     logout_handler = KeyCloakLogoutHandler
 
-    # Stashed by configure() so the logout handler can build URLs at request time.
-    _kc_end_session_url: str = ""
-    _kc_post_logout_redirect_uri: str = ""
+    # Populated by configure() at startup. Logout + refresh_user read this
+    # off the authenticator instance at request time. Class attribute (not
+    # traitlet) because traitlets' config-loader rejects unknown names
+    # via `c.<Class>.<attr>` assignment.
+    kc_config: "KeyCloakConfig | None" = None
 
     async def refresh_user(self, user, handler=None):
         """Run KC's refresh_token grant and persist rotated tokens to auth_state.
@@ -168,17 +197,6 @@ class KeyCloakOAuthenticator(GenericOAuthenticator):
         return {"auth_state": new_state}
 
 
-def _kc_urls(issuer: str) -> dict:
-    """Derive Keycloak OIDC endpoint URLs from the realm issuer URL."""
-    base = f"{issuer}/protocol/openid-connect"
-    return {
-        "authorize_url": f"{base}/auth",
-        "token_url": f"{base}/token",
-        "userdata_url": f"{base}/userinfo",
-        "end_session_url": f"{base}/logout",
-    }
-
-
 def configure(
     c,
     *,
@@ -190,14 +208,16 @@ def configure(
     admin_groups=None,
 ):
     """Wire KeyCloakOAuthenticator onto JupyterHub's `c` config object."""
-    urls = _kc_urls(issuer)
+    kc_config = KeyCloakConfig.build(
+        issuer=issuer, post_logout_redirect_uri=external_url,
+    )
     c.JupyterHub.authenticator_class = KeyCloakOAuthenticator
     c.KeyCloakOAuthenticator.client_id = client_id
     c.KeyCloakOAuthenticator.client_secret = client_secret
     c.KeyCloakOAuthenticator.oauth_callback_url = callback_url
-    c.KeyCloakOAuthenticator.authorize_url = urls["authorize_url"]
-    c.KeyCloakOAuthenticator.token_url = urls["token_url"]
-    c.KeyCloakOAuthenticator.userdata_url = urls["userdata_url"]
+    c.KeyCloakOAuthenticator.authorize_url = kc_config.authorize_url
+    c.KeyCloakOAuthenticator.token_url = kc_config.token_url
+    c.KeyCloakOAuthenticator.userdata_url = kc_config.userdata_url
     c.KeyCloakOAuthenticator.username_claim = "preferred_username"
     # Explicit scopes — GenericOAuthenticator defaults to [] which omits the
     # scope param entirely; KC then issues a token without `openid` and
@@ -214,19 +234,17 @@ def configure(
     # to render_logout_page (our subclass) instead of short-circuiting
     # to a static URL that can't include id_token_hint.
     c.KeyCloakOAuthenticator.logout_redirect_url = ""
-    # Stash the pieces KeyCloakLogoutHandler.render_logout_page reads at
-    # request time to build the per-user end-session URL. These are
-    # plain class attributes (not traitlets), so set them directly on
-    # the class instead of via `c.<Class>.<attr> = ...` — traitlets'
-    # config-loader rejects unknown names with a warning and never
-    # propagates the value.
-    KeyCloakOAuthenticator._kc_end_session_url = urls["end_session_url"]
-    KeyCloakOAuthenticator._kc_post_logout_redirect_uri = external_url
+    # Stash all KC strings (issuer-derived URLs + post_logout redirect) on
+    # the class so KeyCloakLogoutHandler can compose per-user end-session
+    # URLs at request time. Class attribute (not traitlet) because
+    # traitlets' config-loader rejects unknown names assigned via
+    # `c.<Class>.<attr>` with a warning and silently drops the value.
+    KeyCloakOAuthenticator.kc_config = kc_config
     # Skip hub's local /hub/login form — go straight to Keycloak's
     # authorize endpoint. One IdP, no point making the user click a
     # "Sign in with OAuth 2.0" button.
     c.Authenticator.auto_login = True
-    # Any KC-authenticated user is admitted (matches prior EnvoyOIDC policy);
+    # Any KC-authenticated user is admitted (matches the prior policy);
     # tighten via admin_groups / allowed_groups per-deploy if needed.
     c.Authenticator.allow_all = True
 
