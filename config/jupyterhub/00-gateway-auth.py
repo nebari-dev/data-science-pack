@@ -46,20 +46,15 @@ def _build_logout_url(
 class KeyCloakLogoutHandler(OAuthLogoutHandler):
     """Bounce hub logout through Keycloak's end_session endpoint.
 
-    Hub's local logout only clears its own cookies; KC keeps the user's
-    session alive, so the next /hub/login transparently re-authenticates.
-    Pass the user's id_token as ``id_token_hint`` so KC actually
-    terminates the upstream session.
-
-    Override ``render_logout_page`` rather than ``get`` so that
-    ``LogoutHandler.get`` still runs ``default_handle_logout`` +
-    ``handle_logout`` (token revocation, cookie clear). For
-    ``render_logout_page`` to be reached, ``authenticator.logout_redirect_url``
-    must be left empty — otherwise ``LogoutHandler.get`` short-circuits
-    when ``auto_login`` is true.
+    KC requires ``id_token_hint`` when ``post_logout_redirect_uri`` is
+    present. The token lives in the user's auth_state, so it must be
+    read at request time. Override ``get`` (not ``render_logout_page``)
+    because ``LogoutHandler.get`` clears ``self._jupyterhub_user`` BEFORE
+    calling ``render_logout_page`` — by the time the latter runs,
+    ``current_user`` is None and auth_state is unreachable.
     """
 
-    async def render_logout_page(self):
+    async def get(self):
         user = self.current_user
         id_token = None
         if user is not None:
@@ -72,6 +67,11 @@ class KeyCloakLogoutHandler(OAuthLogoutHandler):
                     "logout: failed reading auth_state for %s — proceeding "
                     "without id_token_hint", user.name, exc_info=True,
                 )
+        # Standard cleanup from base LogoutHandler.get (token revocation,
+        # cookie clear, server shutdown).
+        await self.default_handle_logout()
+        await self.handle_logout()
+        self._jupyterhub_user = None
         url = _build_logout_url(
             end_session_url=self.authenticator._kc_end_session_url,
             id_token=id_token,
