@@ -19,6 +19,9 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: {{ include "nebari-data-science-pack.fullname" . }}-rbac-bootstrap
+  {{- with .Values.rbac.bootstrap.namespace }}
+  namespace: {{ . | quote }}
+  {{- end }}
   labels:
     {{- include "nebari-data-science-pack.labels" . | nindent 4 }}
     app.kubernetes.io/component: rbac-bootstrap
@@ -44,7 +47,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.rbac.bootstrap.kcAdminCredentialSecret | quote }}
-                  key: password
+                  key: {{ .Values.rbac.bootstrap.kcAdminCredentialSecretKey | default "password" | quote }}
             - name: REALM
               value: {{ .Values.rbac.bootstrap.realmName | quote }}
             - name: HUB_CLIENT_ID

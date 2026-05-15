@@ -192,10 +192,18 @@ nebi:
 rbac:
   bootstrap:
     enabled: false
+    # Namespace to run the Job in. Default (empty) = chart release
+    # namespace. Override to the keycloak namespace so the Job can
+    # read the admin-credentials Secret without cross-namespace copy.
+    namespace: ""
     # Name of a K8s Secret holding the KC realm-admin password in key
     # ``password``. Job authenticates as ``admin`` in the ``master``
     # realm via kcadm.sh and applies config to ``realmName``.
     kcAdminCredentialSecret: ""
+    # Key within ``kcAdminCredentialSecret`` that holds the password.
+    # Default ``admin-password`` matches the bitnami keycloak/keycloakx
+    # chart's ``keycloak-admin-credentials`` Secret layout.
+    kcAdminCredentialSecretKey: "admin-password"
     # Realm to bootstrap.
     realmName: "nebari"
     # ClientId of the hub OAuth client in Keycloak (created by the
