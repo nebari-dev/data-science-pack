@@ -83,31 +83,22 @@ def test_admin_groups_can_be_overridden_per_deployment():
 # Cycle 3 — logout terminates the Keycloak session
 # ---------------------------------------------------------------------------
 
-def test_logout_redirects_through_keycloak_end_session():
-    """Hub logout must hit KC's end-session endpoint, not just clear local cookies.
-
-    Otherwise the next /hub/ hit silently re-uses the live KC session.
+def test_configure_leaves_logout_redirect_url_empty_so_handler_runs():
+    """LogoutHandler.get short-circuits to authenticator.logout_redirect_url
+    when auto_login=True, never calling render_logout_page. Keep it empty
+    so our subclass's render_logout_page (which builds a per-user URL
+    with id_token_hint) actually fires.
     """
     c, _ = _configure_with_defaults()
-    url = c.KeyCloakOAuthenticator.logout_redirect_url
-    assert url.startswith(f"{ISSUER}/protocol/openid-connect/logout"), url
+    assert c.KeyCloakOAuthenticator.logout_redirect_url == ""
 
 
-def test_logout_url_includes_post_logout_redirect_uri():
-    """After KC sign-out, the browser must return to the hub external URL."""
+def test_configure_stashes_kc_end_session_pieces_for_handler():
+    """KeyCloakLogoutHandler reads these at request time."""
     c, _ = _configure_with_defaults()
-    url = c.KeyCloakOAuthenticator.logout_redirect_url
-    assert "post_logout_redirect_uri=" in url
-    # URL-encoded form of the external URL must appear (https%3A%2F%2F...)
-    assert "https%3A%2F%2Fhub.example.test" in url
-
-
-def test_logout_url_url_encodes_external_url_safely():
-    """Special characters in external_url must be safely percent-encoded."""
-    c, _ = _configure_with_defaults(external_url="https://hub.example.test/?x=1&y=2")
-    url = c.KeyCloakOAuthenticator.logout_redirect_url
-    # Raw `&` from the external URL would prematurely terminate the query param.
-    assert "x%3D1%26y%3D2" in url
+    kc = c.KeyCloakOAuthenticator
+    assert kc._kc_end_session_url == f"{ISSUER}/protocol/openid-connect/logout"
+    assert kc._kc_post_logout_redirect_uri == EXTERNAL
 
 
 # ---------------------------------------------------------------------------
@@ -139,16 +130,14 @@ def test_configure_enables_auto_login_so_hub_skips_local_login_form():
     assert c.Authenticator.auto_login is True
 
 
-def test_keycloak_authenticator_serves_custom_logout_handler():
-    """KC v18+ requires id_token_hint at end_session_endpoint.
-
-    A static logout_redirect_url can't include it (per-user), so the
-    authenticator must install a handler that builds the URL per request.
+def test_keycloak_authenticator_uses_custom_logout_handler():
+    """oauthenticator.OAuthenticator.get_handlers reads the class-level
+    ``logout_handler`` attribute when registering /logout. Swapping
+    that to our subclass is the supported way to override logout
+    behaviour without duplicating the /logout route.
     """
     c, mod = _configure_with_defaults()
-    handlers = mod.KeyCloakOAuthenticator().get_handlers(app=None)
-    paths = [h[0] for h in handlers]
-    assert "/logout" in paths
+    assert mod.KeyCloakOAuthenticator.logout_handler is mod.KeyCloakLogoutHandler
 
 
 def test_build_logout_url_includes_id_token_hint_and_post_redirect():
