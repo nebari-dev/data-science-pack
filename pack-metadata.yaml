@@ -1,0 +1,96 @@
+# pack-metadata.yaml
+#
+# Place this file at the ROOT of your pack repository, on the default branch.
+# The Nebari pack dashboard (https://github.com/nebari-dev/software-pack-dashboard)
+# fetches this file once per hour and uses it to render the dashboard row for
+# your pack.
+#
+# The schema is at:
+#   https://github.com/nebari-dev/software-pack-dashboard/blob/main/schema/pack-metadata.schema.json
+#
+# Validate locally before committing:
+#   pip install check-jsonschema
+#   check-jsonschema --schemafile <path-to>/pack-metadata.schema.json pack-metadata.yaml
+#
+# All fields marked "required" must be present. Optional fields can be omitted
+# entirely. Validation failures do not break the dashboard - the row will
+# render with a `metadata-invalid` flag and the specific error in the Notes
+# column, so you'll know what to fix.
+
+# ----------------------------------------------------------------------------
+# Required fields
+# ----------------------------------------------------------------------------
+
+# Must equal the GitHub repo name exactly (e.g. "nebari-data-science-pack").
+# The dashboard uses this to cross-check that the file is in the right repo.
+name: nebari-data-science-pack
+
+# Human-readable name shown on the dashboard. Title-case recommended.
+display_name: Data Science Pack
+
+# Maturity level. Must be lowercase. Allowed values: experimental | alpha | beta | ga
+# Definitions, per-level promotion checklist, and dashboard flag reference:
+#   https://github.com/nebari-dev/nebari-software-pack-template/blob/main/docs/release-readiness-checklist.md
+level: experimental
+
+# GitHub username of the accountable engineer. No "@" prefix.
+# For packs with multiple maintainers, name the single most-accountable one
+# here and use CODEOWNERS for the rest.
+owner: aktech
+
+# Whether the pack is deprecated. true | false.
+# If true, you MUST also set sunset_date below.
+deprecated: false
+
+# ----------------------------------------------------------------------------
+# Conditionally required
+# ----------------------------------------------------------------------------
+
+# Required ONLY when deprecated: true. ISO 8601 date (YYYY-MM-DD).
+# Omit (or remove the line) for non-deprecated packs.
+# sunset_date: 2026-12-31
+
+# Required (non-null) ONLY when level: ga. GitHub username of the product
+# owner. May be null for any other level.
+product_owner: null
+
+# ----------------------------------------------------------------------------
+# Optional fields - omit any you do not need
+# ----------------------------------------------------------------------------
+
+# One-sentence summary (max 200 chars). The dashboard's Description column is
+# sourced from the GitHub repo description (set via repo settings or
+# `gh repo edit -d`), NOT from this field, so it is optional. If you do set
+# it, it is still validated against the 200-char limit.
+# description: One short sentence describing what this pack does and who it is for.
+
+# How the pack integrates with the NebariApp CRD.
+# Allowed: full | partial | none | na    Default: na
+# Use "na" for packs that are not user-facing applications.
+# nebariapp_integration: full
+
+# Whether the pack installs without the Nebari operator.
+# scope:
+#   standalone-supported: yes    # yes | no    Default: no
+
+# When the pack was most recently promoted to its current level.
+# ISO 8601 date. Useful audit trail.
+# last_promoted_at: 2026-04-15
+
+# The PR number (in the pack repo) that promoted the pack to its current level.
+# last_promoted_pr: 42
+
+# Free-form notes for pre-sales and the dashboard's Notes column. Max 500
+# chars; the dashboard shows the first ~100 with a "..." truncation. Good
+# place for known gotchas, demo tips, or current limitations.
+# demo_notes: |
+#   Use the small-instance profile for demos. The large profile times out
+#   on cluster provisioning.
+
+# Links shown alongside the pack on the dashboard. Both are optional.
+# links:
+#   Extended documentation (NOT the README - that is auto-linked from the
+#   pack name column).
+#   docs: https://example.com/docs/my-pack
+#   Recorded or live demo URL.
+#   demo: https://example.com/demos/my-pack
