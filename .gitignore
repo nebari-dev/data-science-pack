@@ -1,6 +1,9 @@
 # Helm dependencies (regenerated via helm dependency update)
 charts/
 
+# Working handoff notes — never commit.
+HANDOFF*.md
+
 # OS
 .DS_Store
 
@@ -21,3 +24,4 @@ venv/
 
 # Pixi
 .pixi/
+.venv-unit/

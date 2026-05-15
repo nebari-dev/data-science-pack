@@ -25,6 +25,16 @@ spec:
     scopes:
       {{- toYaml . | nindent 6 }}
     {{- end }}
+    {{- if hasKey . "enforceAtGateway" }}
+    enforceAtGateway: {{ .enforceAtGateway }}
+    {{- end }}
+    {{- if hasKey . "forwardAccessToken" }}
+    forwardAccessToken: {{ .forwardAccessToken }}
+    {{- end }}
+    {{- with .tokenExchange }}
+    tokenExchange:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
   {{- end }}
   {{- with .Values.nebariapp.landingPage }}
   landingPage:

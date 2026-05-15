@@ -21,12 +21,25 @@ nebariapp:
     enabled: true
     provider: keycloak
     provisionClient: true
-    redirectURI: /oauth2/callback  # Envoy Gateway's default OIDC callback
+    # Hub does its own OAuth dance (see config/jupyterhub/00-gateway-auth.py),
+    # so the callback URL is JupyterHub's standard path, not Envoy's.
+    redirectURI: /hub/oauth_callback
     scopes:
       - openid
       - profile
       - email
       - groups
+    # enforceAtGateway runs Envoy's OIDC filter for the host. Disabled here:
+    # when JupyterHub is its own OAuth client (GenericOAuthenticator with
+    # refresh_token grants), Envoy-level OIDC adds nothing and its cookie
+    # rotation lag stales out auth_state for /services/japps/* paths.
+    # Operator drops the SecurityPolicy on this flip via
+    # deleteSecurityPolicyIfExists; the KC client + Secret stay provisioned
+    # because provisionClient: true is independent of enforcement.
+    enforceAtGateway: false
+    # Hub owns the OAuth flow (KeyCloakOAuthenticator) and persists tokens to
+    # auth_state. No upstream component needs the Envoy-injected Bearer.
+    forwardAccessToken: false
   # landingPage controls whether and how this service appears on the Nebari
   # landing page (requires nebari-operator with LandingPageConfig support).
   landingPage:
@@ -191,10 +204,16 @@ jupyterhub:
       # additional_services: []
       # startup_apps: []
   hub:
-    # Custom Nebari hub image with jhub-apps pre-installed
+    # Custom Nebari hub image with jhub-apps pre-installed.
+    # Tag below is the PR-53 merge-commit SHA at the moment of pinning; the
+    # corresponding immutable digest is
+    # sha256:7f895be95dd6077f06be35f7ca80cbfe91fa67f4daf27c095b91a2c9c215950f
+    # (GenericOAuthenticator + openid scope + starlette<1 + auto_login=True
+    # + KeyCloakLogoutHandler captures id_token in get() before base
+    # class clears current_user — id_token_hint now reaches KC).
     image:
       name: quay.io/nebari/nebari-data-science-pack-jupyterhub
-      tag: "sha-8f2e545"
+      tag: "sha-67880ee"
 
     config:
       JupyterHub:

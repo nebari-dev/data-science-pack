@@ -19,8 +19,20 @@ python-kubernetes = "*"
 kubernetes_asyncio = "==29.0.0"
 jupyterhub-idle-culler = "==1.2.1"
 sqlalchemy = "==1.4.46"
-jhub-apps = "==2025.11.1"
+# jhub-apps 2025.11.1 pins pyjwt<2.10; conda-forge's newer 2.12 would
+# violate that. Cap pyjwt here so the conda solve stays compatible.
+pyjwt = ">=2.9,<2.10"
+# Starlette 1.0 changed TemplateResponse() positional arg order
+# (request, name, ...) — jhub-apps 2025.11.1 still calls the legacy
+# 2-arg form, blowing up /services/japps/create-app with 500. Cap until
+# jhub-apps catches up.
+starlette = ">=0.36,<1"
 
 [pypi-dependencies]
 nebari-jupyterhub-theme = "==2024.7.1"
 python-keycloak = "==0.26.1"
+# Tagged release. The earlier git-pin to nebari-dev/jhub-apps#676
+# (Bearer fall-through + Starlette signature fix) is no longer needed: hub
+# now owns its own OAuth flow (see chart's 00-gateway-auth.py), so Envoy
+# does not inject an RS256 Bearer to /services/japps/* paths.
+jhub-apps = "==2025.11.1"

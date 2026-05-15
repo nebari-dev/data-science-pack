@@ -31,6 +31,14 @@ jupyterhub:
   custom:
     shared-storage-enabled: true
     shared-storage-mount-prefix: "/shared"
+    # Hub's wait_for_http_server timeout for managed services is hardcoded
+    # to 10s. Default japps_workers=4 takes ~12s to bind on CI runners, so
+    # hub crashes with "Cannot connect to managed service japps" on every
+    # start and never finishes booting before the test harness gives up.
+    # Mirror the prod overlay (gitops/apps/data-science-pack.yaml in
+    # openteams-ai/nebari-hetzner).
+    japps-config:
+      service_workers: 1
 
   hub:
     config:
