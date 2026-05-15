@@ -93,12 +93,18 @@ def test_configure_leaves_logout_redirect_url_empty_so_handler_runs():
     assert c.KeyCloakOAuthenticator.logout_redirect_url == ""
 
 
-def test_configure_stashes_kc_end_session_pieces_for_handler():
-    """KeyCloakLogoutHandler reads these at request time."""
-    c, _ = _configure_with_defaults()
-    kc = c.KeyCloakOAuthenticator
-    assert kc._kc_end_session_url == f"{ISSUER}/protocol/openid-connect/logout"
-    assert kc._kc_post_logout_redirect_uri == EXTERNAL
+def test_configure_stashes_kc_end_session_pieces_on_authenticator_class():
+    """KeyCloakLogoutHandler reads these at request time.
+
+    They live on the class (not the traitlets `c.` namespace) because
+    traitlets' config-loader rejects unknown names with a warning and
+    never propagates the value into the actual instance.
+    """
+    _, mod = _configure_with_defaults()
+    assert mod.KeyCloakOAuthenticator._kc_end_session_url == (
+        f"{ISSUER}/protocol/openid-connect/logout"
+    )
+    assert mod.KeyCloakOAuthenticator._kc_post_logout_redirect_uri == EXTERNAL
 
 
 # ---------------------------------------------------------------------------

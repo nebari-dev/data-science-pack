@@ -142,9 +142,13 @@ def configure(
     # to a static URL that can't include id_token_hint.
     c.KeyCloakOAuthenticator.logout_redirect_url = ""
     # Stash the pieces KeyCloakLogoutHandler.render_logout_page reads at
-    # request time to build the per-user end-session URL.
-    c.KeyCloakOAuthenticator._kc_end_session_url = urls["end_session_url"]
-    c.KeyCloakOAuthenticator._kc_post_logout_redirect_uri = external_url
+    # request time to build the per-user end-session URL. These are
+    # plain class attributes (not traitlets), so set them directly on
+    # the class instead of via `c.<Class>.<attr> = ...` — traitlets'
+    # config-loader rejects unknown names with a warning and never
+    # propagates the value.
+    KeyCloakOAuthenticator._kc_end_session_url = urls["end_session_url"]
+    KeyCloakOAuthenticator._kc_post_logout_redirect_uri = external_url
     # Skip hub's local /hub/login form — go straight to Keycloak's
     # authorize endpoint. One IdP, no point making the user click a
     # "Sign in with OAuth 2.0" button.
