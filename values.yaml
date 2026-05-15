@@ -37,9 +37,8 @@ nebariapp:
     # deleteSecurityPolicyIfExists; the KC client + Secret stay provisioned
     # because provisionClient: true is independent of enforcement.
     enforceAtGateway: false
-    # No longer needed once hub owns the OAuth flow — keeping it false avoids
-    # confusing dual-token paths between Envoy-injected Bearer and hub's own
-    # stored access_token.
+    # Hub owns the OAuth flow (KeyCloakOAuthenticator) and persists tokens to
+    # auth_state. No upstream component needs the Envoy-injected Bearer.
     forwardAccessToken: false
   # landingPage controls whether and how this service appears on the Nebari
   # landing page (requires nebari-operator with LandingPageConfig support).

@@ -401,32 +401,6 @@ def get_nebi_jwt(refresh_token, access_token, keycloak_url, nebi_cid, hub_cid, h
     return nebi_jwt
 
 
-def _fetch_fresh_auth_state(username):
-    """Fetch the latest auth_state for a user via the JupyterHub API.
-
-    Uses JUPYTERHUB_API_TOKEN (which has admin:auth_state scope) to read
-    the user's auth_state, which refresh_user() keeps updated with fresh
-    Envoy cookies on browser requests.
-
-    Returns the auth_state dict, or None on failure.
-    """
-    api_url = os.environ.get("JUPYTERHUB_API_URL", "")
-    api_token = os.environ.get("JUPYTERHUB_API_TOKEN", "")
-    if not api_url or not api_token:
-        log.warning("JUPYTERHUB_API_URL/TOKEN not set, cannot fetch fresh auth_state")
-        return None
-    try:
-        req = Request(
-            f"{api_url}/users/{username}",
-            headers={"Authorization": f"token {api_token}"},
-        )
-        with urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read()).get("auth_state")
-    except Exception as exc:
-        log.error("Failed to fetch fresh auth_state for %s: %s", username, exc)
-        return None
-
-
 # ---------------------------------------------------------------------------
 # Nebi auto-authentication (pre-spawn hook)
 # ---------------------------------------------------------------------------
@@ -463,26 +437,6 @@ async def _nebi_pre_spawn_hook(spawner):
     try:
         refresh_token = auth_state.get("refresh_token")
         access_token = auth_state.get("access_token") or ""
-
-        # The access token from auth_state may be stale (refresh_user updates
-        # it on browser requests, but the spawn is an internal API call).
-        # Check expiry and re-fetch from the hub API if needed.
-        if access_token and not refresh_token:
-            claims = _decode_jwt_claims(access_token)
-            import time as _time
-            exp = claims.get("exp", 0)
-            remaining = exp - int(_time.time()) if exp else 0
-            if remaining < 30:
-                log.info(
-                    "Access token for %s expires in %ds, fetching fresh auth_state from hub API",
-                    spawner.user.name, remaining,
-                )
-                fresh_state = await asyncio.to_thread(
-                    _fetch_fresh_auth_state, spawner.user.name,
-                )
-                if fresh_state:
-                    access_token = fresh_state.get("access_token") or access_token
-                    refresh_token = fresh_state.get("refresh_token") or refresh_token
 
         if not refresh_token and not access_token:
             log.warning("No access_token or refresh_token for %s, skipping", spawner.user.name)
@@ -570,9 +524,10 @@ async def _nebi_pre_spawn_hook(spawner):
 def _get_user_groups(auth_state):
     """Extract and filter user groups from auth_state.
 
-    Reads groups stored in auth_state by EnvoyOIDCAuthenticator (from Keycloak
-    IdToken groups claim). Applies the allowlist if configured.
-    Uses Path(g).name (last component) like classic Nebari so /projects/myproj → myproj.
+    Reads groups stored in auth_state by KeyCloakOAuthenticator (from
+    Keycloak's IdToken `groups` claim). Applies the allowlist if
+    configured. Uses Path(g).name (last component) like classic Nebari so
+    /projects/myproj → myproj.
     Deduplicates to prevent duplicate mountPath entries in the pod spec.
     Note: does NOT fall back to spawner.user.groups — accessing that SQLAlchemy
     relationship from an async hook causes DetachedInstanceError.
@@ -767,7 +722,7 @@ async def _pre_spawn_hook(spawner):
     else:
         log.debug("pre-spawn: Nebi auto-auth not configured, skipping")
 
-    # 2. Resolve groups from auth_state (stored by EnvoyOIDCAuthenticator)
+    # 2. Resolve groups from auth_state (stored by KeyCloakOAuthenticator)
     groups = _get_user_groups(auth_state)
     log.info("pre-spawn: user %s resolved groups: %s", username, groups)
 

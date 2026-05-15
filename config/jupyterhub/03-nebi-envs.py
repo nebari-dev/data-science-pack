@@ -103,26 +103,6 @@ def get_nebi_environments(user):
     refresh_token = auth_state.get("refresh_token")
     access_token = auth_state.get("access_token", "")
 
-    # auth_state from EnvoyOIDCAuthenticator carries no refresh_token (Envoy
-    # only stores access_token + id_token in cookies), and the access_token
-    # lifetime is short (~5min). When jhub-apps calls this synchronously, the
-    # access_token may already be expired. Mirror 01-spawner.py: if expiring
-    # in <30s, re-fetch via the hub API which has the freshest cookie state.
-    if access_token and not refresh_token:
-        claims = _decode_jwt_claims(access_token)
-        import time as _time
-        exp = claims.get("exp", 0)
-        remaining = exp - int(_time.time()) if exp else 0
-        if remaining < 30:
-            log.info(
-                "nebi-envs: access_token for %s expires in %ds, re-fetching auth_state",
-                username, remaining,
-            )
-            fresh_state = _fetch_fresh_auth_state(username)
-            if fresh_state:
-                access_token = fresh_state.get("access_token") or access_token
-                refresh_token = fresh_state.get("refresh_token") or refresh_token
-
     if not refresh_token and not access_token:
         log.warning(
             "nebi-envs: no access_token or refresh_token for user %s, cannot list environments",
