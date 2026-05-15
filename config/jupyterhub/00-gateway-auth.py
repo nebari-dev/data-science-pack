@@ -50,9 +50,13 @@ class KeyCloakLogoutHandler(LogoutHandler):
     session alive, so the next /hub/login transparently re-authenticates.
     Pass the user's id_token as ``id_token_hint`` so KC actually
     terminates the upstream session.
+
+    We override ``get()`` (not ``render_logout_page``) because the base
+    ``LogoutHandler.get`` short-circuits to ``authenticator.logout_redirect_url``
+    when ``auto_login=True`` and never invokes ``render_logout_page``.
     """
 
-    async def render_logout_page(self):
+    async def get(self):
         user = self.current_user
         id_token = None
         if user is not None:
@@ -65,6 +69,10 @@ class KeyCloakLogoutHandler(LogoutHandler):
                     "logout: failed reading auth_state for %s — proceeding without id_token_hint",
                     user.name, exc_info=True,
                 )
+            # Clear hub's local session cookies; LogoutHandler.default_handle_logout
+            # handles login_user-revocation + stop-server.
+            await self.default_handle_logout()
+            await self.handle_logout()
         url = _build_logout_url(
             end_session_url=self.authenticator._kc_end_session_url,
             id_token=id_token,
