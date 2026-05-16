@@ -281,6 +281,12 @@ jupyterhub:
         description: "1 CPU / 2 GB RAM — interactive notebooks, light data exploration, teaching."
         default: true
         kubespawner_override:
+          # Outer image is what jhub-apps' Create App reads for its image
+          # TextField (server-types.tsx: `type.kubespawner_override.image`).
+          # The same value sits inside profile_options.image.choices.default
+          # so the JupyterLab profile selector keeps showing it too.
+          # scripts/bump_image_tags.py syncs all three on every bump.
+          image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-7788c40
           cpu_limit: 1
           cpu_guarantee: 0.5
           mem_limit: "2G"
@@ -290,14 +296,15 @@ jupyterhub:
             display_name: Image
             choices:
               default:
-                display_name: "nebari-data-science-pack-jupyterlab:sha-30fa351"
+                display_name: "nebari-data-science-pack-jupyterlab:sha-7788c40"
                 default: true
                 kubespawner_override:
-                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-30fa351
+                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-7788c40
       - slug: medium-instance
         display_name: "Medium Instance"
         description: "4 CPU / 8 GB RAM — pandas / scikit-learn workloads on medium datasets."
         kubespawner_override:
+          image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-7788c40
           cpu_limit: 4
           cpu_guarantee: 2
           mem_limit: "8G"
@@ -307,10 +314,10 @@ jupyterhub:
             display_name: Image
             choices:
               default:
-                display_name: "nebari-data-science-pack-jupyterlab:sha-30fa351"
+                display_name: "nebari-data-science-pack-jupyterlab:sha-7788c40"
                 default: true
                 kubespawner_override:
-                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-30fa351
+                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-7788c40
     # Terminal customization: controls Starship prompt in JupyterLab terminals.
     # When false, falls back to the default bash prompt.
     terminal-customization: true
@@ -359,7 +366,7 @@ jupyterhub:
     # class clears current_user — id_token_hint now reaches KC).
     image:
       name: quay.io/nebari/nebari-data-science-pack-jupyterhub
-      tag: "sha-30fa351"
+      tag: "sha-7788c40"
 
     config:
       JupyterHub:
@@ -449,7 +456,7 @@ jupyterhub:
   singleuser:
     image:
       name: quay.io/nebari/nebari-data-science-pack-jupyterlab
-      tag: "sha-30fa351"
+      tag: "sha-7788c40"
     defaultUrl: "/lab"
     extraEnv:
       JUPYTERHUB_SINGLEUSER_APP: "jupyter_server.serverapp.ServerApp"
