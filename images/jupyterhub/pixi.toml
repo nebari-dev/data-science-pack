@@ -26,7 +26,8 @@ pyjwt = ">=2.10"
 [pypi-dependencies]
 nebari-jupyterhub-theme = "==2024.7.1"
 python-keycloak = "==0.26.1"
-# 2026.5.1rc1 ships PR #677 (configurable JApps font via template_vars
-# font_family / font_url) and PR #678 (FastAPI + Starlette 1.x upgrade),
-# so the prior pyjwt<2.10 and starlette<1 caps are gone.
-jhub-apps = "==2026.5.1rc1"
+# Pinned to the head of nebari-dev/jhub-apps#680 (perf/hub-roundtrips):
+# cuts hub API roundtrips on the /home hot path. Includes PR #677
+# (configurable JApps font) and PR #678 (Starlette 1.x upgrade), so the
+# prior pyjwt<2.10 and starlette<1 caps are gone.
+jhub-apps = { git = "https://github.com/nebari-dev/jhub-apps.git", rev = "a260fd6c8c0b3f82121ea86c7b32315d6162a3f4" }
