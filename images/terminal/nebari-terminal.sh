@@ -20,6 +20,12 @@ alias l='ls -lah'
 alias ll='ls -lah'
 alias la='ls -A'
 
+# PREFERRED_USERNAME is set by the KubeSpawner pre_spawn_hook (see
+# config/jupyterhub/01-spawner.py, matching classic nebari's
+# get_username_hook) from the OIDC preferred_username claim. The
+# starship prompt reads it via env_var. We keep it as-is — never strip
+# the @domain, since users from different orgs may share a local-part.
+
 # Use the system starship.toml unless the user explicitly overrides.
 if [ -z "${STARSHIP_CONFIG}" ]; then
     export STARSHIP_CONFIG="/etc/starship.toml"

@@ -781,6 +781,13 @@ async def _pre_spawn_hook(spawner):
     else:
         log.debug("pre-spawn: auth_state keys for %s: %s", username, list(auth_state.keys()))
 
+    # Expose PREFERRED_USERNAME for the singleuser pod (matches classic
+    # nebari's 02-spawner.get_username_hook). The terminal prompt and any
+    # downstream tooling read this env var.
+    oauth_user = (auth_state or {}).get("oauth_user") or {}
+    preferred_username = oauth_user.get("preferred_username") or username
+    spawner.environment = {**spawner.environment, "PREFERRED_USERNAME": preferred_username}
+
     # 1. Nebi auto-auth (non-fatal)
     if _nebi_auth_configured:
         log.debug("pre-spawn: running Nebi auto-auth for %s", username)
