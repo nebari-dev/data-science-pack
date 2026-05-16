@@ -40,8 +40,11 @@ This module pins that contract.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
+import tempfile
 import types
+from pathlib import Path
 
 # 01-spawner.py imports z2jh.get_config; stub it like the storage test does.
 _z2jh = types.ModuleType("z2jh")
@@ -154,3 +157,88 @@ def test_groups_without_shared_storage_preserves_user_data_in_per_group_dirs():
     assert "mkdir -p /home/jovyan/shared" in cmd
     assert "mkdir -p /home/jovyan/shared/data" in cmd
     assert "mkdir -p /home/jovyan/shared/ml" in cmd
+
+
+def _run_poststart_in_sandbox(cmd: str) -> tuple[str, str]:
+    """Execute the postStart cmd against a tempdir-sandboxed FS layout.
+
+    The cmd hardcodes /tmp/passwd, /tmp/group, and /home/jovyan paths.
+    Rewrite those to a tmpdir so the test doesn't touch the host. The
+    rewrite is path-prefix only; the cmd's shell-quoting is preserved.
+
+    Returns (passwd_contents, group_contents).
+    """
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        (td_path / "home" / "jovyan").mkdir(parents=True)
+        (td_path / "tmp").mkdir()
+        sandbox_cmd = cmd.replace("/tmp/", f"{td}/tmp/").replace(
+            "/home/jovyan", f"{td}/home/jovyan"
+        ).replace(" /shared", f" {td}/shared-mount").replace(
+            "/shared/", f"{td}/shared-mount/"
+        )
+        (td_path / "shared-mount").mkdir()
+        result = subprocess.run(
+            ["/bin/sh", "-c", sandbox_cmd],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0, (
+            f"postStart cmd failed: rc={result.returncode}\n"
+            f"stdout={result.stdout!r}\nstderr={result.stderr!r}\n"
+            f"cmd={sandbox_cmd!r}"
+        )
+        passwd = (td_path / "tmp" / "passwd").read_text()
+        group = (td_path / "tmp" / "group").read_text()
+    return passwd, group
+
+
+def test_poststart_writes_tmp_group_as_real_newline_separated_entries():
+    """libnss_wrapper parses NSS_WRAPPER_GROUP line-by-line. The hook
+    must write each entry on its own line; if all entries land on one
+    line (e.g. by using `printf '%s\\n' 'a\\nb\\nc'` where the inner
+    backslash-n is a LITERAL `\\n` inside a single-quoted string, not a
+    newline), only the first entry parses cleanly and getgrgid()
+    fails for every supplementary GID. Symptom seen in production:
+    `groups: cannot find name for group ID {4,20,24,25,27,29,30,44,46,100}`
+    while primary `gid=1000(jovyan)` resolved fine (first entry only).
+
+    This test exercises the contract behaviourally: run the hook's
+    shell against a sandbox, read /tmp/group, assert each generated
+    entry sits on its own physical line."""
+    mod = _load_spawner_module(shared_storage_enabled=True)
+    spawner = FakeSpawner()
+    asyncio.run(mod._setup_nss_wrapper(
+        spawner, "alice@example.test", groups=["data"],
+    ))
+    _passwd, group = _run_poststart_in_sandbox(_poststart_cmd(spawner))
+
+    lines = [ln for ln in group.splitlines() if ln.strip()]
+    # Expected: jovyan, users, plus nogroup{4,20,24,25,27,29,30,44,46}.
+    assert len(lines) >= 11, (
+        f"/tmp/group must contain one entry per line; got {len(lines)} "
+        f"non-empty line(s):\n{group!r}"
+    )
+    # Each line must be a valid 4-field group entry (name:passwd:gid:members).
+    for ln in lines:
+        fields = ln.split(":")
+        assert len(fields) == 4, (
+            f"each /tmp/group line must have 4 colon-separated fields "
+            f"(name:passwd:gid:members); got {fields!r} from line {ln!r}\n"
+            f"full file:\n{group!r}"
+        )
+        # gid must be an integer — catches the case where a literal
+        # `\n` ended up embedded inside the gid field.
+        assert fields[2].isdigit(), (
+            f"gid field must be an integer; got {fields[2]!r} from "
+            f"line {ln!r}\nfull file:\n{group!r}"
+        )
+
+    gids = {int(ln.split(":")[2]) for ln in lines}
+    expected = {1000, 100, 4, 20, 24, 25, 27, 29, 30, 44, 46}
+    missing = expected - gids
+    assert not missing, (
+        f"/tmp/group must list every GID the pod's supplementalGroups "
+        f"can carry, otherwise getgrgid() fails and `groups` prints "
+        f"'cannot find name for group ID X' on terminal startup. "
+        f"missing: {sorted(missing)}\nfull file:\n{group!r}"
+    )
