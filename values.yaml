@@ -290,10 +290,10 @@ jupyterhub:
             display_name: Image
             choices:
               default:
-                display_name: "nebari-data-science-pack-jupyterlab:sha-60c3d6f"
+                display_name: "nebari-data-science-pack-jupyterlab:sha-9f2f2e5"
                 default: true
                 kubespawner_override:
-                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-60c3d6f
+                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-9f2f2e5
       - slug: medium-instance
         display_name: "Medium Instance"
         description: "4 CPU / 8 GB RAM — pandas / scikit-learn workloads on medium datasets."
@@ -307,10 +307,10 @@ jupyterhub:
             display_name: Image
             choices:
               default:
-                display_name: "nebari-data-science-pack-jupyterlab:sha-60c3d6f"
+                display_name: "nebari-data-science-pack-jupyterlab:sha-9f2f2e5"
                 default: true
                 kubespawner_override:
-                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-60c3d6f
+                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-9f2f2e5
     # Terminal customization: controls Starship prompt in JupyterLab terminals.
     # When false, falls back to the default bash prompt.
     terminal-customization: true
