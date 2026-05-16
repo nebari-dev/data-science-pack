@@ -22,6 +22,6 @@ data:
   01-spawner.py: |
 {{ .Files.Get "config/jupyterhub/01-spawner.py" | replace "__SINGLEUSER_CONFIG_CM__" (include "nebari-data-science-pack.singleuser-config" .) | indent 4 }}
   02-jhub-apps.py: |
-{{ .Files.Get "config/jupyterhub/02-jhub-apps.py" | indent 4 }}
+{{ .Files.Get "config/jupyterhub/02-jhub-apps.py" | replace "__CHART_VERSION__" .Chart.Version | indent 4 }}
   03-nebi-envs.py: |
 {{ .Files.Get "config/jupyterhub/03-nebi-envs.py" | indent 4 }}

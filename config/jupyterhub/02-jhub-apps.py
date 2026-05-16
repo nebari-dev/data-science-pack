@@ -21,12 +21,18 @@ c.JupyterHub.default_url = "/hub/home"
 c.JupyterHub.template_paths = theme_template_paths
 # Match JupyterLab default (IBM Plex Sans, PR #75) on hub + JApps pages.
 # Requires jhub-apps >= 2026.5.1rc1 (PR #677: font_family / font_url theme vars).
+# Helm substitutes ``__CHART_VERSION__`` with .Chart.Version in
+# templates/hub-config.yaml. Falls back to the placeholder on a raw-file
+# load (no Helm) so import-time sanity is preserved.
+_CHART_VERSION = "__CHART_VERSION__"
+_jhub_apps_version = themes.DEFAULT_THEME.get("version", "")
 c.JupyterHub.template_vars = {
     **themes.DEFAULT_THEME,
     "font_family": "'IBM Plex Sans', sans-serif",
     "font_url": "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap",
     # Footer in page.html only renders the version string when this is truthy.
     "display_version": True,
+    "version": f"ds-pack {_CHART_VERSION} · jhub-apps {_jhub_apps_version}",
 }
 c.JAppsConfig.jupyterhub_config_path = "/usr/local/etc/jupyterhub/jupyterhub_config.py"
 
