@@ -281,6 +281,12 @@ jupyterhub:
         description: "1 CPU / 2 GB RAM — interactive notebooks, light data exploration, teaching."
         default: true
         kubespawner_override:
+          # Outer image is what jhub-apps' Create App reads for its image
+          # TextField (server-types.tsx: `type.kubespawner_override.image`).
+          # The same value sits inside profile_options.image.choices.default
+          # so the JupyterLab profile selector keeps showing it too.
+          # scripts/bump_image_tags.py syncs all three on every bump.
+          image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-30fa351
           cpu_limit: 1
           cpu_guarantee: 0.5
           mem_limit: "2G"
@@ -298,6 +304,7 @@ jupyterhub:
         display_name: "Medium Instance"
         description: "4 CPU / 8 GB RAM — pandas / scikit-learn workloads on medium datasets."
         kubespawner_override:
+          image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-30fa351
           cpu_limit: 4
           cpu_guarantee: 2
           mem_limit: "8G"
