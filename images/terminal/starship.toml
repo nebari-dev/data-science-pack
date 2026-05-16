@@ -1,6 +1,6 @@
 # Nebari default Starship configuration.
-# Uses ANSI named colors (no hex) so xterm.js maps them through the
-# JupyterLab terminal palette — readable in both light and dark themes.
+# Colors are explicit medium-saturation hex (Tailwind 600-level) chosen
+# for contrast on both the JupyterLab Light and Dark terminal palettes.
 # Users can override by setting STARSHIP_CONFIG in their .bashrc.
 
 "$schema" = 'https://starship.rs/config-schema.json'
@@ -8,50 +8,53 @@
 add_newline = false
 
 format = """
-$username$directory$git_branch$git_status$python$conda$cmd_duration$line_break$character"""
+$username$env_var$git_branch$git_status$python$conda$cmd_duration$line_break$character"""
 
 [username]
 show_always = true
-style_user = "bold cyan"
-style_root = "bold red"
+style_user = "bold fg:#0d6efd"
+style_root = "bold fg:#dc2626"
 format = '[$user]($style) '
 
-[directory]
-truncation_length = 4
-truncation_symbol = "…/"
-style = "bold blue"
-format = '[$path]($style) '
+# Use the shell's $PWD instead of starship's [directory] module so the
+# prompt shows the full path (e.g. /home/jovyan) instead of the
+# home-abbreviated `~`.
+[env_var.PWD]
+style = "bold fg:#d97706"
+format = '[$env_value]($style) '
 
 [git_branch]
 symbol = ""
-style = "bold magenta"
+style = "bold fg:#9333ea"
 format = '[($symbol)$branch]($style) '
 
 [git_status]
-style = "bold yellow"
+style = "bold fg:#dc2626"
 format = '([\($all_status$ahead_behind\)]($style) )'
 
 [python]
 symbol = "py:"
-style = "bold yellow"
+style = "bold fg:#0d9488"
 format = '[$symbol$version]($style) '
 
 [conda]
 symbol = "env:"
-style = "bold green"
+style = "bold fg:#16a34a"
 format = '[$symbol$environment]($style) '
 ignore_base = false
 
 [cmd_duration]
 min_time = 2000
-style = "bold yellow"
+style = "bold fg:#ca8a04"
 format = '[took $duration]($style) '
 
 [character]
-success_symbol = '[❯](bold green)'
-error_symbol = '[❯](bold red)'
+success_symbol = '[❯](bold fg:#16a34a)'
+error_symbol = '[❯](bold fg:#dc2626)'
 
-# Disable noisy modules
+# Disable noisy or duplicate modules
+[directory]
+disabled = true
 [os]
 disabled = true
 [aws]
