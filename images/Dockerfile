@@ -135,9 +135,23 @@ RUN curl -fsSL "https://github.com/starship/starship/releases/download/v${STARSH
     | tar -xz -C /usr/local/bin starship \
     && chmod +x /usr/local/bin/starship
 
+# Install plain Fira Code (no Nerd Font glyphs) for the JupyterLab terminal.
+# unzip is from the pixi env; put it on PATH for this RUN.
+RUN PATH="/opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/bin:${PATH}" \
+    /opt/scripts/install-firacode.sh "/opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/share/jupyter/lab/static"
+
+# Inject @font-face for Fira Code into JupyterLab's index.html so xterm.js
+# can render with it. Single <style> block; no JS bundle patching.
+RUN python3 -c "import sys; p=sys.argv[1]; h=open(p).read(); css='<style>@font-face{font-family:\"Fira Code\";font-style:normal;font-weight:400;font-display:block;src:url(\"/static/lab/fonts/FiraCode-Regular.woff2\") format(\"woff2\")}@font-face{font-family:\"Fira Code\";font-style:normal;font-weight:700;font-display:block;src:url(\"/static/lab/fonts/FiraCode-Bold.woff2\") format(\"woff2\")}</style>'; open(p,'w').write(h.replace('</head>', css + '</head>')) if 'Fira Code' not in h else None" \
+    "/opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/share/jupyter/lab/static/index.html"
+
 COPY terminal/bashrc /etc/skel/.bashrc
 COPY terminal/nebari-terminal.sh /etc/profile.d/nebari-terminal.sh
 COPY terminal/starship.toml /etc/starship.toml
+
+# Terminal font via user-settings (overrides JupyterLab's hardcoded default).
+RUN mkdir -p /etc/skel/.jupyter/lab/user-settings/@jupyterlab/terminal-extension
+COPY terminal/terminal-settings.json /etc/skel/.jupyter/lab/user-settings/@jupyterlab/terminal-extension/plugin.jupyterlab-settings
 
 COPY nebi/jupyter_server_config.py /usr/local/etc/jupyter/jupyter_server_config.py
 COPY nebi/icons /usr/local/etc/jupyter/icons

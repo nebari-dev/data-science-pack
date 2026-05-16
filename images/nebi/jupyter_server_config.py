@@ -1,4 +1,9 @@
+import mimetypes
 import os
+
+# Browser rejects woff2 with "Failed to decode" if the server returns
+# application/octet-stream. Register the correct MIME type.
+mimetypes.add_type("font/woff2", ".woff2")
 
 # jupyter-server-proxy configuration for Nebi
 # Launches `nebi serve` when the user clicks "Nebi" in the JupyterLab launcher.
