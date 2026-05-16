@@ -47,7 +47,6 @@ from conftest import rbac
 
 log = logging.getLogger("rbac-integration")
 
-REALM = "nebari"
 ROLE_NAME = "allow-group-directory-creation-role"
 
 
@@ -82,6 +81,27 @@ def kc(kc_url, kc_admin_password):
     return client
 
 
+@pytest.fixture(scope="module")
+def realm(kc: rbac.KCAdmin) -> Iterator[str]:
+    """Create a throwaway realm so the tests don't depend on the
+    deployer-provisioned ``nebari`` realm being ready (NIC's realm
+    setup is an async PostSync hook in the sandbox profile and the
+    timing isn't guaranteed). KC auto-creates the ``groups``
+    client-scope on every new realm, so the bootstrap exercises the
+    same code path it does on a real install.
+    """
+    name = f"test-{uuid.uuid4().hex[:10]}"
+    log.info("creating throwaway realm %s", name)
+    kc._request("POST", "", body={"realm": name, "enabled": True})
+    try:
+        yield name
+    finally:
+        try:
+            kc._request("DELETE", f"/{name}")
+        except Exception as exc:  # noqa: BLE001 — diagnostic only
+            log.warning("realm cleanup DELETE %s failed: %s", name, exc)
+
+
 # ---------------------------------------------------------------------------
 # Per-test scratch realm objects
 # ---------------------------------------------------------------------------
@@ -100,8 +120,8 @@ def _suffix() -> str:
 
 
 @pytest.fixture
-def scratch(kc: rbac.KCAdmin) -> Iterator[Scratch]:
-    """Create a throwaway OIDC client + group in the nebari realm.
+def scratch(kc: rbac.KCAdmin, realm: str) -> Iterator[Scratch]:
+    """Create a throwaway OIDC client + group in the test realm.
 
     Bootstrap operates on whatever ``hubClientId`` the deployer hands
     it, so any KC client will do — the test client need not look like
@@ -115,7 +135,7 @@ def scratch(kc: rbac.KCAdmin) -> Iterator[Scratch]:
     log.info("creating scratch client %s and group %s", client_id, group_path)
     kc._request(
         "POST",
-        f"/{REALM}/clients",
+        f"/{realm}/clients",
         body={
             "clientId": client_id,
             "protocol": "openid-connect",
@@ -124,14 +144,14 @@ def scratch(kc: rbac.KCAdmin) -> Iterator[Scratch]:
             "standardFlowEnabled": True,
         },
     )
-    client_uuid = kc.get_client_uuid(REALM, client_id)
+    client_uuid = kc.get_client_uuid(realm, client_id)
 
-    group = kc._request(
+    kc._request(
         "POST",
-        f"/{REALM}/groups",
+        f"/{realm}/groups",
         body={"name": group_path.lstrip("/")},
     )
-    group_id = kc.get_group_id_by_path(REALM, group_path)
+    group_id = kc.get_group_id_by_path(realm, group_path)
     assert group_id is not None, f"group {group_path} not created"
 
     yield Scratch(client_id, client_uuid, group_path, group_id)
@@ -139,8 +159,8 @@ def scratch(kc: rbac.KCAdmin) -> Iterator[Scratch]:
     # Best-effort cleanup. Test failures should leave artifacts in place
     # for diagnosis; CI tears down the whole cluster.
     for method, path in (
-        ("DELETE", f"/{REALM}/clients/{client_uuid}"),
-        ("DELETE", f"/{REALM}/groups/{group_id}"),
+        ("DELETE", f"/{realm}/clients/{client_uuid}"),
+        ("DELETE", f"/{realm}/groups/{group_id}"),
     ):
         try:
             kc._request(method, path)
@@ -148,12 +168,13 @@ def scratch(kc: rbac.KCAdmin) -> Iterator[Scratch]:
             log.warning("cleanup %s %s failed: %s", method, path, exc)
 
 
-def _config_for(scratch: Scratch, kc_url: str, kc_admin_password: str,
+def _config_for(scratch: Scratch, realm: str, kc_url: str,
+                kc_admin_password: str,
                 groups: tuple[str, ...] = ()) -> rbac.BootstrapConfig:
     return rbac.BootstrapConfig(
         kc_host=kc_url,
         admin_password=kc_admin_password,
-        realm=REALM,
+        realm=realm,
         hub_client_id=scratch.client_id,
         role_name=ROLE_NAME,
         shared_mount_groups=groups or (scratch.group_path,),
@@ -166,32 +187,32 @@ def _config_for(scratch: Scratch, kc_url: str, kc_admin_password: str,
 
 
 def test_fresh_provision_applies_every_step(
-    kc: rbac.KCAdmin, scratch: Scratch, kc_url, kc_admin_password,
+    kc: rbac.KCAdmin, realm: str, scratch: Scratch, kc_url, kc_admin_password,
 ):
     """End-to-end happy path on a freshly-created client + group."""
-    cfg = _config_for(scratch, kc_url, kc_admin_password)
+    cfg = _config_for(scratch, realm, kc_url, kc_admin_password)
     rbac.run(cfg, rbac.KCAdmin(kc_url, kc_admin_password))
 
     # 1. groups scope has a group-membership mapper.
-    scope_id = kc.get_client_scope_id(REALM, "groups")
-    assert scope_id is not None, "nebari realm should ship a 'groups' client-scope"
+    scope_id = kc.get_client_scope_id(realm, "groups")
+    assert scope_id is not None, "realm should ship a 'groups' client-scope"
     mappers = kc._request(
-        "GET", f"/{REALM}/client-scopes/{scope_id}/protocol-mappers/models",
+        "GET", f"/{realm}/client-scopes/{scope_id}/protocol-mappers/models",
     ) or []
     assert any(m["name"] == "group-membership" for m in mappers), (
         "bootstrap must add an oidc-group-membership-mapper to 'groups'"
     )
 
     # 2. serviceAccountsEnabled flipped on the hub client.
-    client = kc._request("GET", f"/{REALM}/clients/{scratch.client_uuid}")
+    client = kc._request("GET", f"/{realm}/clients/{scratch.client_uuid}")
     assert client["serviceAccountsEnabled"] is True
 
     # 3. Realm-management roles bound to the SA user.
-    sa_user_id = kc.get_service_account_user_id(REALM, scratch.client_uuid)
-    rm_uuid = kc.get_client_uuid(REALM, "realm-management")
+    sa_user_id = kc.get_service_account_user_id(realm, scratch.client_uuid)
+    rm_uuid = kc.get_client_uuid(realm, "realm-management")
     bindings = kc._request(
         "GET",
-        f"/{REALM}/users/{sa_user_id}/role-mappings/clients/{rm_uuid}",
+        f"/{realm}/users/{sa_user_id}/role-mappings/clients/{rm_uuid}",
     ) or []
     bound = {b["name"] for b in bindings}
     assert set(rbac.REALM_MGMT_ROLES).issubset(bound), (
@@ -201,14 +222,14 @@ def test_fresh_provision_applies_every_step(
 
     # 4. The shared-directory client role exists with the required attrs.
     role = kc._request(
-        "GET", f"/{REALM}/clients/{scratch.client_uuid}/roles/{ROLE_NAME}",
+        "GET", f"/{realm}/clients/{scratch.client_uuid}/roles/{ROLE_NAME}",
     )
     assert role["attributes"] == rbac.SHARED_DIR_ATTRIBUTES
 
     # 5. The scratch group has the role assigned.
     group_bindings = kc._request(
         "GET",
-        f"/{REALM}/groups/{scratch.group_id}"
+        f"/{realm}/groups/{scratch.group_id}"
         f"/role-mappings/clients/{scratch.client_uuid}",
     ) or []
     assert any(b["name"] == ROLE_NAME for b in group_bindings), (
@@ -217,13 +238,13 @@ def test_fresh_provision_applies_every_step(
 
 
 def test_second_run_makes_no_mutating_calls(
-    kc: rbac.KCAdmin, scratch: Scratch, kc_url, kc_admin_password,
+    kc: rbac.KCAdmin, realm: str, scratch: Scratch, kc_url, kc_admin_password,
 ):
     """Helm runs the Job on every install AND every upgrade. The second
     invocation MUST be read-only — otherwise every chart upgrade
     produces audit-log noise and risks reverting deployer overrides.
     """
-    cfg = _config_for(scratch, kc_url, kc_admin_password)
+    cfg = _config_for(scratch, realm, kc_url, kc_admin_password)
     rbac.run(cfg, rbac.KCAdmin(kc_url, kc_admin_password))
 
     # Wrap _request to record every call the second pass makes.
@@ -245,7 +266,7 @@ def test_second_run_makes_no_mutating_calls(
 
 
 def test_role_attribute_drift_is_reconciled(
-    kc: rbac.KCAdmin, scratch: Scratch, kc_url, kc_admin_password,
+    kc: rbac.KCAdmin, realm: str, scratch: Scratch, kc_url, kc_admin_password,
 ):
     """A pre-existing role with wrong attributes must be PUT back to
     the desired pair. Without reconciliation, the hub's KCRealmAdmin
@@ -257,18 +278,18 @@ def test_role_attribute_drift_is_reconciled(
     # the GET-before-create path and has to PUT to fix it.
     kc._request(
         "POST",
-        f"/{REALM}/clients/{scratch.client_uuid}/roles",
+        f"/{realm}/clients/{scratch.client_uuid}/roles",
         body={
             "name": ROLE_NAME,
             "attributes": {"component": ["wrong-component"]},
         },
     )
 
-    cfg = _config_for(scratch, kc_url, kc_admin_password)
+    cfg = _config_for(scratch, realm, kc_url, kc_admin_password)
     rbac.run(cfg, rbac.KCAdmin(kc_url, kc_admin_password))
 
     role = kc._request(
-        "GET", f"/{REALM}/clients/{scratch.client_uuid}/roles/{ROLE_NAME}",
+        "GET", f"/{realm}/clients/{scratch.client_uuid}/roles/{ROLE_NAME}",
     )
     assert role["attributes"] == rbac.SHARED_DIR_ATTRIBUTES, (
         f"role attrs not reconciled; got {role['attributes']!r}"
@@ -276,7 +297,8 @@ def test_role_attribute_drift_is_reconciled(
 
 
 def test_unknown_group_path_is_skipped(
-    kc: rbac.KCAdmin, scratch: Scratch, kc_url, kc_admin_password, caplog,
+    kc: rbac.KCAdmin, realm: str, scratch: Scratch,
+    kc_url, kc_admin_password, caplog,
 ):
     """Deployer typo in ``sharedMountGroups``: bootstrap must continue
     with the other (real) groups rather than abort and leave the realm
@@ -286,7 +308,7 @@ def test_unknown_group_path_is_skipped(
     """
     fake_path = f"/no-such-group-{_suffix()}"
     cfg = _config_for(
-        scratch, kc_url, kc_admin_password,
+        scratch, realm, kc_url, kc_admin_password,
         groups=(scratch.group_path, fake_path),
     )
 
@@ -301,7 +323,7 @@ def test_unknown_group_path_is_skipped(
     # Real group still got the role.
     bindings = kc._request(
         "GET",
-        f"/{REALM}/groups/{scratch.group_id}"
+        f"/{realm}/groups/{scratch.group_id}"
         f"/role-mappings/clients/{scratch.client_uuid}",
     ) or []
     assert any(b["name"] == ROLE_NAME for b in bindings)
