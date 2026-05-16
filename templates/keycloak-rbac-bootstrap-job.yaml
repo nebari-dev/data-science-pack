@@ -16,11 +16,15 @@ where it cannot be tested, linted, or single-stepped. Bumping the
 Python image tag forces a checksum-driven Job re-roll on the next
 chart upgrade.
 
-Gated on ``rbac.bootstrap.enabled`` AND the deployer providing a
-Secret reference for the KC admin password — the chart deploys
-fine without RBAC bootstrap pre-configured.
+Gated on:
+  - ``rbac.bootstrap.enabled`` AND
+  - the deployer providing a KC admin password Secret reference AND
+  - ``nebariapp.enabled`` — no Nebari operator / KC realm means there
+    is nothing to bootstrap; lets kind / local-dev installs come up
+    cleanly without the post-install Job hitting a missing namespace.
+The chart deploys fine without RBAC bootstrap pre-configured.
 */}}
-{{- if and .Values.rbac.bootstrap.enabled .Values.rbac.bootstrap.kcAdminCredentialSecret }}
+{{- if and .Values.nebariapp.enabled .Values.rbac.bootstrap.enabled .Values.rbac.bootstrap.kcAdminCredentialSecret }}
 {{/*
 Auto-derive hubClientId from release + chart name when the deployer
 hasn't set one explicitly. Matches the nebari-operator NebariApp
