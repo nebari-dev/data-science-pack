@@ -15,19 +15,9 @@ shopt -s histappend
 # Check window size after each command
 shopt -s checkwinsize
 
-# Colored ls and grep
-alias ls='ls --color=auto'
-alias grep='grep --color=auto'
-alias fgrep='fgrep --color=auto'
-alias egrep='egrep --color=auto'
-
-# Useful aliases
-alias ll='ls -alF'
-alias la='ls -A'
-alias l='ls -CF'
-
-# Source profile.d scripts for non-login shells (Starship init, etc.)
-# Login shells already source these via /etc/profile.
+# Aliases and prompt init live in /etc/profile.d/nebari-terminal.sh.
+# Login shells source it directly; this loop covers interactive
+# non-login shells too.
 if [ -d /etc/profile.d ]; then
     for f in /etc/profile.d/*.sh; do
         [ -r "$f" ] && . "$f"
