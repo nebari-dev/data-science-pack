@@ -126,5 +126,49 @@ RUN --mount=from=nebi-source,dst=/nebi-source \
         | tar -xz -C /usr/local/bin nebi; \
     fi
 
+# ========== terminal customization ===========
+# Install Starship prompt (multi-arch: amd64/arm64)
+ARG STARSHIP_VERSION=1.24.2
+RUN curl -fsSL "https://github.com/starship/starship/releases/download/v${STARSHIP_VERSION}/starship-$(uname -m)-unknown-linux-musl.tar.gz" \
+    | tar -xz -C /usr/local/bin starship \
+    && chmod +x /usr/local/bin/starship
+
+# Install Fira Code Nerd Font (TTF for browser terminal rendering)
+# unzip is provided by pixi; add pixi env to PATH for this step
+RUN PATH="/opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/bin:${PATH}" \
+    /opt/scripts/install-fonts.sh "/opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/share/jupyter/lab/static"
+
+# Inject Nerd Font: @font-face in index.html + patch default terminal font
+# in JupyterLab's built JS. The settingregistry has version mismatches that
+# prevent font overrides from reaching xterm.js, so we patch the hardcoded
+# defaultOptions directly in the bundle.
+COPY terminal/nerd-font-loader.js /tmp/nerd-font-loader.js
+RUN /opt/scripts/inject-font.sh \
+    /opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/share/jupyter/lab/static/index.html \
+    /tmp/nerd-font-loader.js \
+    && rm /tmp/nerd-font-loader.js
+
+# Patch JupyterLab's JS bundle:
+# 1. Change default terminal font to Nerd Font
+# 2. Gate xterm.open() on font availability (prevents boxes on first load)
+RUN python3 /opt/scripts/patch-terminal-font.py \
+    /opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/share/jupyter/lab/static/jlab_core.*.js
+
+# Shell configuration
+COPY terminal/bashrc /etc/skel/.bashrc
+COPY terminal/nebari-terminal.sh /etc/profile.d/nebari-terminal.sh
+COPY terminal/starship.toml /etc/starship.toml
+COPY terminal/starship-light.toml /etc/starship-light.toml
+
+# JupyterLab settings overrides (schema defaults for theme)
+COPY terminal/overrides.json /opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/share/jupyter/lab/settings/overrides.json
+
+# Terminal font as explicit user setting (NOT schema default).
+# overrides.json only changes schema defaults, but JupyterLab's Terminal widget
+# has hardcoded defaultOptions that take precedence over schema defaults.
+# Writing to /etc/skel ensures new users get these as actual user settings.
+RUN mkdir -p /etc/skel/.jupyter/lab/user-settings/@jupyterlab/terminal-extension
+COPY terminal/terminal-settings.json /etc/skel/.jupyter/lab/user-settings/@jupyterlab/terminal-extension/plugin.jupyterlab-settings
+
 COPY nebi/jupyter_server_config.py /usr/local/etc/jupyter/jupyter_server_config.py
 COPY nebi/icons /usr/local/etc/jupyter/icons
