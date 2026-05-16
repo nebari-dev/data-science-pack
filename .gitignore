@@ -25,3 +25,4 @@ venv/
 # Pixi
 .pixi/
 .venv-unit/
+tools/

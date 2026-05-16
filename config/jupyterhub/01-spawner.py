@@ -524,18 +524,37 @@ async def _nebi_pre_spawn_hook(spawner):
 def _get_user_groups(auth_state):
     """Extract and filter user groups from auth_state.
 
-    Reads groups stored in auth_state by KeyCloakOAuthenticator (from
-    Keycloak's IdToken `groups` claim). Applies the allowlist if
-    configured. Uses Path(g).name (last component) like classic Nebari so
-    /projects/myproj → myproj.
-    Deduplicates to prevent duplicate mountPath entries in the pod spec.
-    Note: does NOT fall back to spawner.user.groups — accessing that SQLAlchemy
-    relationship from an async hook causes DetachedInstanceError.
+    Source priority:
+      1. ``auth_state["groups_with_permission_to_mount"]`` if present —
+         this is the role-gated subset stamped by KeyCloakOAuthenticator
+         when RBAC is enabled. Being in 10 KC groups should NOT mean
+         mounting 10 shared dirs; only those holding the
+         ``shared-directory-mount`` role on the hub client get to mount.
+      2. ``auth_state["groups"]`` — the user's full group list, used as
+         a fallback for clusters that have not yet deployed the RBAC
+         bootstrap (legacy / chart-default behaviour).
+
+    Then applies the chart's static allowlist, Path(g).name normalisation
+    (so /projects/myproj → myproj), and dedup.
+
+    Note: does NOT fall back to spawner.user.groups — accessing that
+    SQLAlchemy relationship from an async hook causes
+    DetachedInstanceError.
     """
     raw_groups = []
     if auth_state:
-        raw_groups = auth_state.get("groups", [])
-        log.debug("shared-storage: raw groups from auth_state: %s", raw_groups)
+        if "groups_with_permission_to_mount" in auth_state:
+            raw_groups = auth_state["groups_with_permission_to_mount"]
+            log.debug(
+                "shared-storage: role-gated groups from auth_state: %s",
+                raw_groups,
+            )
+        else:
+            raw_groups = auth_state.get("groups", [])
+            log.debug(
+                "shared-storage: fallback groups from auth_state (no RBAC filter): %s",
+                raw_groups,
+            )
     else:
         log.debug("shared-storage: no auth_state (DummyAuthenticator?), groups will be empty")
 
@@ -663,17 +682,55 @@ async def _setup_nss_wrapper(spawner, username, groups):
         f"printf '%s\\n' {etc_group!r} > /tmp/group",
     ]
 
+    # Group membership changes between spawns (gain, lose, swap) are a
+    # normal operational scenario. The home PVC persists, so the shape
+    # `~/shared` took on the LAST spawn is still there at the start of
+    # THIS spawn. We must reconcile WITHOUT touching user data: the
+    # only thing safe to delete unconditionally is a symlink, because
+    # the actual data it points at lives elsewhere (either on the RWX
+    # shared PVC mounted at /shared, or — in the chart's RWO-only
+    # fallback — in per-group dirs that the spawner mkdir-ed but never
+    # wiped). Real directories at ~/shared may hold user files; never
+    # blow them away.
+    #
+    #   groups + shared_storage_enabled: chart wants a symlink to /shared.
+    #     A prior real-dir at ~/shared (e.g. from an earlier
+    #     shared_storage=false spawn) would block `ln -sfn`. The dir's
+    #     contents are stale local placeholders — the live data is at
+    #     /shared/<group>. Safe to wipe the dir AND any prior symlink.
+    #
+    #   groups + !shared_storage_enabled: per-group local dirs live IN
+    #     the home PVC at ~/shared/<group>. Users may have written to
+    #     them. Preserve everything; just remove any pre-existing
+    #     symlink (left over from a shared_storage=true era) so the
+    #     subsequent `mkdir -p ~/shared` doesn't follow a dangling link.
+    #
+    #   no groups: the original failure mode — user lost group
+    #     membership, prior symlink to /shared dangles, `mkdir -p`
+    #     followed it and errored with "File exists" exit 1, kubelet
+    #     killed the container, CrashLoop. Fix: remove the symlink and
+    #     create nothing. Preserve any real dir (may hold the user's
+    #     last-known-good data from a previous shared_storage=false
+    #     spawn) so re-joining a group later sees it.
+    REMOVE_SYMLINK_ONLY = (
+        "[ -L /home/jovyan/shared ] && rm /home/jovyan/shared; true"
+    )
     if groups and shared_storage_enabled:
         log.debug("nss-wrapper: symlinking ~/shared → %s (PVC-backed)", shared_storage_mount_prefix)
+        # rm -rf is safe here: ~/shared is either a symlink (deletes
+        # only the link), an empty placeholder dir (no data), or stale
+        # per-group dirs whose live data is at /shared/<group>.
+        nss_cmds.append("rm -rf /home/jovyan/shared")
         nss_cmds.append(f"ln -sfn {shared_storage_mount_prefix} /home/jovyan/shared")
     elif groups:
         log.debug("nss-wrapper: creating local ~/shared/<group> dirs (no PVC): %s", groups)
+        nss_cmds.append(REMOVE_SYMLINK_ONLY)
         nss_cmds.append("mkdir -p /home/jovyan/shared")
         for group in groups:
             nss_cmds.append(f"mkdir -p /home/jovyan/shared/{group}")
     else:
-        log.debug("nss-wrapper: no groups — creating empty ~/shared dir")
-        nss_cmds.append("mkdir -p /home/jovyan/shared")
+        log.debug("nss-wrapper: no groups — clearing any stale symlink")
+        nss_cmds.append(REMOVE_SYMLINK_ONLY)
 
     # Merge into existing lifecycle_hooks rather than replacing, so other
     # hooks (e.g. from future jhub-apps versions) are not silently overwritten.

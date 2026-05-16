@@ -25,6 +25,98 @@ from urllib.parse import urlencode
 from oauthenticator.generic import GenericOAuthenticator
 from oauthenticator.oauth2 import OAuthLogoutHandler
 from tornado.httpclient import HTTPClientError
+from traitlets import Unicode
+
+
+class KCRealmAdmin:
+    """Keycloak Admin API client, narrowed to the one question this chart
+    needs to answer: *of the KC groups this user belongs to, which ones
+    hold the shared-directory mount role?*
+
+    Deep module: one public method (:meth:`filter_user_groups_by_role`)
+    hides four HTTP round-trips, two JSON parsings, the
+    ``client_credentials`` grant against the realm token endpoint, the
+    role-attribute validation, and the set intersection. Callers don't
+    need to know the realm API URL exists.
+
+    The class takes ``http_fetch`` as a dependency rather than building
+    its own client so tests can mock at the HTTP boundary without
+    touching authenticator internals. In production it's bound to the
+    parent ``OAuthenticator.httpfetch``.
+
+    Construction is pure; only the public method does I/O.
+    """
+
+    REQUIRED_ATTRS = {
+        "component": "shared-directory",
+        "scopes": "write:shared-mount",
+    }
+
+    def __init__(self, http_fetch, *, token_url, client_id, client_secret, realm_api_url):
+        self._http_fetch = http_fetch
+        self._token_url = token_url
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._realm_api_url = realm_api_url
+
+    async def filter_user_groups_by_role(self, user_groups, role_name):
+        """Return the subset of ``user_groups`` (KC group paths) whose
+        members hold ``role_name`` on the configured OAuth client.
+
+        Returns ``[]`` if the role exists but lacks the required
+        ``component=shared-directory`` + ``scopes=write:shared-mount``
+        attributes — safer to grant no mounts than to grant all groups.
+
+        Raises whatever the underlying HTTP fetcher raises on transport
+        failure; callers handle.
+        """
+        token = await self._client_credentials_token()
+        client_uuid = await self._lookup_client_uuid(token, self._client_id)
+        role = await self._admin_get(token, f"/clients/{client_uuid}/roles/{role_name}")
+        if not self._role_has_required_attributes(role):
+            return []
+        role_groups = await self._admin_get(
+            token, f"/clients/{client_uuid}/roles/{role_name}/groups",
+        )
+        role_paths = {g.get("path") for g in role_groups if g.get("path")}
+        return [g for g in user_groups if g in role_paths]
+
+    # --- internals (each step is one HTTP round-trip) -------------------
+
+    async def _client_credentials_token(self):
+        body = urlencode({
+            "grant_type": "client_credentials",
+            "client_id": self._client_id,
+            "client_secret": self._client_secret,
+        })
+        token_info = await self._http_fetch(
+            self._token_url,
+            method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            body=body,
+        )
+        return token_info["access_token"]
+
+    async def _lookup_client_uuid(self, token, client_id):
+        clients = await self._admin_get(token, f"/clients?clientId={client_id}")
+        if not clients:
+            raise RuntimeError(f"KC client {client_id!r} not found in realm")
+        return clients[0]["id"]
+
+    async def _admin_get(self, token, path):
+        return await self._http_fetch(
+            f"{self._realm_api_url}{path}",
+            method="GET",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    @classmethod
+    def _role_has_required_attributes(cls, role):
+        attrs = role.get("attributes", {}) or {}
+        for key, expected in cls.REQUIRED_ATTRS.items():
+            if expected not in (attrs.get(key) or []):
+                return False
+        return True
 
 
 @dataclass(frozen=True)
@@ -125,6 +217,23 @@ class KeyCloakOAuthenticator(GenericOAuthenticator):
     # via `c.<Class>.<attr>` assignment.
     kc_config: "KeyCloakConfig | None" = None
 
+    # KC Admin API URL for the realm (e.g.
+    # https://keycloak.example/admin/realms/nebari). Used by
+    # update_auth_model to resolve which of a user's groups hold the
+    # shared-directory mount role. Empty disables RBAC entirely —
+    # auth_state["groups_with_permission_to_mount"] is not set, and the
+    # spawner falls back to its existing behaviour.
+    realm_api_url = Unicode("", config=True)
+    # Name of the KC client role that grants /shared/<group> mount
+    # permission. The role must carry attributes
+    # component=["shared-directory"] and scopes=["write:shared-mount"].
+    # Default name kept stable so existing realm-setup tooling
+    # (kcadm scripts, deployment tests) does not need to be edited
+    # to recognise the role.
+    shared_mount_role_name = Unicode(
+        "allow-group-directory-creation-role", config=True,
+    )
+
     async def refresh_user(self, user, handler=None):
         """Run KC's refresh_token grant and persist rotated tokens to auth_state.
 
@@ -194,7 +303,78 @@ class KeyCloakOAuthenticator(GenericOAuthenticator):
         if token_info.get("id_token"):
             new_state["id_token"] = token_info["id_token"]
         new_state["token_response"] = token_info
+        if self.realm_api_url:
+            # Re-evaluate the role-gated mount filter against current KC
+            # state. KC role/group changes mid-session take effect on
+            # this user's next spawn — no force-relogin needed.
+            user_groups = new_state.get("oauth_user", {}).get("groups", [])
+            try:
+                new_state["groups_with_permission_to_mount"] = (
+                    await self._realm_admin().filter_user_groups_by_role(
+                        user_groups, self.shared_mount_role_name,
+                    )
+                )
+            except Exception:
+                self.log.warning(
+                    "rbac: failed to refresh groups_with_permission_to_mount "
+                    "for %s — keeping last known set",
+                    user.name, exc_info=True,
+                )
+                # Preserve whatever was already there if the prior auth had it.
+                old_filter = auth_state.get("groups_with_permission_to_mount")
+                if old_filter is not None:
+                    new_state["groups_with_permission_to_mount"] = old_filter
         return {"auth_state": new_state}
+
+    async def update_auth_model(self, auth_model):
+        """Stamp auth_state with the subset of KC groups that hold the
+        shared-mount role.
+
+        JupyterHub calls this on every login (and on every refresh once
+        the parent class is configured to do so). The spawner reads
+        ``auth_state["groups_with_permission_to_mount"]`` at spawn time
+        to decide which ``/shared/<group>`` dirs to mount — being in a
+        KC group is necessary but not sufficient; the group also has to
+        hold the shared-directory role.
+
+        Disabled cleanly when ``realm_api_url`` is empty. KC Admin API
+        failures (no SA on the OAuth client, network blip, 5xx) are
+        logged and degraded to an empty set — login itself MUST succeed
+        regardless of realm-admin reachability.
+        """
+        auth_model = await super().update_auth_model(auth_model)
+        if not self.realm_api_url:
+            return auth_model
+        user_groups = (
+            auth_model.get("auth_state", {})
+            .get("oauth_user", {})
+            .get("groups", [])
+        )
+        try:
+            filtered = await self._realm_admin().filter_user_groups_by_role(
+                user_groups, self.shared_mount_role_name,
+            )
+        except Exception:
+            self.log.warning(
+                "rbac: failed to compute groups_with_permission_to_mount "
+                "for %s — granting no shared mounts this session",
+                auth_model.get("name"), exc_info=True,
+            )
+            filtered = []
+        auth_model["auth_state"]["groups_with_permission_to_mount"] = filtered
+        return auth_model
+
+    def _realm_admin(self):
+        """Build a :class:`KCRealmAdmin` from the authenticator's current
+        config. Cheap to construct (no I/O); we make a fresh one per
+        call so traitlet updates take effect immediately."""
+        return KCRealmAdmin(
+            self.httpfetch,
+            token_url=self.token_url,
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+            realm_api_url=self.realm_api_url,
+        )
 
 
 def configure(
@@ -206,14 +386,26 @@ def configure(
     callback_url: str,
     external_url: str,
     admin_groups=None,
+    realm_api_url: str = "",
+    shared_mount_role_name: str = "allow-group-directory-creation-role",
 ):
-    """Wire KeyCloakOAuthenticator onto JupyterHub's `c` config object."""
+    """Wire KeyCloakOAuthenticator onto JupyterHub's `c` config object.
+
+    ``realm_api_url`` enables role-gated shared-mount RBAC.
+    Pass the KC Admin API root for the realm
+    (e.g. ``https://kc.example/admin/realms/nebari``); leave empty to
+    disable. ``shared_mount_role_name`` is the KC client role whose
+    holders get ``/shared/<group>`` mounts — default matches classic
+    nebari.
+    """
     kc_config = KeyCloakConfig.build(
         issuer=issuer, post_logout_redirect_uri=external_url,
     )
     c.JupyterHub.authenticator_class = KeyCloakOAuthenticator
     c.KeyCloakOAuthenticator.client_id = client_id
     c.KeyCloakOAuthenticator.client_secret = client_secret
+    c.KeyCloakOAuthenticator.realm_api_url = realm_api_url
+    c.KeyCloakOAuthenticator.shared_mount_role_name = shared_mount_role_name
     c.KeyCloakOAuthenticator.oauth_callback_url = callback_url
     c.KeyCloakOAuthenticator.authorize_url = kc_config.authorize_url
     c.KeyCloakOAuthenticator.token_url = kc_config.token_url
@@ -269,6 +461,15 @@ except NameError:
 else:
     if os.environ.get("OAUTH_CALLBACK_URL"):
         _secret_dir = Path(os.environ.get("OAUTH_SECRET_DIR", "/etc/oauth"))
+        # RBAC for role-gated /shared/<group> mounts.
+        # Read from env vars on the hub Deployment rather than via
+        # z2jh.get_config (which sources from the hub Secret's
+        # embedded values.yaml). The Secret is hold-stable by
+        # ArgoCD-side ignoreDifferences on rotating fields, and
+        # mutating non-rotating fields inside it via Helm-template
+        # +ArgoCD-SSA doesn't reliably propagate. Env-var-on-Deployment
+        # flows through standard SSA + checksum-driven hub rollout, so
+        # it actually reaches every cluster on chart upgrade.
         configure(
             c,  # noqa: F821
             issuer=_read_secret_file(_secret_dir, "issuer-url"),
@@ -276,4 +477,9 @@ else:
             client_secret=_read_secret_file(_secret_dir, "client-secret"),
             callback_url=os.environ["OAUTH_CALLBACK_URL"],
             external_url=os.environ["OAUTH_EXTERNAL_URL"],
+            realm_api_url=os.environ.get("KC_REALM_API_URL", ""),
+            shared_mount_role_name=os.environ.get(
+                "KC_SHARED_MOUNT_ROLE",
+                "allow-group-directory-creation-role",
+            ),
         )

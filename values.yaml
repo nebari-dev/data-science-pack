@@ -166,6 +166,60 @@ nebi:
   # Port the Nebi server listens on (used in hub -> nebi NetworkPolicy egress rule).
   port: 8460
 
+# Helm Job that one-shots Keycloak realm config for role-gated shared
+# mounts. Runs as a post-install / post-upgrade
+# hook. Idempotent; skips cleanly if ``kcAdminCredentialSecret`` is
+# unset, so the chart can install on clusters that haven't yet
+# surfaced an admin credential.
+#
+# The Job:
+#   1. Adds the ``oidc-group-membership-mapper`` to the ``groups``
+#      client scope (the missing-mapper bug that surfaces as an empty
+#      groups claim on tokens).
+#   2. Creates the ``allow-group-directory-creation-role`` client
+#      role on the hub OIDC client with attributes
+#      ``component=shared-directory`` and
+#      ``scopes=write:shared-mount``.
+#   3. Grants the hub client ``serviceAccountsEnabled=true`` and
+#      binds ``realm-management.{view-clients,view-groups,view-realm}``
+#      to its service account.
+#   4. Assigns the shared-mount role to the KC groups in
+#      ``sharedMountGroups``.
+#
+# Runtime config the hub itself reads (admin API URL + role name)
+# goes under ``jupyterhub.custom.rbac-*`` — see below.
+rbac:
+  bootstrap:
+    enabled: false
+    # Namespace to run the Job in. Default (empty) = chart release
+    # namespace. Override to the keycloak namespace so the Job can
+    # read the admin-credentials Secret without cross-namespace copy.
+    namespace: ""
+    # Name of a K8s Secret holding the KC realm-admin password in key
+    # ``password``. Job authenticates as ``admin`` in the ``master``
+    # realm via kcadm.sh and applies config to ``realmName``.
+    kcAdminCredentialSecret: ""
+    # Key within ``kcAdminCredentialSecret`` that holds the password.
+    # Default ``admin-password`` matches the bitnami keycloak/keycloakx
+    # chart's ``keycloak-admin-credentials`` Secret layout.
+    kcAdminCredentialSecretKey: "admin-password"
+    # Realm to bootstrap.
+    realmName: "nebari"
+    # ClientId of the hub OAuth client in Keycloak (created by the
+    # nebari-operator NebariApp). The role + SA roles attach here.
+    hubClientId: ""
+    # Name of the client role the Job creates on the hub OIDC client.
+    # Must match ``KC_SHARED_MOUNT_ROLE`` env var on the hub Deployment
+    # (defaults align).
+    sharedMountRoleName: "allow-group-directory-creation-role"
+    # KC group paths to assign the shared-mount role to. Each path
+    # must already exist in KC. e.g.
+    #   - /admin
+    #   - /developer
+    sharedMountGroups: []
+    # Image used to run kcadm.sh (matches the realm's Keycloak version).
+    image: "quay.io/keycloak/keycloak:24.0.5"
+
 # JupyterHub configuration
 # All values under this key are passed to the jupyterhub subchart
 jupyterhub:
@@ -190,6 +244,23 @@ jupyterhub:
     shared-storage-enabled: false
     shared-storage-groups: []       # allowlist; empty = all groups from token
     shared-storage-mount-prefix: "/shared"
+    # Role-gated shared-mount RBAC configuration
+    # is delivered via the hub Deployment's env vars (KC_REALM_API_URL
+    # + KC_SHARED_MOUNT_ROLE), NOT via this `custom` block. Reasons:
+    #   * `custom.*` is rendered into the z2jh Secret's embedded
+    #     values.yaml. Several rotating fields in that Secret are
+    #     pinned via Argo `ignoreDifferences` to stop the
+    #     auth_token/cookie_secret churn — and broad ignore on
+    #     ``/data`` silently swallows config changes here.
+    #   * The hub Deployment's env vars flow through SSA + the
+    #     existing checksum-driven hub rollout cleanly.
+    #
+    # Set in the deployer's overlay under
+    # ``jupyterhub.hub.extraEnv.KC_REALM_API_URL``. Empty = RBAC off,
+    # spawner falls back to mounting every group the user is in
+    # (legacy behaviour). KC requirements (serviceAccountsEnabled,
+    # realm-management roles, the shared-directory role with attrs)
+    # are provisioned by the chart's ``rbac.bootstrap`` Helm Job.
     # jhub-apps (JAppsConfig) overrides.
     # Any key here is set as an attribute on c.JAppsConfig before install_jhub_apps().
     # See https://jhub-apps.nebari.dev/docs/configuration for available options.

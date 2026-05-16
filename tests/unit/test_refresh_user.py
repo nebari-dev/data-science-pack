@@ -61,7 +61,12 @@ def auth():
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # `asyncio.get_event_loop()` is deprecated since 3.10 and raises in
+    # 3.12+ once any other test in the same process has called
+    # `asyncio.run` (which creates + closes a fresh loop, leaving the
+    # thread with no current loop). `asyncio.run` is the supported
+    # pattern for sync test bodies.
+    return asyncio.run(coro)
 
 
 def test_refresh_user_returns_updated_auth_state_on_success(auth):

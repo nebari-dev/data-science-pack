@@ -7,6 +7,30 @@ on:
     branches: [main]
 
 jobs:
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Set up isolated Python env
+        run: |
+          uv venv .venv-unit --python 3.10
+          # Pinned versions the hub image runs against — tests exercise
+          # the real oauthenticator + jupyterhub contracts, not a stub.
+          uv pip install --python .venv-unit/bin/python \
+            jupyterhub==5.1.0 \
+            oauthenticator==16.3.0 \
+            pytest
+
+      - name: pytest tests/unit
+        run: .venv-unit/bin/python -m pytest tests/unit -v --color=yes
+
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15
