@@ -676,10 +676,19 @@ async def _setup_nss_wrapper(spawner, username, groups):
     log.debug("nss-wrapper: LD_PRELOAD and NSS_WRAPPER_* set in spawner environment")
 
     # Use printf instead of echo '...' to safely handle special characters in
-    # usernames (e.g. '@', colons) without shell quoting issues.
+    # usernames (e.g. '@', colons) without shell quoting issues. /tmp/group
+    # is multi-line: pass each entry as a separate printf argument so
+    # `'%s\n'` is reused per arg and produces real newlines between entries.
+    # A single-arg `printf '%s\n' 'a\nb\nc'` would NOT split — the inner
+    # `\n` is a literal backslash-n inside a single-quoted shell string,
+    # libnss_wrapper would see one malformed group entry, and getgrgid()
+    # would fail for every supplementary GID.
+    etc_group_lines = etc_group.split("\n")
     nss_cmds = [
         f"printf '%s\\n' {etc_passwd!r} > /tmp/passwd",
-        f"printf '%s\\n' {etc_group!r} > /tmp/group",
+        "printf '%s\\n' "
+        + " ".join(repr(line) for line in etc_group_lines)
+        + " > /tmp/group",
     ]
 
     # Group membership changes between spawns (gain, lose, swap) are a
