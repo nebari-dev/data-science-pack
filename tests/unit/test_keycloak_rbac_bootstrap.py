@@ -84,6 +84,17 @@ def _fake_realm(state):
             scope_id = path.split("/")[-3]
             state["mappers"].setdefault(scope_id, []).append(body)
             return None
+        # PUT /<realm>/client-scopes/<id>/protocol-mappers/models/<mid>
+        if method == "PUT" and "/protocol-mappers/models/" in path:
+            parts = path.split("/")
+            scope_id = parts[3]
+            mapper_id = parts[-1]
+            for m in state["mappers"].get(scope_id, []):
+                if m.get("id") == mapper_id:
+                    m.clear()
+                    m.update(body)
+                    return None
+            raise AssertionError(f"mapper {mapper_id} not found on scope {scope_id}")
         # GET /<realm>/clients?clientId=<id>
         if method == "GET" and path.startswith(f"/{REALM}/clients?clientId="):
             cid = path.rsplit("=", 1)[1]
@@ -220,7 +231,7 @@ def fresh_state():
     }
 
 
-def make_config(groups=("/admin",)):
+def make_config(groups=("/admin",), hub_external_url="https://hub.example.test"):
     return rbac.BootstrapConfig(
         kc_host="http://kc.test",
         admin_password="p",
@@ -228,6 +239,7 @@ def make_config(groups=("/admin",)):
         hub_client_id=HUB_CLIENT_ID,
         role_name=ROLE_NAME,
         shared_mount_groups=tuple(groups),
+        hub_external_url=hub_external_url,
     )
 
 
@@ -350,6 +362,81 @@ def test_unknown_group_path_is_skipped_with_a_warning(caplog):
 # ---------------------------------------------------------------------------
 # Role with stale attributes is reconciled
 # ---------------------------------------------------------------------------
+
+def test_existing_group_mapper_with_short_group_paths_is_reconciled():
+    """A nebari-operator-managed ``groups`` scope ships the mapper with
+    ``full.path: false``. KC's admin API returns role-group paths with
+    a leading ``/`` so the spawner's intersection silently goes empty
+    and ``/shared/<group>`` never mounts. Bootstrap must PUT the existing
+    mapper to flip ``full.path`` to ``true``."""
+    state = fresh_state()
+    state["mappers"]["scope-groups"] = [{
+        "id": "mapper-1",
+        "name": "group-membership",
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-group-membership-mapper",
+        "config": {
+            "full.path": "false",
+            "claim.name": "groups",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+        },
+    }]
+
+    def respond(method, path, **kw):
+        if method == "PUT" and path == f"/{REALM}/clients/{HUB_UUID}":
+            enable_sa_then_appear(state)
+        return _fake_realm(state)(method, path, **kw)
+
+    kc = make_kc(respond)
+    rbac.run(make_config(), kc)
+
+    mapper = state["mappers"]["scope-groups"][0]
+    assert mapper["config"]["full.path"] == "true"
+    assert mapper["config"]["claim.name"] == "groups"
+
+
+def test_hub_client_urls_are_set_when_hub_external_url_given():
+    """KC-initiated OAuth flows need ``rootUrl`` / ``baseUrl`` /
+    ``initiate.login.uri`` on the hub client so they route through
+    ``/hub/oauth_login`` first and set the JupyterHub state cookie.
+    Without these, JupyterHub raises ``400 OAuth state mismatch``."""
+    state = fresh_state()
+
+    def respond(method, path, **kw):
+        if method == "PUT" and path == f"/{REALM}/clients/{HUB_UUID}":
+            enable_sa_then_appear(state)
+        return _fake_realm(state)(method, path, **kw)
+
+    kc = make_kc(respond)
+    rbac.run(make_config(hub_external_url="https://hub.example.test"), kc)
+
+    client = next(c for c in state["clients"] if c["id"] == HUB_UUID)
+    assert client["rootUrl"] == "https://hub.example.test"
+    assert client["baseUrl"] == "/hub"
+    assert client["attributes"]["initiate.login.uri"] == (
+        "https://hub.example.test/hub/oauth_login"
+    )
+
+
+def test_hub_client_urls_skipped_when_hub_external_url_empty():
+    """Empty HUB_EXTERNAL_URL = deployer opted out; chart still bootstraps
+    the rest of the RBAC config but leaves rootUrl/baseUrl alone."""
+    state = fresh_state()
+
+    def respond(method, path, **kw):
+        if method == "PUT" and path == f"/{REALM}/clients/{HUB_UUID}":
+            enable_sa_then_appear(state)
+        return _fake_realm(state)(method, path, **kw)
+
+    kc = make_kc(respond)
+    rbac.run(make_config(hub_external_url=""), kc)
+
+    client = next(c for c in state["clients"] if c["id"] == HUB_UUID)
+    assert "rootUrl" not in client or client["rootUrl"] is None
+    assert "baseUrl" not in client or client["baseUrl"] is None
+
 
 def test_existing_role_with_wrong_attributes_is_reconciled():
     """Deployer (or an older bootstrap) left the role around with the

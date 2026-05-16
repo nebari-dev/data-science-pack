@@ -225,6 +225,16 @@ rbac:
     #   - /admin
     #   - /developer
     sharedMountGroups: []
+    # External hub URL (origin) used to set ``rootUrl`` / ``baseUrl`` /
+    # ``initiate.login.uri`` on the hub OIDC client. Without these,
+    # KC-initiated SSO flows (account console, third-party launchers)
+    # redirect straight to ``/hub/oauth_callback`` without first hitting
+    # ``/hub/oauth_login``, so JupyterHub has no ``oauthenticator-state``
+    # cookie set and returns ``400 OAuth state mismatch``.
+    # Leave empty to default to ``https://{nebariapp.hostname}``; set to
+    # an explicit URL for non-standard layouts. Set to "false" string or
+    # remove via Helm override to skip the patch entirely.
+    hubExternalUrl: ""
     # Keycloak server URL the bootstrap script talks to (Admin REST API
     # lives at ``<kcHost>/admin/realms/...``). In-cluster service URL by
     # default; override if Keycloak sits at a different hostname.

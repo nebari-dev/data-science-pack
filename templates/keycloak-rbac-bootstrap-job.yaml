@@ -108,6 +108,11 @@ spec:
               value: {{ .Values.rbac.bootstrap.sharedMountRoleName | quote }}
             - name: SHARED_MOUNT_GROUPS
               value: {{ .Values.rbac.bootstrap.sharedMountGroups | join "," | quote }}
+            - name: HUB_EXTERNAL_URL
+              {{- /* Defaults to https://{nebariapp.hostname} when unset so the
+              bootstrap can patch rootUrl / baseUrl / initiate.login.uri on the
+              hub OIDC client. Empty value disables the patch. */}}
+              value: {{ .Values.rbac.bootstrap.hubExternalUrl | default (printf "https://%s" .Values.nebariapp.hostname) | quote }}
             - name: PYTHONUNBUFFERED
               value: "1"
           volumeMounts:
