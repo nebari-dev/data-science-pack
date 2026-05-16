@@ -16,14 +16,22 @@ where it cannot be tested, linted, or single-stepped. Bumping the
 Python image tag forces a checksum-driven Job re-roll on the next
 chart upgrade.
 
-Gated on ``rbac.bootstrap.enabled`` AND the deployer providing a
-Secret reference for the KC admin password — the chart deploys
-fine without RBAC bootstrap pre-configured.
+Gated on:
+  - ``rbac.bootstrap.enabled`` AND
+  - the deployer providing a KC admin password Secret reference AND
+  - ``nebariapp.enabled`` — no Nebari operator / KC realm means there
+    is nothing to bootstrap; lets kind / local-dev installs come up
+    cleanly without the post-install Job hitting a missing namespace.
+The chart deploys fine without RBAC bootstrap pre-configured.
 */}}
-{{- if and .Values.rbac.bootstrap.enabled .Values.rbac.bootstrap.kcAdminCredentialSecret }}
-{{- if not .Values.rbac.bootstrap.hubClientId }}
-{{- fail "rbac.bootstrap.hubClientId must be set when rbac.bootstrap.enabled=true — the role + SA bindings attach to this Keycloak client." }}
-{{- end }}
+{{- if and .Values.nebariapp.enabled .Values.rbac.bootstrap.enabled .Values.rbac.bootstrap.kcAdminCredentialSecret }}
+{{/*
+Auto-derive hubClientId from release + chart name when the deployer
+hasn't set one explicitly. Matches the nebari-operator NebariApp
+client-id pattern: ``jupyterhub-<release>-<chart>``. Override via
+``rbac.bootstrap.hubClientId`` for non-standard layouts.
+*/}}
+{{- $hubClientId := .Values.rbac.bootstrap.hubClientId | default (printf "jupyterhub-%s-%s" .Release.Name .Chart.Name) }}
 {{- $script := .Files.Get "files/keycloak_rbac_bootstrap.py" }}
 {{- if not $script }}
 {{- fail "files/keycloak_rbac_bootstrap.py missing from the chart — repackage with the file included." }}
@@ -95,11 +103,16 @@ spec:
             - name: REALM
               value: {{ .Values.rbac.bootstrap.realmName | quote }}
             - name: HUB_CLIENT_ID
-              value: {{ .Values.rbac.bootstrap.hubClientId | quote }}
+              value: {{ $hubClientId | quote }}
             - name: ROLE_NAME
               value: {{ .Values.rbac.bootstrap.sharedMountRoleName | quote }}
             - name: SHARED_MOUNT_GROUPS
               value: {{ .Values.rbac.bootstrap.sharedMountGroups | join "," | quote }}
+            - name: HUB_EXTERNAL_URL
+              {{- /* Defaults to https://{nebariapp.hostname} when unset so the
+              bootstrap can patch rootUrl / baseUrl / initiate.login.uri on the
+              hub OIDC client. Empty value disables the patch. */}}
+              value: {{ .Values.rbac.bootstrap.hubExternalUrl | default (printf "https://%s" .Values.nebariapp.hostname) | quote }}
             - name: PYTHONUNBUFFERED
               value: "1"
           volumeMounts:

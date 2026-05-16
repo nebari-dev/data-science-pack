@@ -446,12 +446,52 @@ def _read_secret_file(secret_dir: Path, key: str) -> str:
     return (secret_dir / key).read_text().strip()
 
 
+def _derive_realm_api_url(issuer_url: str) -> str:
+    """Convert a KC realm issuer URL to its admin-API counterpart.
+
+    Issuer URL:    ``https://kc.example/realms/nebari``
+    Admin API URL: ``https://kc.example/admin/realms/nebari``
+
+    Returns ``""`` when the URL doesn't match the standard KC layout —
+    callers fall back to the explicit ``KC_REALM_API_URL`` env var.
+    """
+    marker = "/realms/"
+    idx = issuer_url.find(marker)
+    if idx == -1:
+        return ""
+    return f"{issuer_url[:idx]}/admin{issuer_url[idx:]}"
+
+
+# Chart-rendered constants. ``templates/hub-config.yaml`` substitutes the
+# ``__CHART_*__`` placeholders with values computed from ``nebariapp.hostname``
+# at Helm render time, so deployers do not need to repeat the URLs in their
+# ``hub.extraEnv``. Untouched placeholders (``__CHART_*__``) mean we are
+# either running under a non-substituting renderer (a unit test, a local
+# ``kind`` deploy without nebariapp) or the deployer opted out — both cases
+# fall back to the historical ``OAUTH_CALLBACK_URL`` env-var path.
+_CHART_OAUTH_CALLBACK_URL = "__CHART_OAUTH_CALLBACK_URL__"
+_CHART_OAUTH_EXTERNAL_URL = "__CHART_OAUTH_EXTERNAL_URL__"
+
+
+def _resolve_oauth_urls() -> tuple[str, str] | None:
+    """Return (callback_url, external_url) or None when OAuth is opted out.
+
+    Chart-rendered values win; env vars are the legacy escape hatch.
+    """
+    if _CHART_OAUTH_CALLBACK_URL.startswith("https://"):
+        return _CHART_OAUTH_CALLBACK_URL, _CHART_OAUTH_EXTERNAL_URL
+    env_callback = os.environ.get("OAUTH_CALLBACK_URL")
+    if env_callback:
+        return env_callback, os.environ["OAUTH_EXTERNAL_URL"]
+    return None
+
+
 # When loaded by JupyterHub, `c` is a magic global. On host imports (tests),
 # `c` is undefined and the production wiring is skipped.
 #
 # Production wiring is gated TWICE:
 #   1. `c` must exist (real JupyterHub run, not a host import).
-#   2. `OAUTH_CALLBACK_URL` must be set (deployer opted into KC OAuth).
+#   2. OAuth URLs must resolve — via chart-rendered constants OR env vars.
 # Without (2), the chart's default authenticator (dummy) stays in place,
 # so plain `kind` deploys come up without needing the operator Secret.
 try:
@@ -459,25 +499,29 @@ try:
 except NameError:
     pass
 else:
-    if os.environ.get("OAUTH_CALLBACK_URL"):
+    _urls = _resolve_oauth_urls()
+    if _urls is not None:
+        _callback_url, _external_url = _urls
         _secret_dir = Path(os.environ.get("OAUTH_SECRET_DIR", "/etc/oauth"))
         # RBAC for role-gated /shared/<group> mounts.
-        # Read from env vars on the hub Deployment rather than via
-        # z2jh.get_config (which sources from the hub Secret's
-        # embedded values.yaml). The Secret is hold-stable by
-        # ArgoCD-side ignoreDifferences on rotating fields, and
-        # mutating non-rotating fields inside it via Helm-template
-        # +ArgoCD-SSA doesn't reliably propagate. Env-var-on-Deployment
-        # flows through standard SSA + checksum-driven hub rollout, so
-        # it actually reaches every cluster on chart upgrade.
+        # ``realm_api_url`` is normally derived from the same issuer URL
+        # we mount for the OIDC client (one host, two paths). Deployers
+        # with a non-standard layout (e.g. KC admin behind a different
+        # gateway) can still pin it via the ``KC_REALM_API_URL`` env var.
+        # Role-name is rarely overridden; env-var path kept for parity.
+        _issuer = _read_secret_file(_secret_dir, "issuer-url")
+        _realm_api_url = (
+            os.environ.get("KC_REALM_API_URL")
+            or _derive_realm_api_url(_issuer)
+        )
         configure(
             c,  # noqa: F821
-            issuer=_read_secret_file(_secret_dir, "issuer-url"),
+            issuer=_issuer,
             client_id=_read_secret_file(_secret_dir, "client-id"),
             client_secret=_read_secret_file(_secret_dir, "client-secret"),
-            callback_url=os.environ["OAUTH_CALLBACK_URL"],
-            external_url=os.environ["OAUTH_EXTERNAL_URL"],
-            realm_api_url=os.environ.get("KC_REALM_API_URL", ""),
+            callback_url=_callback_url,
+            external_url=_external_url,
+            realm_api_url=_realm_api_url,
             shared_mount_role_name=os.environ.get(
                 "KC_SHARED_MOUNT_ROLE",
                 "allow-group-directory-creation-role",

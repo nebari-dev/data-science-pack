@@ -5,9 +5,20 @@ metadata:
   name: {{ include "nebari-data-science-pack.name" . }}-hub-config
   labels:
     {{- include "nebari-data-science-pack.labels" . | nindent 4 }}
+{{- /*
+  Substitute OAuth URL placeholders in 00-gateway-auth.py with values
+  computed from .Values.nebariapp.hostname. When nebariapp is disabled
+  or hostname is unset, leave the __CHART_*__ placeholders intact so the
+  python file falls back to its OAUTH_CALLBACK_URL env-var path (or to
+  dummy auth on a plain kind deploy).
+*/}}
+{{- $gatewayAuthPy := .Files.Get "config/jupyterhub/00-gateway-auth.py" -}}
+{{- if and .Values.nebariapp.enabled .Values.nebariapp.hostname }}
+{{- $gatewayAuthPy = $gatewayAuthPy | replace "__CHART_OAUTH_CALLBACK_URL__" (printf "https://%s/hub/oauth_callback" .Values.nebariapp.hostname) | replace "__CHART_OAUTH_EXTERNAL_URL__" (printf "https://%s/" .Values.nebariapp.hostname) -}}
+{{- end }}
 data:
   00-gateway-auth.py: |
-{{ .Files.Get "config/jupyterhub/00-gateway-auth.py" | indent 4 }}
+{{ $gatewayAuthPy | indent 4 }}
   01-spawner.py: |
 {{ .Files.Get "config/jupyterhub/01-spawner.py" | replace "__SINGLEUSER_CONFIG_CM__" (include "nebari-data-science-pack.singleuser-config" .) | indent 4 }}
   02-jhub-apps.py: |

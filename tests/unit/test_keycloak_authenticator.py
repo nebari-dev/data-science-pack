@@ -212,7 +212,7 @@ def test_any_keycloak_authenticated_user_is_allowed_by_default():
 
 
 # ---------------------------------------------------------------------------
-# Cycle 5 — production wiring is opt-in via env var
+# Cycle 5 — production wiring is opt-in via chart-rendered URLs or env vars
 # ---------------------------------------------------------------------------
 
 def test_module_loads_in_jupyterhub_context_without_oauth_env(monkeypatch):
@@ -234,3 +234,63 @@ def test_module_loads_in_jupyterhub_context_without_oauth_env(monkeypatch):
     assert "JupyterHub" not in c.__dict__, (
         "Authenticator was configured despite missing OAUTH env vars"
     )
+
+
+def test_resolve_returns_none_when_placeholders_intact_and_env_unset(monkeypatch):
+    """No chart substitution + no env vars → no auth wiring intended."""
+    for key in ("OAUTH_CALLBACK_URL", "OAUTH_EXTERNAL_URL"):
+        monkeypatch.delenv(key, raising=False)
+    mod = load_config_module("00-gateway-auth.py")
+    assert mod._resolve_oauth_urls() is None
+
+
+def test_resolve_prefers_chart_rendered_urls_over_env(monkeypatch):
+    """Helm-rendered constants are the supported production path."""
+    monkeypatch.setenv("OAUTH_CALLBACK_URL", "https://env-fallback.test/hub/oauth_callback")
+    monkeypatch.setenv("OAUTH_EXTERNAL_URL", "https://env-fallback.test/")
+    mod = load_config_module("00-gateway-auth.py")
+    monkeypatch.setattr(mod, "_CHART_OAUTH_CALLBACK_URL", "https://chart.test/hub/oauth_callback")
+    monkeypatch.setattr(mod, "_CHART_OAUTH_EXTERNAL_URL", "https://chart.test/")
+    assert mod._resolve_oauth_urls() == (
+        "https://chart.test/hub/oauth_callback",
+        "https://chart.test/",
+    )
+
+
+def test_resolve_falls_back_to_env_when_placeholders_intact(monkeypatch):
+    """Env-var path stays as the escape hatch for non-substituting renders."""
+    monkeypatch.setenv("OAUTH_CALLBACK_URL", "https://hub.example.test/hub/oauth_callback")
+    monkeypatch.setenv("OAUTH_EXTERNAL_URL", "https://hub.example.test/")
+    mod = load_config_module("00-gateway-auth.py")
+    # Placeholders left untouched (no Helm substitution at test time).
+    assert mod._CHART_OAUTH_CALLBACK_URL.startswith("__CHART_")
+    assert mod._resolve_oauth_urls() == (
+        "https://hub.example.test/hub/oauth_callback",
+        "https://hub.example.test/",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cycle 6 — KC realm admin URL derived from issuer URL
+# ---------------------------------------------------------------------------
+
+def test_derive_realm_api_url_inserts_admin_segment():
+    mod = load_config_module("00-gateway-auth.py")
+    assert mod._derive_realm_api_url(
+        "https://kc.example.test/realms/nebari"
+    ) == "https://kc.example.test/admin/realms/nebari"
+
+
+def test_derive_realm_api_url_handles_path_prefix():
+    """Some KC deployments serve at a sub-path (e.g. behind a gateway)."""
+    mod = load_config_module("00-gateway-auth.py")
+    assert mod._derive_realm_api_url(
+        "https://gw.example.test/keycloak/realms/nebari"
+    ) == "https://gw.example.test/keycloak/admin/realms/nebari"
+
+
+def test_derive_realm_api_url_returns_empty_for_non_kc_url():
+    """Unknown URL shape returns empty — caller falls back to env var."""
+    mod = load_config_module("00-gateway-auth.py")
+    assert mod._derive_realm_api_url("https://example.test/no/realms/here") != ""
+    assert mod._derive_realm_api_url("https://example.test/oidc") == ""

@@ -72,6 +72,7 @@ class BootstrapConfig:
     hub_client_id: str
     role_name: str
     shared_mount_groups: tuple[str, ...]
+    hub_external_url: str
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "BootstrapConfig":
@@ -84,6 +85,7 @@ class BootstrapConfig:
             hub_client_id=env["HUB_CLIENT_ID"],
             role_name=env["ROLE_NAME"],
             shared_mount_groups=tuple(g for g in raw_groups.split(",") if g),
+            hub_external_url=env.get("HUB_EXTERNAL_URL", "").rstrip("/"),
         )
 
 
@@ -203,12 +205,40 @@ class KCAdmin:
             if scope_id is None:
                 raise RuntimeError(f"client-scope {scope_name!r} creation failed")
 
+        desired_config = {
+            "full.path": "true",
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+        }
         mappers = self._request(
             "GET",
             f"/{realm}/client-scopes/{scope_id}/protocol-mappers/models",
         ) or []
-        if any(m["name"] == "group-membership" for m in mappers):
-            log.info("scope %r already has group-membership mapper", scope_name)
+        existing = next((m for m in mappers if m["name"] == "group-membership"), None)
+        if existing is not None:
+            # An operator-managed scope may pre-create the mapper with
+            # ``full.path: false`` — that yields ``groups: ["admin"]`` in
+            # the token, but the KC admin API returns role-groups as
+            # ``["/admin"]``, so the spawner's intersection comes up
+            # empty and ``/shared/<group>`` never mounts. Reconcile the
+            # mapper config to the chart's desired state on every run.
+            current = existing.get("config") or {}
+            if all(current.get(k) == v for k, v in desired_config.items()):
+                log.info("scope %r group-membership mapper already in desired state", scope_name)
+                return
+            log.info(
+                "reconciling group-membership mapper config on scope %r (was %s)",
+                scope_name, {k: current.get(k) for k in desired_config},
+            )
+            merged = {**current, **desired_config}
+            self._request(
+                "PUT",
+                f"/{realm}/client-scopes/{scope_id}/protocol-mappers/models/{existing['id']}",
+                body={**existing, "config": merged},
+            )
             return
 
         log.info("adding oidc-group-membership-mapper to scope %r", scope_name)
@@ -219,14 +249,7 @@ class KCAdmin:
                 "name": "group-membership",
                 "protocol": "openid-connect",
                 "protocolMapper": "oidc-group-membership-mapper",
-                "config": {
-                    "full.path": "true",
-                    "introspection.token.claim": "true",
-                    "userinfo.token.claim": "true",
-                    "id.token.claim": "true",
-                    "access.token.claim": "true",
-                    "claim.name": "groups",
-                },
+                "config": desired_config,
             },
             accept_409=True,
         )
@@ -251,6 +274,47 @@ class KCAdmin:
             return
         log.info("enabling serviceAccountsEnabled on client %s", client_uuid)
         client["serviceAccountsEnabled"] = True
+        self._request("PUT", f"/{realm}/clients/{client_uuid}", body=client)
+
+    def ensure_hub_client_urls(
+        self,
+        realm: str,
+        client_uuid: str,
+        hub_external_url: str,
+    ) -> None:
+        """Set ``rootUrl`` / ``baseUrl`` / ``initiate.login.uri`` on the hub
+        OIDC client so KC-initiated flows (account console "Sign in",
+        third-party launchers) route through ``/hub/oauth_login`` first,
+        which gives JupyterHub a chance to set its ``oauthenticator-state``
+        cookie before the callback runs. Without these the
+        OAuth flow lands directly on ``/hub/oauth_callback`` with no
+        matching cookie and JupyterHub raises a 400 "OAuth state mismatch".
+        """
+        if not hub_external_url:
+            log.info(
+                "hub client URL reconcile skipped: HUB_EXTERNAL_URL unset",
+            )
+            return
+        client = self._request("GET", f"/{realm}/clients/{client_uuid}")
+        desired_root = hub_external_url
+        desired_base = "/hub"
+        desired_initiate = f"{hub_external_url}/hub/oauth_login"
+        attrs = dict(client.get("attributes") or {})
+        if (
+            client.get("rootUrl") == desired_root
+            and client.get("baseUrl") == desired_base
+            and attrs.get("initiate.login.uri") == desired_initiate
+        ):
+            log.info("hub client URLs already in desired state")
+            return
+        log.info(
+            "reconciling hub client URLs (rootUrl=%r, baseUrl=%r, initiate.login.uri=%r)",
+            desired_root, desired_base, desired_initiate,
+        )
+        attrs["initiate.login.uri"] = desired_initiate
+        client["rootUrl"] = desired_root
+        client["baseUrl"] = desired_base
+        client["attributes"] = attrs
         self._request("PUT", f"/{realm}/clients/{client_uuid}", body=client)
 
     def get_service_account_user_id(
@@ -414,6 +478,7 @@ def run(config: BootstrapConfig, kc: KCAdmin) -> None:
     log.info("==> 2. hub OIDC client + service account")
     hub_uuid = kc.get_client_uuid(config.realm, config.hub_client_id)
     kc.enable_service_accounts(config.realm, hub_uuid)
+    kc.ensure_hub_client_urls(config.realm, hub_uuid, config.hub_external_url)
     sa_user_id = kc.get_service_account_user_id(config.realm, hub_uuid)
 
     log.info("==> 3. realm-management roles bound to hub SA")

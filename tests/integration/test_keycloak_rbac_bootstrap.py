@@ -178,6 +178,7 @@ def _config_for(scratch: Scratch, realm: str, kc_url: str,
         hub_client_id=scratch.client_id,
         role_name=ROLE_NAME,
         shared_mount_groups=groups or (scratch.group_path,),
+        hub_external_url="",
     )
 
 
