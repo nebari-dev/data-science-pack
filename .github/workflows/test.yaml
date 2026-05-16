@@ -66,21 +66,16 @@ jobs:
           docker pull "${{ steps.img.outputs.ref }}"
           docker save "${{ steps.img.outputs.ref }}" -o "${{ steps.img.outputs.tar }}"
 
-  # Matrix-split e2e: one job per test file. Each leg gets its own kind
-  # cluster, helm install, and parallel runner. Wall time = max(leg)
-  # instead of sum, so adding a new test file does not extend the
-  # critical path.
+  # Single e2e job with pytest-xdist parallelism. Per-test matrix would
+  # cost 10× kind+helm bootstrap (~45 s each); xdist pays the bootstrap
+  # once and runs N tests concurrently against the same hub. ubuntu-latest
+  # runners are 4 vCPU / 16 GB so -n 4 fits within z2jh's default
+  # singleuser resource asks (0.5 CPU + 1 GB per pod) without throttling.
   e2e:
-    name: e2e (${{ matrix.test_file }})
+    name: e2e
     runs-on: ubuntu-latest
     needs: prep
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        test_file:
-          - test_smoke.py
-          - test_shared_storage.py
     steps:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
@@ -103,32 +98,25 @@ jobs:
           key: singleuser-${{ needs.prep.outputs.ref }}
           fail-on-cache-miss: true
 
-      # Per-leg cluster name so concurrent matrix runs don't trample
-      # each other on the runner-shared docker daemon (unlikely on
-      # ubuntu-latest but cheap insurance + matches what conftest.py
-      # already reads from KIND_CLUSTER).
-      - name: Derive cluster name
-        id: cluster
-        run: |
-          STEM="${{ matrix.test_file }}"
-          STEM="${STEM%.py}"
-          STEM="${STEM#test_}"
-          # kind cluster names limited to 38 chars + must be DNS-1123.
-          NAME=$(echo "nbe2e-${STEM}" | tr '_' '-' | cut -c1-38)
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
-
       - name: Create kind cluster
-        run: kind create cluster --name "${{ steps.cluster.outputs.name }}" --wait 60s
+        run: kind create cluster --name nbtest-e2e --wait 60s
 
       - name: Side-load singleuser image into kind node
-        run: kind load image-archive "${{ needs.prep.outputs.tar }}" --name "${{ steps.cluster.outputs.name }}"
+        run: kind load image-archive "${{ needs.prep.outputs.tar }}" --name nbtest-e2e
 
-      - name: Run e2e tests
+      - name: Run e2e tests (xdist -n 4)
         env:
-          KIND_CLUSTER: ${{ steps.cluster.outputs.name }}
+          KIND_CLUSTER: nbtest-e2e
           KIND_KEEP: "1"
           PYTHONUNBUFFERED: "1"
-        run: uvx pytest "tests/e2e/${{ matrix.test_file }}" -v --color=yes
+        # pytest-xdist runs tests in parallel worker processes; each
+        # worker spawns its own user via the spawn_user fixture so the
+        # hub handles N concurrent pod creations. --dist=loadfile keeps
+        # tests from the same file on the same worker — preserves any
+        # per-file fixture state if it's added later. -n 4 matches the
+        # runner's vCPU count and leaves RAM headroom for the kind
+        # control plane + hub + proxy + 4 user pods.
+        run: uvx --with pytest-xdist pytest tests/e2e -v --color=yes -n 4 --dist=loadfile --durations=10
 
       - name: Hub logs on failure
         if: failure()
