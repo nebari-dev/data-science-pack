@@ -461,15 +461,14 @@ else:
     if os.environ.get("OAUTH_CALLBACK_URL"):
         _secret_dir = Path(os.environ.get("OAUTH_SECRET_DIR", "/etc/oauth"))
         # RBAC for role-gated /shared/<group> mounts (issue #2304).
-        # Empty realm_api_url disables RBAC; the spawner falls back to
-        # the broader auth_state.groups list. Read via z2jh.get_config
-        # (the chart's convention for `custom.*` values) rather than
-        # env vars so the values flow through ``jupyterhub.custom`` in
-        # values.yaml exactly like every other deploy-time setting.
-        try:
-            from z2jh import get_config as _z2jh_get_config
-        except ImportError:
-            _z2jh_get_config = lambda k, default=None: default  # noqa: E731
+        # Read from env vars on the hub Deployment rather than via
+        # z2jh.get_config (which sources from the hub Secret's
+        # embedded values.yaml). The Secret is hold-stable by
+        # ArgoCD-side ignoreDifferences on rotating fields, and
+        # mutating non-rotating fields inside it via Helm-template
+        # +ArgoCD-SSA doesn't reliably propagate. Env-var-on-Deployment
+        # flows through standard SSA + checksum-driven hub rollout, so
+        # it actually reaches every cluster on chart upgrade.
         configure(
             c,  # noqa: F821
             issuer=_read_secret_file(_secret_dir, "issuer-url"),
@@ -477,9 +476,9 @@ else:
             client_secret=_read_secret_file(_secret_dir, "client-secret"),
             callback_url=os.environ["OAUTH_CALLBACK_URL"],
             external_url=os.environ["OAUTH_EXTERNAL_URL"],
-            realm_api_url=_z2jh_get_config("custom.rbac-realm-api-url", ""),
-            shared_mount_role_name=_z2jh_get_config(
-                "custom.rbac-shared-mount-role-name",
+            realm_api_url=os.environ.get("KC_REALM_API_URL", ""),
+            shared_mount_role_name=os.environ.get(
+                "KC_SHARED_MOUNT_ROLE",
                 "allow-group-directory-creation-role",
             ),
         )

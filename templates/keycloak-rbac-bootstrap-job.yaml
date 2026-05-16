@@ -28,7 +28,9 @@ metadata:
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "5"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    # Keep the Job around after success so its logs are inspectable.
+    # Delete only before a fresh hook fires (next install/upgrade).
+    "helm.sh/hook-delete-policy": before-hook-creation
 spec:
   ttlSecondsAfterFinished: 600
   backoffLimit: 2
@@ -63,6 +65,10 @@ spec:
             - -ec
             - |
               KC=/opt/keycloak/bin/kcadm.sh
+              # Trace every command + xtrace so a failed bootstrap shows
+              # up at the first non-zero step rather than several echoed
+              # warnings later.
+              set -x
               $KC config credentials --server "$KC_HOST" --realm master \
                 --user admin --password "$KC_ADMIN_PASSWORD" >/dev/null
 
@@ -120,45 +126,68 @@ spec:
               fi
 
               echo "==> 4. realm-management roles bound to hub client SA"
+              # Resolve realm-management client UUID and the hub
+              # client's SA user. The SA user only exists after
+              # ``serviceAccountsEnabled=true`` lands; the update
+              # above is synchronous in KC but defensively retry the
+              # SA lookup a few times before bailing.
               REALM_MGMT_UUID=$($KC get clients -r "$REALM" -q clientId=realm-management --fields id \
                 | sed -n 's/.*"id" *: *"\([^"]*\)".*/\1/p' | head -1)
-              SA_USER_ID=$($KC get "clients/$HUB_UUID/service-account-user" -r "$REALM" \
-                | sed -n 's/.*"id" *: *"\([^"]*\)".*/\1/p' | head -1)
-              if [ -n "$REALM_MGMT_UUID" ] && [ -n "$SA_USER_ID" ]; then
-                for r in view-clients view-groups view-realm view-users; do
-                  ROLE_JSON=$($KC get "clients/$REALM_MGMT_UUID/roles/$r" -r "$REALM" 2>/dev/null || echo "")
-                  if [ -n "$ROLE_JSON" ]; then
-                    RID=$(echo "$ROLE_JSON" | sed -n 's/.*"id" *: *"\([^"]*\)".*/\1/p' | head -1)
-                    RNAME=$(echo "$ROLE_JSON" | sed -n 's/.*"name" *: *"\([^"]*\)".*/\1/p' | head -1)
-                    $KC create "users/$SA_USER_ID/role-mappings/clients/$REALM_MGMT_UUID" -r "$REALM" \
-                      -b "[{\"id\":\"$RID\",\"name\":\"$RNAME\"}]" \
-                      || echo "  realm-management/$r may already be bound"
-                  fi
-                done
-              else
-                echo "  WARN: realm-management lookup failed; SA roles not bound"
+              SA_USER_ID=""
+              for _attempt in 1 2 3 4 5; do
+                SA_USER_ID=$($KC get "clients/$HUB_UUID/service-account-user" -r "$REALM" 2>/dev/null \
+                  | sed -n 's/.*"id" *: *"\([^"]*\)".*/\1/p' | head -1)
+                [ -n "$SA_USER_ID" ] && break
+                sleep 2
+              done
+              if [ -z "$REALM_MGMT_UUID" ] || [ -z "$SA_USER_ID" ]; then
+                echo "  FATAL: realm-management ($REALM_MGMT_UUID) or hub SA ($SA_USER_ID) not resolvable"
+                exit 1
               fi
+              for r in view-clients view-groups view-realm view-users; do
+                RID=$($KC get "clients/$REALM_MGMT_UUID/roles/$r" -r "$REALM" 2>/dev/null \
+                  | sed -n 's/.*"id" *: *"\([^"]*\)".*/\1/p' | head -1)
+                if [ -z "$RID" ]; then
+                  echo "  WARN: role realm-management/$r not found"
+                  continue
+                fi
+                # POST is idempotent in KC; duplicate grants 409. The
+                # || true keeps the loop running.
+                $KC create "users/$SA_USER_ID/role-mappings/clients/$REALM_MGMT_UUID" -r "$REALM" \
+                  -b "[{\"id\":\"$RID\",\"name\":\"$r\"}]" \
+                  || echo "  realm-management/$r already bound"
+              done
+              # Verify so the Job log shows the final state.
+              echo "  hub SA realm-management roles after binding:"
+              $KC get "users/$SA_USER_ID/role-mappings/clients/$REALM_MGMT_UUID" -r "$REALM" \
+                --fields name 2>&1 | head -20
 
               echo "==> 5. Assign shared-mount role to listed groups"
               if [ -n "$SHARED_MOUNT_GROUPS" ]; then
                 ROLE_JSON=$($KC get "clients/$HUB_UUID/roles/$ROLE_NAME" -r "$REALM")
                 RID=$(echo "$ROLE_JSON" | sed -n 's/.*"id" *: *"\([^"]*\)".*/\1/p' | head -1)
-                IFS=,
-                for GROUP_PATH in $SHARED_MOUNT_GROUPS; do
-                  unset IFS
-                  GROUP_NAME=$(echo "$GROUP_PATH" | sed 's|^/||')
-                  GID=$($KC get groups -r "$REALM" -q search="$GROUP_NAME" --fields id,path \
-                    | sed -n "/\"path\" *: *\"$GROUP_PATH\"/,/^[},]/ s/.*\"id\" *: *\"\([^\"]*\)\".*/\1/p" | head -1)
+                # Comma-separated -> newline-separated so a single IFS=
+                # split works without leaking back into the loop body.
+                echo "$SHARED_MOUNT_GROUPS" | tr ',' '\n' | while IFS= read -r GROUP_PATH; do
+                  [ -z "$GROUP_PATH" ] && continue
+                  # KC's ``group-by-path`` endpoint returns the group
+                  # object directly — single JSON, stable field
+                  # ordering. Replaces the previous search-then-sed
+                  # approach which broke when the search-result JSON
+                  # listed id BEFORE path so the path-anchored sed
+                  # range couldn't capture id retroactively.
+                  GROUP_PATH_NO_LEAD=$(echo "$GROUP_PATH" | sed 's|^/||')
+                  GID=$($KC get "group-by-path/$GROUP_PATH_NO_LEAD" -r "$REALM" --fields id 2>/dev/null \
+                    | sed -n 's/.*"id" *: *"\([^"]*\)".*/\1/p' | head -1)
                   if [ -n "$GID" ]; then
+                    echo "  assigning $ROLE_NAME to group $GROUP_PATH (id=$GID)"
                     $KC create "groups/$GID/role-mappings/clients/$HUB_UUID" -r "$REALM" \
                       -b "[{\"id\":\"$RID\",\"name\":\"$ROLE_NAME\"}]" \
                       || echo "  group $GROUP_PATH already has role"
                   else
                     echo "  WARN: group $GROUP_PATH not found in realm; skipping"
                   fi
-                  IFS=,
                 done
-                unset IFS
               fi
 
               echo "==> rbac bootstrap done."

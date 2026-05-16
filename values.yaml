@@ -241,20 +241,23 @@ jupyterhub:
     shared-storage-enabled: false
     shared-storage-groups: []       # allowlist; empty = all groups from token
     shared-storage-mount-prefix: "/shared"
-    # Role-gated shared-mount RBAC (Nebari issue #2304).
-    # When ``rbac-realm-api-url`` is set, the hub calls KC's Admin API
-    # on every login + refresh to find which of the user's KC groups
-    # hold ``rbac-shared-mount-role-name`` on the hub OIDC client.
-    # The spawner then mounts only ``/shared/<group>`` for that
-    # filtered subset. Empty URL = RBAC disabled = spawner falls back
-    # to mounting every group the user is in (legacy behaviour).
+    # Role-gated shared-mount RBAC (Nebari issue #2304) configuration
+    # is delivered via the hub Deployment's env vars (KC_REALM_API_URL
+    # + KC_SHARED_MOUNT_ROLE), NOT via this `custom` block. Reasons:
+    #   * `custom.*` is rendered into the z2jh Secret's embedded
+    #     values.yaml. Several rotating fields in that Secret are
+    #     pinned via Argo `ignoreDifferences` to stop the
+    #     auth_token/cookie_secret churn — and broad ignore on
+    #     ``/data`` silently swallows config changes here.
+    #   * The hub Deployment's env vars flow through SSA + the
+    #     existing checksum-driven hub rollout cleanly.
     #
-    # KC requirements: the hub OAuth client needs
-    # ``serviceAccountsEnabled=true`` and realm-management roles
-    # (view-clients, view-groups, view-realm) bound to its SA. The
-    # chart's ``rbac.bootstrap`` Helm Job provisions this.
-    rbac-realm-api-url: ""
-    rbac-shared-mount-role-name: "allow-group-directory-creation-role"
+    # Set in the deployer's overlay under
+    # ``jupyterhub.hub.extraEnv.KC_REALM_API_URL``. Empty = RBAC off,
+    # spawner falls back to mounting every group the user is in
+    # (legacy behaviour). KC requirements (serviceAccountsEnabled,
+    # realm-management roles, the shared-directory role with attrs)
+    # are provisioned by the chart's ``rbac.bootstrap`` Helm Job.
     # jhub-apps (JAppsConfig) overrides.
     # Any key here is set as an attribute on c.JAppsConfig before install_jhub_apps().
     # See https://jhub-apps.nebari.dev/docs/configuration for available options.
