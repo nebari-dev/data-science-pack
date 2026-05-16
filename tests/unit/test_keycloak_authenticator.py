@@ -268,3 +268,29 @@ def test_resolve_falls_back_to_env_when_placeholders_intact(monkeypatch):
         "https://hub.example.test/hub/oauth_callback",
         "https://hub.example.test/",
     )
+
+
+# ---------------------------------------------------------------------------
+# Cycle 6 — KC realm admin URL derived from issuer URL
+# ---------------------------------------------------------------------------
+
+def test_derive_realm_api_url_inserts_admin_segment():
+    mod = load_config_module("00-gateway-auth.py")
+    assert mod._derive_realm_api_url(
+        "https://kc.example.test/realms/nebari"
+    ) == "https://kc.example.test/admin/realms/nebari"
+
+
+def test_derive_realm_api_url_handles_path_prefix():
+    """Some KC deployments serve at a sub-path (e.g. behind a gateway)."""
+    mod = load_config_module("00-gateway-auth.py")
+    assert mod._derive_realm_api_url(
+        "https://gw.example.test/keycloak/realms/nebari"
+    ) == "https://gw.example.test/keycloak/admin/realms/nebari"
+
+
+def test_derive_realm_api_url_returns_empty_for_non_kc_url():
+    """Unknown URL shape returns empty — caller falls back to env var."""
+    mod = load_config_module("00-gateway-auth.py")
+    assert mod._derive_realm_api_url("https://example.test/no/realms/here") != ""
+    assert mod._derive_realm_api_url("https://example.test/oidc") == ""

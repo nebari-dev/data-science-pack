@@ -410,6 +410,20 @@ jupyterhub:
         mountPath: /etc/oauth
         readOnly: true
 
+    # KC OIDC client secret. ``02-jhub-apps.py`` and ``03-nebi-envs.py``
+    # read this env var to do KC token exchange for the Nebi service.
+    # ``00-gateway-auth.py`` reads the same secret from /etc/oauth (file)
+    # for the KeyCloakOAuthenticator wiring — both paths point at the
+    # same operator-provisioned Secret.
+    # The secretName follows the same convention as oauth-client above.
+    extraEnv:
+      JUPYTERHUB_OIDC_CLIENT_SECRET:
+        valueFrom:
+          secretKeyRef:
+            name: data-science-pack-nebari-data-science-pack-oidc-client
+            key: client-secret
+            optional: true
+
     service:
       extraPorts:
         - port: 10202

@@ -446,6 +446,22 @@ def _read_secret_file(secret_dir: Path, key: str) -> str:
     return (secret_dir / key).read_text().strip()
 
 
+def _derive_realm_api_url(issuer_url: str) -> str:
+    """Convert a KC realm issuer URL to its admin-API counterpart.
+
+    Issuer URL:    ``https://kc.example/realms/nebari``
+    Admin API URL: ``https://kc.example/admin/realms/nebari``
+
+    Returns ``""`` when the URL doesn't match the standard KC layout —
+    callers fall back to the explicit ``KC_REALM_API_URL`` env var.
+    """
+    marker = "/realms/"
+    idx = issuer_url.find(marker)
+    if idx == -1:
+        return ""
+    return f"{issuer_url[:idx]}/admin{issuer_url[idx:]}"
+
+
 # Chart-rendered constants. ``templates/hub-config.yaml`` substitutes the
 # ``__CHART_*__`` placeholders with values computed from ``nebariapp.hostname``
 # at Helm render time, so deployers do not need to repeat the URLs in their
@@ -488,22 +504,24 @@ else:
         _callback_url, _external_url = _urls
         _secret_dir = Path(os.environ.get("OAUTH_SECRET_DIR", "/etc/oauth"))
         # RBAC for role-gated /shared/<group> mounts.
-        # Read realm_api_url / role-name from env vars on the hub
-        # Deployment rather than via z2jh.get_config (which sources from
-        # the hub Secret's embedded values.yaml). The Secret is held
-        # stable by ArgoCD-side ignoreDifferences on rotating fields, and
-        # mutating non-rotating fields inside it via Helm-template
-        # +ArgoCD-SSA doesn't reliably propagate. Env-var-on-Deployment
-        # flows through standard SSA + checksum-driven hub rollout, so
-        # it actually reaches every cluster on chart upgrade.
+        # ``realm_api_url`` is normally derived from the same issuer URL
+        # we mount for the OIDC client (one host, two paths). Deployers
+        # with a non-standard layout (e.g. KC admin behind a different
+        # gateway) can still pin it via the ``KC_REALM_API_URL`` env var.
+        # Role-name is rarely overridden; env-var path kept for parity.
+        _issuer = _read_secret_file(_secret_dir, "issuer-url")
+        _realm_api_url = (
+            os.environ.get("KC_REALM_API_URL")
+            or _derive_realm_api_url(_issuer)
+        )
         configure(
             c,  # noqa: F821
-            issuer=_read_secret_file(_secret_dir, "issuer-url"),
+            issuer=_issuer,
             client_id=_read_secret_file(_secret_dir, "client-id"),
             client_secret=_read_secret_file(_secret_dir, "client-secret"),
             callback_url=_callback_url,
             external_url=_external_url,
-            realm_api_url=os.environ.get("KC_REALM_API_URL", ""),
+            realm_api_url=_realm_api_url,
             shared_mount_role_name=os.environ.get(
                 "KC_SHARED_MOUNT_ROLE",
                 "allow-group-directory-creation-role",
