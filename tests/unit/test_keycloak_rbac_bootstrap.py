@@ -1,37 +1,29 @@
-"""Unit tests for the Keycloak RBAC bootstrap script.
+"""Unit tests for the Keycloak RBAC bootstrap orchestrator.
 
-Public contract being pinned:
+These tests pin the high-level control flow of :func:`run` against an
+in-memory fake of the KC Admin API. They are fast (no network) and
+catch logic regressions early in dev / pre-push.
 
-* Each step in :func:`run` is idempotent — given a Keycloak that
-  already has the desired state, the second call MUST make no
-  state-changing API requests (no POST, no PUT, no DELETE).
-* On a fresh realm, the script provisions: ``groups`` client scope
-  mapper, hub OIDC client serviceAccountsEnabled flag,
-  realm-management roles on the hub SA, the shared-directory client
-  role with the required attribute pair, and group→role assignment
-  for each configured KC group path.
-* Group paths that don't exist in the realm are logged as warnings
-  and skipped, NOT raised — the Helm Job must succeed even when the
-  deployer's ``sharedMountGroups`` list contains a typo.
+The corresponding integration tests in ``tests/integration/`` exercise
+the same orchestrator against a real Keycloak — those catch KC version
+skew, JSON quirks, and transport bugs the fake will never see. Unit
+tests cover orchestration; integration tests cover reality. Both are
+required.
 
 Tests mock at the HTTP-method boundary (:py:meth:`KCAdmin._request`)
-rather than at ``urllib.request``. That keeps the assertions focused
-on what the script DOES (which KC endpoints it hits, with what
-bodies) rather than on transport plumbing, and survives any change
-to how :py:meth:`KCAdmin._request` is implemented.
+rather than at ``urllib.request``: assertions stay focused on which KC
+endpoints are hit and with what bodies, and survive any change to how
+:py:meth:`KCAdmin._request` is implemented.
 """
 
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 import urllib.error
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -58,46 +50,6 @@ def http_404() -> urllib.error.HTTPError:
         url="http://kc.test/", code=404, msg="Not Found", hdrs=None,
         fp=BytesIO(b""),
     )
-
-
-# ---------------------------------------------------------------------------
-# BootstrapConfig.from_env
-# ---------------------------------------------------------------------------
-
-def test_bootstrap_config_parses_env_and_splits_groups_csv():
-    """Config carries everything ``run`` needs in a frozen dataclass —
-    no hidden globals, no ``os.environ`` access deep in the call tree.
-    Groups arrive as a comma-separated string from the Helm template
-    (where the user supplies a list) and split into a tuple of paths."""
-    env = {
-        "KC_HOST": "http://kc.test",
-        "KC_ADMIN_PASSWORD": "p",
-        "REALM": "nebari",
-        "HUB_CLIENT_ID": "hub",
-        "ROLE_NAME": "allow-group-directory-creation-role",
-        "SHARED_MOUNT_GROUPS": "/admin,/developer",
-    }
-    cfg = rbac.BootstrapConfig.from_env(env)
-    assert cfg.shared_mount_groups == ("/admin", "/developer")
-    assert cfg.realm == "nebari"
-    assert cfg.kc_host == "http://kc.test"
-
-
-def test_bootstrap_config_empty_groups_string_becomes_empty_tuple():
-    """Deployer leaves ``sharedMountGroups: []`` → empty CSV. Must not
-    inject a single empty-string group path."""
-    env = {
-        "KC_HOST": "x", "KC_ADMIN_PASSWORD": "p", "REALM": "r",
-        "HUB_CLIENT_ID": "h", "ROLE_NAME": "r", "SHARED_MOUNT_GROUPS": "",
-    }
-    assert rbac.BootstrapConfig.from_env(env).shared_mount_groups == ()
-
-
-def test_bootstrap_config_missing_required_env_raises_keyerror():
-    """``KeyError`` on missing var so ``main()`` returns exit code 2
-    instead of crashing mid-bootstrap with a half-applied realm."""
-    with pytest.raises(KeyError):
-        rbac.BootstrapConfig.from_env({"KC_HOST": "x"})
 
 
 # ---------------------------------------------------------------------------

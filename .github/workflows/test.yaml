@@ -158,3 +158,74 @@ jobs:
       - name: Hub logs on failure
         if: failure()
         run: kubectl logs -l component=hub --tail=200 || true
+
+  # Integration tests for files/keycloak_rbac_bootstrap.py against a
+  # real Keycloak. The bootstrap is the chart's only piece of Python
+  # that talks to Keycloak directly — KC version skew or payload
+  # changes would break it silently in prod. nebari-dev/action-nebari
+  # -sandbox spins up NIC's foundational stack (Keycloak + nebari realm
+  # included) in ~3 min on a vanilla runner; the tests then run against
+  # that live KC via a port-forward.
+  integration-rbac-bootstrap:
+    name: integration / rbac-bootstrap
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
+
+      - name: Provision Nebari sandbox (k3d + NIC platform stack)
+        id: sandbox
+        uses: nebari-dev/action-nebari-sandbox@68b3a446c8ce70e1e100540b97ec532ff2e97dd4  # v1.0.2
+        with:
+          profile: platform
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Wait for Keycloak service
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          kubectl -n keycloak rollout status statefulset/keycloak-keycloakx --timeout=300s
+          kubectl -n keycloak get svc/keycloak-keycloakx-http
+
+      - name: Port-forward Keycloak admin
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          # Background port-forward. The runner stops on workflow exit,
+          # so no explicit cleanup needed; ``timeout-minutes`` is the
+          # safety net.
+          nohup kubectl -n keycloak port-forward svc/keycloak-keycloakx-http \
+            18080:8080 >/tmp/kc-pf.log 2>&1 &
+          # Poll for the local port — port-forward exits non-zero on
+          # any error so we'd see it via the log dump on failure.
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:18080/realms/master/.well-known/openid-configuration >/dev/null; then
+              echo "KC reachable on :18080 (attempt $i)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Keycloak port-forward never came up"
+          cat /tmp/kc-pf.log
+          exit 1
+
+      - name: Run integration tests
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+          KC_URL: http://localhost:18080
+          KC_ADMIN_PASSWORD: ${{ steps.sandbox.outputs.keycloak-admin-password }}
+          PYTHONUNBUFFERED: "1"
+        run: uvx pytest tests/integration -v --color=yes
+
+      - name: Keycloak logs on failure
+        if: failure()
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          kubectl -n keycloak get pods
+          kubectl -n keycloak logs statefulset/keycloak-keycloakx --tail=200 || true
+          echo "--- port-forward log ---"
+          cat /tmp/kc-pf.log || true
