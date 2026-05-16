@@ -252,6 +252,33 @@ jupyterhub:
     nebi-client-id: ""       # Nebi's Keycloak OIDC client ID
     jupyterhub-client-id: "" # JupyterHub's Keycloak OIDC client ID
     nebi-environment-selector: false  # Set true to show nebi workspaces in jhub-apps env dropdown
+    # ---------------------------------------------------------------------------
+    # Profiles — resource sizing for JupyterLab pods.
+    # Each entry maps directly to a KubeSpawner profile_list item. Slugs are
+    # derived from display_name via z2jh's slugify (e.g. "Small Instance" →
+    # "small-instance"). Set to [] to disable the profile selector
+    # (single-instance mode).
+    # kubespawner_override accepts any valid KubeSpawner trait (cpu_limit,
+    # mem_limit, node_selector, image, extra_resource_limits, etc.) so deployers
+    # can add GPU profiles, custom images, etc. without code changes.
+    profiles:
+      - slug: small-instance
+        display_name: "Small Instance"
+        description: "1 CPU / 2 GB RAM"
+        default: true
+        kubespawner_override:
+          cpu_limit: 1
+          cpu_guarantee: 0.5
+          mem_limit: "2G"
+          mem_guarantee: "1G"
+      - slug: medium-instance
+        display_name: "Medium Instance"
+        description: "4 CPU / 8 GB RAM"
+        kubespawner_override:
+          cpu_limit: 4
+          cpu_guarantee: 2
+          mem_limit: "8G"
+          mem_guarantee: "4G"
     # Terminal customization: controls Starship prompt in JupyterLab terminals.
     # When false, falls back to the default bash prompt.
     terminal-customization: true
