@@ -1,9 +1,0 @@
-{
-  "@jupyterlab/apputils-extension:themes": {
-    "overrides": {
-      "ui-font-family": "'IBM Plex Sans', system-ui, -apple-system, sans-serif",
-      "content-font-family": "'IBM Plex Sans', system-ui, -apple-system, sans-serif",
-      "code-font-family": "'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-    }
-  }
-}

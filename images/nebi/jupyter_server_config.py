@@ -1,9 +1,22 @@
 import mimetypes
 import os
+import shutil
+from pathlib import Path
 
 # Browser rejects woff2 with "Failed to decode" if the server returns
 # application/octet-stream. Register the correct MIME type.
 mimetypes.add_type("font/woff2", ".woff2")
+
+# Seed apputils-extension theme settings (IBM Plex Sans + Fira Code) into the
+# user's home on every spawn. We *must* use user-settings, not admin-level
+# overrides.json — `@jupyterlab/apputils-extension:themes` reads
+# `settings.user.overrides` (NOT composite), so the schema-default path is
+# bypassed. Only seed when no file exists, so user-customized themes win.
+_skel = Path("/etc/skel/.jupyter/lab/user-settings/@jupyterlab/apputils-extension/themes.jupyterlab-settings")
+_dest = Path(os.environ.get("HOME", "")) / ".jupyter/lab/user-settings/@jupyterlab/apputils-extension/themes.jupyterlab-settings"
+if _skel.exists() and not _dest.exists():
+    _dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(_skel, _dest)
 
 # jupyter-server-proxy configuration for Nebi
 # Launches `nebi serve` when the user clicks "Nebi" in the JupyterLab launcher.
