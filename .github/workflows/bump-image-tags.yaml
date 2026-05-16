@@ -1,0 +1,62 @@
+# Auto-bump image tags in values.yaml after build-images.yaml succeeds on main.
+#
+# Triggers when Build Docker Images completes on main, computes the
+# sha-<short> tag from the head SHA, runs scripts/bump_image_tags.py to
+# update jupyterhub.hub.image.tag and jupyterhub.singleuser.image.tag in
+# values.yaml, then commits + pushes directly to main with [skip ci] in
+# the message so the bump commit does not retrigger the workflow chain.
+name: "Bump Image Tags"
+
+on:
+  workflow_run:
+    workflows: ["Build Docker Images"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bump-image-tags
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: "Bump values.yaml"
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: "Install ruamel.yaml"
+        run: pip install --no-cache-dir "ruamel.yaml==0.19.1"
+
+      - name: "Compute short SHA"
+        id: sha
+        run: |
+          short=$(echo "${{ github.event.workflow_run.head_sha }}" | cut -c1-7)
+          echo "short=$short" >> "$GITHUB_OUTPUT"
+
+      - name: "Bump tags in values.yaml"
+        run: python scripts/bump_image_tags.py "${{ steps.sha.outputs.short }}"
+
+      - name: "Commit and push if changed"
+        env:
+          SHORT: ${{ steps.sha.outputs.short }}
+        run: |
+          if git diff --quiet -- values.yaml; then
+            echo "values.yaml already at sha-$SHORT — nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add values.yaml
+          git commit -m "chore: bump image tags to sha-$SHORT [skip ci]"
+          git push origin main
