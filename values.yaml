@@ -261,6 +261,10 @@ jupyterhub:
     # kubespawner_override accepts any valid KubeSpawner trait (cpu_limit,
     # mem_limit, node_selector, image, extra_resource_limits, etc.) so deployers
     # can add GPU profiles, custom images, etc. without code changes.
+    # NOTE: when bumping singleuser.image.tag below, also bump the
+    # ``image: ...`` lines inside each profile_options.image.choices.default
+    # entry so the profile selector shows the right tag. (z2jh values.yaml
+    # cannot reference other values, so the duplication is unavoidable.)
     profiles:
       - slug: small-instance
         display_name: "Small Instance"
@@ -271,6 +275,15 @@ jupyterhub:
           cpu_guarantee: 0.5
           mem_limit: "2G"
           mem_guarantee: "1G"
+        profile_options:
+          image:
+            display_name: Image
+            choices:
+              default:
+                display_name: "nebari-data-science-pack-jupyterlab:sha-60c3d6f"
+                default: true
+                kubespawner_override:
+                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-60c3d6f
       - slug: medium-instance
         display_name: "Medium Instance"
         description: "4 CPU / 8 GB RAM — pandas / scikit-learn workloads on medium datasets."
@@ -279,6 +292,15 @@ jupyterhub:
           cpu_guarantee: 2
           mem_limit: "8G"
           mem_guarantee: "4G"
+        profile_options:
+          image:
+            display_name: Image
+            choices:
+              default:
+                display_name: "nebari-data-science-pack-jupyterlab:sha-60c3d6f"
+                default: true
+                kubespawner_override:
+                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-60c3d6f
     # Terminal customization: controls Starship prompt in JupyterLab terminals.
     # When false, falls back to the default bash prompt.
     terminal-customization: true
