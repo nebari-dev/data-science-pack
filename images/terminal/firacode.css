@@ -3,12 +3,12 @@
   font-style: normal;
   font-weight: 400;
   font-display: block;
-  src: url('/static/lab/fonts/FiraCode-Regular.woff2') format('woff2');
+  src: url('FiraCode-Regular.woff2') format('woff2');
 }
 @font-face {
   font-family: 'Fira Code';
   font-style: normal;
   font-weight: 700;
   font-display: block;
-  src: url('/static/lab/fonts/FiraCode-Bold.woff2') format('woff2');
+  src: url('FiraCode-Bold.woff2') format('woff2');
 }
