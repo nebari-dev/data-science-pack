@@ -137,13 +137,15 @@ RUN curl -fsSL "https://github.com/starship/starship/releases/download/v${STARSH
 
 # Install plain Fira Code (no Nerd Font glyphs) for the JupyterLab terminal.
 # unzip is from the pixi env; put it on PATH for this RUN.
+ARG JLAB_STATIC=/opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/share/jupyter/lab/static
 RUN PATH="/opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/bin:${PATH}" \
-    /opt/scripts/install-firacode.sh "/opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/share/jupyter/lab/static"
+    /opt/scripts/install-firacode.sh "${JLAB_STATIC}"
 
-# Inject @font-face for Fira Code into JupyterLab's index.html so xterm.js
-# can render with it. Single <style> block; no JS bundle patching.
-RUN python3 -c "import sys; p=sys.argv[1]; h=open(p).read(); css='<style>@font-face{font-family:\"Fira Code\";font-style:normal;font-weight:400;font-display:block;src:url(\"/static/lab/fonts/FiraCode-Regular.woff2\") format(\"woff2\")}@font-face{font-family:\"Fira Code\";font-style:normal;font-weight:700;font-display:block;src:url(\"/static/lab/fonts/FiraCode-Bold.woff2\") format(\"woff2\")}</style>'; open(p,'w').write(h.replace('</head>', css + '</head>')) if 'Fira Code' not in h else None" \
-    "/opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/share/jupyter/lab/static/index.html"
+# Wire the @font-face declarations into the page so xterm.js can use the
+# font. Drop the CSS next to the WOFF2 files and add one <link> to index.html.
+COPY terminal/firacode.css ${JLAB_STATIC}/fonts/firacode.css
+RUN sed -i 's|</head>|<link rel="stylesheet" href="/static/lab/fonts/firacode.css"></head>|' \
+    "${JLAB_STATIC}/index.html"
 
 COPY terminal/bashrc /etc/skel/.bashrc
 COPY terminal/nebari-terminal.sh /etc/profile.d/nebari-terminal.sh
