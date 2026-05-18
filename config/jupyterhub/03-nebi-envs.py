@@ -6,7 +6,6 @@ import logging
 import os
 from urllib.request import Request, urlopen
 
-from z2jh import get_config
 
 log = logging.getLogger(__name__)
 
