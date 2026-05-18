@@ -1,5 +1,42 @@
 # Default values for nebari-data-science-pack
 # This is a YAML-formatted file.
+#
+# =============================================================================
+# Zero-config deploy
+# =============================================================================
+# This chart aims to ship sensible defaults so a fresh deploy needs only ONE
+# field: keycloak.hostname. Everything else is derived from it by subdomain
+# convention; any field can be overridden explicitly.
+#
+# Minimal values for a fresh deploy:
+#   keycloak:
+#     hostname: keycloak.example.com    # drives derivation of hub/nebi URLs
+#
+# Conventions chart relies on (all override-able):
+#   * Keycloak is bitnami/keycloakx, namespace `keycloak`, realm `nebari`
+#   * Hub is reachable at `hub.<base-domain-of-keycloak.hostname>`
+#   * Nebi is reachable at `nebi.<base-domain-of-keycloak.hostname>`
+#   * nebari-operator runs in the cluster and provisions the OIDC client
+#
+# =============================================================================
+# Keycloak — only the hostname is required for full zero-config.
+# =============================================================================
+keycloak:
+  # External Keycloak FQDN. Empty is OK if you set nebariapp.hostname and
+  # nebi.remoteURL explicitly AND Keycloak is reachable at the in-cluster
+  # bitnami service path below.
+  hostname: ""
+  # Realm name; matches the standard Nebari operator setup.
+  realm: nebari
+  # In-cluster bitnami/keycloakx service host:port. Used by the hub <-> nebi
+  # token-exchange path when keycloak.hostname is empty.
+  serviceHost: "keycloak-keycloakx-http.keycloak.svc.cluster.local:8080"
+
+# Subdomain convention used to derive hub/nebi hostnames from
+# keycloak.hostname. Override per-deploy if your DNS doesn't follow this.
+subdomains:
+  hub: hub
+  nebi: nebi
 
 # =============================================================================
 # Nebari Integration
@@ -8,7 +45,10 @@
 # Set to false when deploying outside of Nebari.
 nebariapp:
   enabled: true
-  # hostname: jupyter.nic.local  # Required when enabled
+  # External JupyterHub FQDN.
+  # If empty, derived from keycloak.hostname as `<subdomains.hub>.<base-domain>`.
+  # e.g. keycloak.hostname=keycloak.example.com → hub.example.com
+  hostname: ""
   service:
     # JupyterHub proxy service (created by jupyterhub subchart)
     name: proxy-public
@@ -144,26 +184,34 @@ sharedStorage:
 # =============================================================================
 # Nebi Integration
 # =============================================================================
-# When the nebi-pack is deployed alongside data-science-pack, set remoteURL
-# so that JupyterLab pods auto-connect to the Nebi team server.
+# Companion service (nebari-nebi-pack) deployed in its own namespace.
 nebi:
   # Nebi binary image. An init container copies the nebi binary from this image
-  # into each JupyterLab pod, so the version is controlled at deploy time rather
-  # than baked into the jupyterlab image.
+  # into each JupyterLab pod, so the version is controlled at deploy time
+  # rather than baked into the JupyterLab image.
   image:
     repository: quay.io/nebari/nebi
-    tag: ""  # Required: e.g., sha-a2c937a or pr-199
+    # Pinned per chart release by CI (scripts/bump_image_tags.py); deployers
+    # can override to test a PR build or roll forward. Leave non-empty so
+    # the init container is wired by default.
+    tag: "sha-f024a78"
     pullPolicy: IfNotPresent
-  # URL of the remote Nebi server (e.g., https://nebi.nebari.example.com)
-  # When set, the Nebi local instance in each JupyterLab pod will auto-connect
-  # to this server using the user's Keycloak IdToken cookie.
+  # External Nebi FQDN (browser-side, used for OIDC redirect).
+  # If empty, derived from keycloak.hostname as
+  # `https://<subdomains.nebi>.<base-domain>`.
   remoteURL: ""
-  # Cluster-internal URL for Hub -> Nebi token exchange at spawn time.
-  # Example: http://nebi-pack-nebari-nebi-pack.nebi.svc.cluster.local
+  # In-cluster URL used by the hub for the token-exchange path.
+  # If empty, derived as
+  # `http://nebi-pack-nebari-nebi-pack.<nebi.namespace>.svc.cluster.local`.
   internalURL: ""
-  # Namespace where nebi-pack is deployed (enables hub -> nebi network policy).
-  namespace: ""
-  # Port the Nebi server listens on (used in hub -> nebi NetworkPolicy egress rule).
+  # Namespace where nebi-pack is deployed. Used both for the network policy
+  # and to derive internalURL above.
+  namespace: "nebi"
+  # Helm release name used by nebi-pack. Drives the derived OIDC client ID
+  # `nebi-<releaseName>-nebari-nebi-pack` (operator naming convention).
+  releaseName: "nebi-pack"
+  # Port the Nebi server listens on (used in hub -> nebi NetworkPolicy
+  # egress rule).
   port: 8460
 
 # Helm Job that one-shots Keycloak realm config for role-gated shared
@@ -244,23 +292,37 @@ rbac:
     image: "python:3.12-slim"
 
 # JupyterHub configuration
-# All values under this key are passed to the jupyterhub subchart
+# All values under this key are passed to the jupyterhub subchart.
 jupyterhub:
-  # custom is read by z2jh's get_config("custom.<key>") in hub config files.
-  # external-url is used by 02-jhub-apps.py to set JupyterHub.bind_url so that
-  # internal OAuth redirects use the real hostname instead of 0.0.0.0.
+  # custom is read by Python config files in jupyterhub_config.d/ via the
+  # `get_chart_config("<key>")` helper that ships in 00-chart-derived.py.
+  # Every URL / client-id below is OPTIONAL — leave empty and the chart will
+  # derive it from the top-level keycloak/nebariapp/nebi values. Explicit
+  # values always win.
   custom:
+    # JupyterHub bind URL hostname. If empty, derived from nebariapp.hostname
+    # (which itself defaults from keycloak.hostname + subdomains.hub).
     external-url: ""
-    nebi-image: ""         # Deployer must set to repository:tag (e.g., quay.io/nebari/nebi:sha-abc)
-    nebi-image-pull-policy: "IfNotPresent"  # Pull policy for nebi init container
-    nebi-remote-url: ""    # Deployer must set to match .Values.nebi.remoteURL
-    nebi-internal-url: ""  # Deployer must set to match .Values.nebi.internalURL
-    # Keycloak token exchange config (for Nebi auto-auth at spawn time).
-    # The hub client secret is read from JUPYTERHUB_OIDC_CLIENT_SECRET env var
-    # (mounted from K8s secret via hub.extraEnv) to avoid plaintext in values.
-    keycloak-token-url: ""   # e.g., http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/token
-    nebi-client-id: ""       # Nebi's Keycloak OIDC client ID
-    jupyterhub-client-id: "" # JupyterHub's Keycloak OIDC client ID
+    # Nebi binary image (repository:tag) copied into singleuser pods.
+    # If empty, derived as `<nebi.image.repository>:<nebi.image.tag>`.
+    nebi-image: ""
+    nebi-image-pull-policy: "IfNotPresent"
+    # External Nebi URL. If empty, derived from nebi.remoteURL (which
+    # itself defaults from keycloak.hostname + subdomains.nebi).
+    nebi-remote-url: ""
+    # In-cluster Nebi URL. If empty, derived from nebi.internalURL (which
+    # defaults to the standard in-cluster service for nebi-pack).
+    nebi-internal-url: ""
+    # Keycloak token endpoint used by the hub <-> nebi token exchange.
+    # If empty, derived from keycloak.hostname (https) or
+    # keycloak.serviceHost (in-cluster http), with keycloak.realm.
+    keycloak-token-url: ""
+    # OIDC client IDs (provisioned by nebari-operator's AuthReconciler).
+    # If empty, derived from operator naming convention:
+    #   jupyterhub-<release>-<chart>   (this chart)
+    #   nebi-<nebi.releaseName>-nebari-nebi-pack
+    nebi-client-id: ""
+    jupyterhub-client-id: ""
     # ---------------------------------------------------------------------------
     # Profiles — resource sizing for JupyterLab pods.
     # Each entry maps directly to a KubeSpawner profile_list item. Slugs are

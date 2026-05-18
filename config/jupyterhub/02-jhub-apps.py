@@ -12,7 +12,7 @@ from z2jh import get_config
 # bind_url must include the real external hostname so JupyterHub constructs
 # correct OAuth redirect URLs for internal services like jhub-apps.
 # See: nebari's 02-spawner.py for the same pattern.
-domain = get_config("custom.external-url", "")
+domain = get_chart_config("external-url")
 if domain:
     c.JupyterHub.bind_url = f"https://{domain}"
 else:

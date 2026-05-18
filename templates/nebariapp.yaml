@@ -7,7 +7,7 @@ metadata:
   labels:
     {{- include "nebari-data-science-pack.labels" . | nindent 4 }}
 spec:
-  hostname: {{ required "nebariapp.hostname is required when nebariapp.enabled is true" .Values.nebariapp.hostname }}
+  hostname: {{ required "Set keycloak.hostname (for auto-derivation) or nebariapp.hostname explicitly." (include "nebari-data-science-pack.hubHostname" .) }}
   service:
     name: {{ .Values.nebariapp.service.name | default "proxy-public" }}
     port: {{ .Values.nebariapp.service.port | default 80 }}

@@ -127,7 +127,7 @@ c.KubeSpawner.fs_gid = 100
 # Copy the nebi binary from the nebi server image into the JupyterLab pod
 # so the version matches what the deployment specifies, not what was baked
 # into the jupyterlab image at build time.
-nebi_image = get_config("custom.nebi-image", "")
+nebi_image = get_chart_config("nebi-image")
 if nebi_image:
     c.KubeSpawner.volumes.append({
         "name": "nebi-bin",
@@ -158,7 +158,7 @@ if nebi_image:
 env = dict(get_config("singleuser.extraEnv", {}))
 env["HOME"] = "/home/jovyan"
 
-nebi_remote_url = get_config("custom.nebi-remote-url", "")
+nebi_remote_url = get_chart_config("nebi-remote-url")
 if nebi_remote_url:
     env["NEBI_REMOTE_URL"] = nebi_remote_url
 
@@ -446,11 +446,11 @@ async def _nebi_pre_spawn_hook(spawner):
         log.warning("No auth_state for %s, skipping Nebi auto-auth", spawner.user.name)
         return
 
-    keycloak_url = get_config("custom.keycloak-token-url", "")
-    nebi_cid = get_config("custom.nebi-client-id", "")
-    hub_cid = get_config("custom.jupyterhub-client-id", "")
+    keycloak_url = get_chart_config("keycloak-token-url")
+    nebi_cid = get_chart_config("nebi-client-id")
+    hub_cid = get_chart_config("jupyterhub-client-id")
     hub_secret = os.environ.get("JUPYTERHUB_OIDC_CLIENT_SECRET", "")
-    nebi_url = get_config("custom.nebi-internal-url", "")
+    nebi_url = get_chart_config("nebi-internal-url")
 
     if not all([keycloak_url, nebi_cid, hub_cid, hub_secret, nebi_url]):
         log.warning("Nebi auto-auth not fully configured, skipping")
@@ -485,7 +485,7 @@ async def _nebi_pre_spawn_hook(spawner):
         conda_env = getattr(spawner, "user_options", {}).get("conda_env", "")
         if conda_env:
             workspace_name = conda_env.rsplit("/", 1)[-1] if "/" in conda_env else conda_env
-            nebi_remote = get_config("custom.nebi-remote-url", "")
+            nebi_remote = get_chart_config("nebi-remote-url")
             nebi_env_dir = "/tmp/nebi-env"
             ws_dir = f"{nebi_env_dir}/workspace"
             log.info(
@@ -785,7 +785,7 @@ async def _setup_nss_wrapper(spawner, username, groups):
 # and NSS wrapper setup. Each is implemented as its own focused function above.
 # The orchestrator always runs so NSS wrapper is active even without Nebi/shared.
 
-_nebi_auth_configured = bool(nebi_remote_url and get_config("custom.nebi-internal-url", ""))
+_nebi_auth_configured = bool(nebi_remote_url and get_chart_config("nebi-internal-url"))
 log.info(
     "pre-spawn: Nebi auth configured=%s, shared storage enabled=%s, mount prefix=%s",
     _nebi_auth_configured, shared_storage_enabled, shared_storage_mount_prefix,

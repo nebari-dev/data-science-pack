@@ -32,12 +32,12 @@ def get_nebi_environments(user):
     """
     username = user.get("name", "<unknown>")
 
-    # Read config values
-    keycloak_url = get_config("custom.keycloak-token-url", "")
-    nebi_cid = get_config("custom.nebi-client-id", "")
-    hub_cid = get_config("custom.jupyterhub-client-id", "")
+    # Read config values (chart-derived defaults fill in when blank)
+    keycloak_url = get_chart_config("keycloak-token-url")
+    nebi_cid = get_chart_config("nebi-client-id")
+    hub_cid = get_chart_config("jupyterhub-client-id")
     hub_secret = os.environ.get("JUPYTERHUB_OIDC_CLIENT_SECRET", "")
-    nebi_url = get_config("custom.nebi-internal-url", "")
+    nebi_url = get_chart_config("nebi-internal-url")
 
     if not all([keycloak_url, nebi_cid, hub_cid, hub_secret, nebi_url]):
         missing = []
@@ -171,7 +171,7 @@ def get_nebi_environments(user):
 # ---------------------------------------------------------------------------
 # Register the callable with jhub-apps
 # ---------------------------------------------------------------------------
-_nebi_internal_url = get_config("custom.nebi-internal-url", "")
+_nebi_internal_url = get_chart_config("nebi-internal-url")
 
 if _nebi_internal_url:
     c.JAppsConfig.conda_envs = get_nebi_environments

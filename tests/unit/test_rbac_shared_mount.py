@@ -187,6 +187,8 @@ def _load_spawner_module(custom=None):
     )
     sp = importlib.util.module_from_spec(sp_spec)
     sp.__dict__["c"] = _ChartConfig()  # bare FakeConfig stand-in
+    # 00-chart-derived.py defines get_chart_config in production; stub here.
+    sp.__dict__["get_chart_config"] = lambda k, default="": z.get_config(f"custom.{k}", default)
     sp_spec.loader.exec_module(sp)
     return sp
 
