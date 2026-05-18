@@ -14,7 +14,6 @@ helper ever consults `_CHART_DERIVED`.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
