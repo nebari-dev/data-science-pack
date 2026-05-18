@@ -261,7 +261,6 @@ jupyterhub:
     keycloak-token-url: ""   # e.g., http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/token
     nebi-client-id: ""       # Nebi's Keycloak OIDC client ID
     jupyterhub-client-id: "" # JupyterHub's Keycloak OIDC client ID
-    nebi-environment-selector: false  # Set true to show nebi workspaces in jhub-apps env dropdown
     # ---------------------------------------------------------------------------
     # Profiles — resource sizing for JupyterLab pods.
     # Each entry maps directly to a KubeSpawner profile_list item. Slugs are
