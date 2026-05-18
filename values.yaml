@@ -84,7 +84,7 @@ nebariapp:
   # landing page (requires nebari-operator with LandingPageConfig support).
   landingPage:
     # enabled: when true the service card is shown on the Nebari landing page.
-    enabled: false
+    enabled: true
     # displayName: human-readable label shown on the service card (max 64 chars).
     displayName: "JupyterHub"
     # description: supplementary text shown on the service card (max 256 chars).
@@ -120,8 +120,9 @@ singleuser:
     # kube-proxy DNATs the LoadBalancer VIP to the proxy pod IP BEFORE the
     # subchart's pod-level NetworkPolicy is evaluated — without this, pods
     # cannot resolve `https://<hub>/services/japps` or `https://<nebi-host>`
-    # via the cluster's external IP. Set true to enable.
-    allowEgressToGateway: false
+    # via the cluster's external IP. Harmless on clusters that don't need it
+    # (extra NetworkPolicy is unioned, never blocks). Default true.
+    allowEgressToGateway: true
     # Override these only if the operator's gateway is not at the standard
     # location (envoy-gateway-system / nebari-gateway / port 10443).
     gatewayNamespace: envoy-gateway-system
@@ -160,7 +161,7 @@ singleuserCuller:
 # RWX class (e.g. local dev, GCP, Azure). The image is a manifest-schema
 # repack of an abandoned upstream — tracked for removal in issue #29.
 sharedStorage:
-  enabled: false
+  enabled: true
   # StorageClass for the shared PVC when nfsServer.enabled=false.
   # Leave empty to use the cluster default (must support ReadWriteMany).
   storageClass: ""
@@ -174,8 +175,11 @@ sharedStorage:
   mountPathPrefix: /shared
   # Transitional in-cluster NFS server. Prefer an external RWX StorageClass
   # (see RECOMMENDED list above). Tracked for removal in issue #29.
+  # Default ON so the chart self-bootstraps RWX on any cluster with a default
+  # RWO StorageClass. Set false (and provide sharedStorage.storageClass) on
+  # clusters with a native RWX class (longhorn, EFS, Filestore).
   nfsServer:
-    enabled: false
+    enabled: true
     # StorageClass for the NFS server's backend RWO PVC.
     # Leave empty to use the cluster default.
     storageClass: ""
