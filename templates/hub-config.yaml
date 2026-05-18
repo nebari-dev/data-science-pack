@@ -56,13 +56,17 @@ data:
         """Read `jupyterhub.custom.<key>` with chart-rendered fallback.
 
         Order of precedence:
-          1. Deployer override in `jupyterhub.custom.<key>` (any value,
-             including falsy ones like False or 0, wins via sentinel check)
+          1. Deployer override in `jupyterhub.custom.<key>` — any *non-empty*
+             value wins. Empty string is treated as "not set" because the
+             chart's values.yaml bakes every override key in as `""`, and
+             z2jh sees those bakes as keys-with-empty-values, not as
+             missing keys. Distinguishing "deployer typed `''`" from "chart
+             default `''`" is not possible at runtime and rare in practice.
           2. Helm-rendered default from this chart (see _CHART_DERIVED above)
           3. `default` argument
         """
         value = _z2jh_get_config(f"custom.{key}", _MISSING)
-        if value is not _MISSING:
+        if value is not _MISSING and value != "":
             return value
         if key in _CHART_DERIVED:
             return _CHART_DERIVED[key]
