@@ -169,17 +169,14 @@ def get_nebi_environments(user):
 
 
 # ---------------------------------------------------------------------------
-# Register the callable with jhub-apps (only when enabled)
+# Register the callable with jhub-apps
 # ---------------------------------------------------------------------------
-_nebi_env_selector = get_config("custom.nebi-environment-selector", False)
 _nebi_internal_url = get_config("custom.nebi-internal-url", "")
 
-if _nebi_env_selector and _nebi_internal_url:
+if _nebi_internal_url:
     c.JAppsConfig.conda_envs = get_nebi_environments
     log.info("nebi-envs: environment selector enabled (nebi_url=%s)", _nebi_internal_url)
 else:
-    if _nebi_env_selector and not _nebi_internal_url:
-        log.warning(
-            "nebi-envs: nebi-environment-selector is true but nebi-internal-url is not set, "
-            "environment selector will not be enabled"
-        )
+    log.warning(
+        "nebi-envs: nebi-internal-url is not set, environment selector will not be enabled"
+    )
