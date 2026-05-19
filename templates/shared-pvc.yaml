@@ -1,5 +1,5 @@
 {{- if .Values.sharedStorage.enabled }}
-{{- if .Values.sharedStorage.nfsServer.enabled }}
+{{- if eq (include "nebari-data-science-pack.nfsServerEnabled" .) "true" }}
 # Fake StorageClass used only for PV↔PVC binding — no dynamic provisioner.
 # The unique name ensures this PVC only binds to our NFS-backed PV.
 apiVersion: storage.k8s.io/v1

@@ -57,13 +57,14 @@ def rendered_chart_derived(tmp_path_factory):
         pytest.skip("helm not on PATH")
 
     # Subchart deps must be present before `helm template` will render.
-    # Build them on demand so this test works on a fresh CI checkout that
-    # hasn't run `helm dependency update`.
+    # `helm dependency update` (vs `build`) also registers any chart repos
+    # listed in Chart.yaml that aren't already in the local helm config —
+    # CI runners start with an empty repo list.
     charts_dir = REPO_ROOT / "charts"
     has_deps = charts_dir.exists() and any(charts_dir.glob("jupyterhub-*.tgz"))
     if not has_deps:
         subprocess.run(
-            [helm, "dependency", "build", str(REPO_ROOT)],
+            [helm, "dependency", "update", str(REPO_ROOT)],
             capture_output=True, text=True, check=True,
         )
 

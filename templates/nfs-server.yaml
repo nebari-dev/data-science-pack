@@ -1,4 +1,4 @@
-{{- if and .Values.sharedStorage.enabled .Values.sharedStorage.nfsServer.enabled }}
+{{- if and .Values.sharedStorage.enabled (eq (include "nebari-data-science-pack.nfsServerEnabled" .) "true") }}
 # Backend RWO PVC — the actual disk the NFS server exports over the network.
 # Uses the cluster's default StorageClass (or sharedStorage.nfsServer.storageClass
 # if set) so it works on any provider including Hetzner hcloud-volumes.

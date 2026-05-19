@@ -58,6 +58,25 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+Effective NFS-server enablement.
+The chart's in-cluster NFS server is a fallback for clusters that have no
+native RWX StorageClass. When a deployer sets sharedStorage.storageClass
+explicitly, they have their own RWX class (Longhorn, EFS, Filestore…) so
+the chart's NFS pod is redundant — silently disable it.
+
+Returns "true" / "false" (strings) so callers gate via `eq ... "true"`.
+*/}}
+{{- define "nebari-data-science-pack.nfsServerEnabled" -}}
+{{- if .Values.sharedStorage.storageClass -}}
+false
+{{- else if .Values.sharedStorage.nfsServer.enabled -}}
+true
+{{- else -}}
+false
+{{- end -}}
+{{- end -}}
+
+{{/*
 ============================================================================
 Zero-config derivation helpers
 ============================================================================

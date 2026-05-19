@@ -1,4 +1,4 @@
-{{- if and .Values.sharedStorage.enabled .Values.sharedStorage.nfsServer.enabled .Values.sharedStorage.nfsServer.installClient }}
+{{- if and .Values.sharedStorage.enabled (eq (include "nebari-data-science-pack.nfsServerEnabled" .) "true") .Values.sharedStorage.nfsServer.installClient }}
 # DaemonSet that installs nfs-common on every node so kubelet can mount NFS PVs.
 # k3s worker nodes typically ship without NFS client tools; this is the standard
 # pattern for installing host-level dependencies without reprovisioning nodes.
