@@ -14,16 +14,38 @@ helper ever consults `_CHART_DERIVED`.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
+import textwrap
 import types
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _extract_configmap_key(rendered: str, key: str) -> str:
+    """Pull a single literal-block ConfigMap data key out of `helm template`
+    output. Avoids the pyyaml dependency by relying on the well-known
+    `<key>: |\n    <indented body>` layout helm emits.
+
+    Body lines are 4-space-indented; blank lines render with no indent.
+    The block ends at the next sibling data key (2-space indent + name + ":")
+    or the next top-level YAML key (no indent).
+    """
+    start = rf"^  {re.escape(key)}: \|\n"
+    body = r"((?:(?:    .*|)\n)+?)"
+    end = r"(?=^  [\w.-]+: |^[\w-]+: |^---|\Z)"
+    match = re.search(start + body + end, rendered, flags=re.MULTILINE)
+    if not match:
+        raise AssertionError(
+            f"Key {key!r} not found in rendered chart output. "
+            "Did the ConfigMap layout change?"
+        )
+    return textwrap.dedent(match.group(1))
 
 
 @pytest.fixture(scope="module")
@@ -34,6 +56,17 @@ def rendered_chart_derived(tmp_path_factory):
     if helm is None:
         pytest.skip("helm not on PATH")
 
+    # Subchart deps must be present before `helm template` will render.
+    # Build them on demand so this test works on a fresh CI checkout that
+    # hasn't run `helm dependency update`.
+    charts_dir = REPO_ROOT / "charts"
+    has_deps = charts_dir.exists() and any(charts_dir.glob("jupyterhub-*.tgz"))
+    if not has_deps:
+        subprocess.run(
+            [helm, "dependency", "build", str(REPO_ROOT)],
+            capture_output=True, text=True, check=True,
+        )
+
     values = tmp_path_factory.mktemp("values") / "values.yaml"
     values.write_text("keycloak:\n  hostname: keycloak.example.com\n")
 
@@ -43,13 +76,7 @@ def rendered_chart_derived(tmp_path_factory):
         capture_output=True, text=True, check=True,
     )
 
-    docs = list(yaml.safe_load_all(proc.stdout))
-    for d in docs:
-        if not d:
-            continue
-        if d.get("kind") == "ConfigMap" and "hub-config" in d.get("metadata", {}).get("name", ""):
-            return d["data"]["00-chart-derived.py"]
-    pytest.fail("hub-config ConfigMap with 00-chart-derived.py not in chart output")
+    return _extract_configmap_key(proc.stdout, "00-chart-derived.py")
 
 
 def _exec_chart_derived(source: str, z2jh_values: dict) -> dict:
