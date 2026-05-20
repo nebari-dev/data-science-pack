@@ -39,10 +39,18 @@ on:
         type: string
     secrets:
       QUAY_TOKEN:
-        required: true
+        required: false
 
 env:
   DOCKER_ORG: nebari
+  # Fork PRs skip docker login, push, and the merge job:
+  #   - secrets.QUAY_TOKEN is never exposed to fork-event workflows
+  #     (login-action errors with "Username and password required")
+  #   - pushing fork-built images to our public registry is a
+  #     supply-chain risk (see issue #86)
+  # Fork PRs still build (no push) so the Dockerfile/pixi config
+  # is validated. Same-repo PRs and non-PR events are unchanged.
+  IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true }}
 
 jobs:
   build-amd64:
@@ -54,18 +62,20 @@ jobs:
       - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
       - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        if: env.IS_FORK_PR != 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        if: env.IS_FORK_PR != 'true'
         with:
           registry: quay.io
           username: ${{ vars.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_TOKEN }}
 
-      - name: "Build and push by digest"
+      - name: "Build (and push by digest when not a fork PR)"
         id: build
         uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
         with:
@@ -73,7 +83,7 @@ jobs:
           file: images/Dockerfile
           target: ${{ inputs.target }}
           platforms: linux/amd64
-          outputs: type=image,"name=ghcr.io/${{ github.repository_owner }}/${{ inputs.image }},quay.io/${{ env.DOCKER_ORG }}/${{ inputs.image }}",push-by-digest=true,name-canonical=true,push=true
+          outputs: ${{ env.IS_FORK_PR != 'true' && format('type=image,"name=ghcr.io/{0}/{1},quay.io/{2}/{1}",push-by-digest=true,name-canonical=true,push=true', github.repository_owner, inputs.image, env.DOCKER_ORG) || '' }}
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}:cache-linux-amd64
           cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref=ghcr.io/{0}/{1}:cache-linux-amd64,mode=max', github.repository_owner, inputs.image) || '' }}
           build-args: |
@@ -82,12 +92,14 @@ jobs:
             NEBI_IMAGE=${{ inputs.nebi_image }}
 
       - name: "Export digest"
+        if: env.IS_FORK_PR != 'true'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: "Upload digest"
+        if: env.IS_FORK_PR != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ inputs.image }}-digest-linux-amd64
@@ -104,18 +116,20 @@ jobs:
       - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
       - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        if: env.IS_FORK_PR != 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        if: env.IS_FORK_PR != 'true'
         with:
           registry: quay.io
           username: ${{ vars.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_TOKEN }}
 
-      - name: "Build and push by digest"
+      - name: "Build (and push by digest when not a fork PR)"
         id: build
         uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
         with:
@@ -123,7 +137,7 @@ jobs:
           file: images/Dockerfile
           target: ${{ inputs.target }}
           platforms: linux/arm64
-          outputs: type=image,"name=ghcr.io/${{ github.repository_owner }}/${{ inputs.image }},quay.io/${{ env.DOCKER_ORG }}/${{ inputs.image }}",push-by-digest=true,name-canonical=true,push=true
+          outputs: ${{ env.IS_FORK_PR != 'true' && format('type=image,"name=ghcr.io/{0}/{1},quay.io/{2}/{1}",push-by-digest=true,name-canonical=true,push=true', github.repository_owner, inputs.image, env.DOCKER_ORG) || '' }}
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}:cache-linux-arm64
           cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref=ghcr.io/{0}/{1}:cache-linux-arm64,mode=max', github.repository_owner, inputs.image) || '' }}
           build-args: |
@@ -132,12 +146,14 @@ jobs:
             NEBI_IMAGE=${{ inputs.nebi_image }}
 
       - name: "Export digest"
+        if: env.IS_FORK_PR != 'true'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: "Upload digest"
+        if: env.IS_FORK_PR != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ inputs.image }}-digest-linux-arm64
@@ -148,7 +164,8 @@ jobs:
   merge:
     name: "Merge"
     runs-on: ubuntu-latest
-    if: "!cancelled() && !failure()"
+    # Fork PRs have nothing to merge (no digests pushed); skip entirely.
+    if: "!cancelled() && !failure() && env.IS_FORK_PR != 'true'"
     needs: [build-amd64, build-arm64]
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
