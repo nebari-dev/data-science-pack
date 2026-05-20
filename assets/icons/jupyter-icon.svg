@@ -3,10 +3,8 @@
 <desc>Created using Figma 0.90</desc>
 <style>
   .j-fill { fill: #4E4E4E; }
-  .j-stroke { fill: none; stroke: #4E4E4E; }
   @media (prefers-color-scheme: dark) {
     .j-fill { fill: #e8e8e8; }
-    .j-stroke { stroke: #e8e8e8; }
   }
 </style>
 <g id="Canvas" transform="translate(-1640 -2453)" figma:type="canvas">
