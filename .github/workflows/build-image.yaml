@@ -50,6 +50,11 @@ env:
   #     supply-chain risk (see issue #86)
   # Fork PRs still build (no push) so the Dockerfile/pixi config
   # is validated. Same-repo PRs and non-PR events are unchanged.
+  #
+  # NOTE: this env var is referenced from step-level `if:` only.
+  # GitHub Actions does not expose the `env` context to job-level
+  # `if:` expressions, so the `merge` job inlines the same condition
+  # directly. Keep the two in sync.
   IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true }}
 
 jobs:
@@ -165,7 +170,9 @@ jobs:
     name: "Merge"
     runs-on: ubuntu-latest
     # Fork PRs have nothing to merge (no digests pushed); skip entirely.
-    if: "!cancelled() && !failure() && env.IS_FORK_PR != 'true'"
+    # Inlined because job-level `if:` cannot read the `env` context —
+    # keep this expression in sync with workflow-level IS_FORK_PR.
+    if: "!cancelled() && !failure() && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true)"
     needs: [build-amd64, build-arm64]
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
