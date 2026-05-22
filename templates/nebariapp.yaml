@@ -17,58 +17,10 @@ spec:
   {{- end }}
   {{- with .Values.nebariapp.auth }}
   auth:
-    enabled: {{ .enabled | default true }}
-    provider: {{ .provider | default "keycloak" }}
-    provisionClient: {{ .provisionClient | default true }}
-    redirectURI: {{ .redirectURI | default "/oauth2/callback" }}
-    {{- with .scopes }}
-    scopes:
-      {{- toYaml . | nindent 6 }}
-    {{- end }}
-    {{- if hasKey . "enforceAtGateway" }}
-    enforceAtGateway: {{ .enforceAtGateway }}
-    {{- end }}
-    {{- if hasKey . "forwardAccessToken" }}
-    forwardAccessToken: {{ .forwardAccessToken }}
-    {{- end }}
-    {{- with .tokenExchange }}
-    tokenExchange:
-      {{- toYaml . | nindent 6 }}
-    {{- end }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
   {{- with .Values.nebariapp.landingPage }}
   landingPage:
-    enabled: {{ .enabled | default false }}
-    {{- with .displayName }}
-    displayName: {{ . | quote }}
-    {{- end }}
-    {{- with .description }}
-    description: {{ . | quote }}
-    {{- end }}
-    {{- with .icon }}
-    icon: {{ . | quote }}
-    {{- end }}
-    {{- with .category }}
-    category: {{ . | quote }}
-    {{- end }}
-    {{- with .priority }}
-    priority: {{ . }}
-    {{- end }}
-    {{- with .externalUrl }}
-    externalUrl: {{ . | quote }}
-    {{- end }}
-    {{- with .healthCheck }}
-    healthCheck:
-      enabled: {{ .enabled | default false }}
-      {{- with .path }}
-      path: {{ . | quote }}
-      {{- end }}
-      {{- with .intervalSeconds }}
-      intervalSeconds: {{ . }}
-      {{- end }}
-      {{- with .timeoutSeconds }}
-      timeoutSeconds: {{ . }}
-      {{- end }}
-    {{- end }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
 {{- end }}
