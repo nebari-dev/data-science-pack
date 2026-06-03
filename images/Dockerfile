@@ -1,4 +1,5 @@
 ARG BASE_IMAGE=ubuntu:24.04
+ARG NEBI_IMAGE=""
 FROM ${BASE_IMAGE} AS builder
 LABEL MAINTAINER="Nebari development team"
 
@@ -107,7 +108,6 @@ ENV PATH=/opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/bin:${NVIDIA_PATH}:$PATH
 # When NEBI_IMAGE is set (e.g., quay.io/nebari/nebi:sha-abc1234), the binary is
 # copied from that image. Otherwise, downloaded from the GitHub release.
 # Useful for testing unreleased nebi versions.
-ARG NEBI_IMAGE=""
 FROM ${NEBI_IMAGE:-scratch} AS nebi-source
 
 # ========== jupyterlab (base + nebi) ===========
