@@ -113,7 +113,7 @@ FROM ${NEBI_IMAGE:-scratch} AS nebi-source
 # ========== jupyterlab (base + nebi) ===========
 FROM jupyterlab-base AS jupyterlab
 
-ARG NEBI_VERSION=0.10.3
+ARG NEBI_VERSION=0.12-rc2
 ARG TARGETARCH
 
 # Install nebi: copy from NEBI_IMAGE if provided, else download from GitHub release.
