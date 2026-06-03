@@ -86,6 +86,20 @@ existing `nebi-image` init-container block:
    `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`,
    `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`.
 
+### The `nebi-pull` init container
+
+When a Nebi workspace is selected, `_nebi_pre_spawn_hook` adds a `nebi-pull`
+init container that runs `nebi pull` + `pixi install` — both of which make
+outbound HTTPS calls (PyPI/conda, the Nebi server) that the inspecting proxy
+re-signs. That egress needs the merged bundle too, so when the trust bundle is
+enabled the same five CA env vars and the `ca-merged` mount are injected into
+`nebi-pull`. Two ordering requirements follow, both satisfied by running
+`_setup_trust_bundle` *before* `_nebi_pre_spawn_hook` in `_pre_spawn_hook`:
+
+- `merge-ca-bundle` must be appended (and therefore execute) before
+  `nebi-pull`, so the merged file already exists when `nebi-pull` reads it.
+- The `ca-merged` emptyDir volume must exist before `nebi-pull` mounts it.
+
 ### Gating
 
 New chart config `custom.trust-bundle-enabled` (default `false`), read in

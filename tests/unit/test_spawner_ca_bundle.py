@@ -64,6 +64,7 @@ def test_setup_trust_bundle_mounts_merges_and_sets_env():
     # merge init container using the spawn image
     init = next(c for c in spawner.init_containers if c["name"] == "merge-ca-bundle")
     assert init["image"] == spawner.image
+    assert init["imagePullPolicy"] == "IfNotPresent"
     cmd = init["command"][2]
     assert "cp /etc/ssl/certs/ca-certificates.crt /merged/ca-bundle.crt" in cmd
     assert "cat /org-ca/ca-certificates.crt >> /merged/ca-bundle.crt" in cmd
@@ -157,4 +158,85 @@ def test_pre_spawn_hook_applies_trust_bundle_when_enabled():
     asyncio.run(mod._pre_spawn_hook(spawner))
 
     assert any(v["name"] == "org-ca" for v in spawner.volumes)
+    assert any(c["name"] == "merge-ca-bundle" for c in spawner.init_containers)
     assert spawner.environment["REQUESTS_CA_BUNDLE"] == MERGED
+
+
+# --- nebi-pull init container CA wiring -------------------------------------
+# When a Nebi workspace is selected, _nebi_pre_spawn_hook adds a `nebi-pull`
+# init container that runs `nebi pull` + `pixi install` over HTTPS. Behind the
+# inspecting proxy that egress also needs the merged bundle, so the CA env vars
+# and ca-merged mount must be injected when the trust bundle is enabled.
+
+_NEBI_CONFIG = {
+    "custom.nebi-remote-url": "https://nebi.example.test",
+    "custom.nebi-internal-url": "https://nebi.internal.test",
+    "custom.keycloak-token-url": "https://kc.example.test/token",
+    "custom.nebi-client-id": "nebi",
+    "custom.jupyterhub-client-id": "jhub",
+}
+
+
+class _NebiUser:
+    name = "alice@example.test"
+
+    async def get_auth_state(self):
+        return {"refresh_token": "rt", "access_token": "at"}
+
+
+def _nebi_spawner():
+    spawner = FakeSpawner()
+    spawner.user = _NebiUser()
+    spawner.user_options = {"conda_env": "team/myenv"}
+    spawner.lifecycle_hooks = None
+    return spawner
+
+
+def test_nebi_pull_gets_ca_bundle_when_trust_enabled(monkeypatch):
+    mod = _load({**_NEBI_CONFIG, "custom.trust-bundle-enabled": True})
+    monkeypatch.setattr(mod, "get_nebi_jwt", lambda *a, **k: "fake-jwt")
+    monkeypatch.setenv("JUPYTERHUB_OIDC_CLIENT_SECRET", "secret")
+    spawner = _nebi_spawner()
+
+    asyncio.run(mod._nebi_pre_spawn_hook(spawner))
+
+    nebi_pull = next(c for c in spawner.init_containers if c["name"] == "nebi-pull")
+    env = {e["name"]: e["value"] for e in nebi_pull["env"]}
+    for var in (
+        "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
+        "CURL_CA_BUNDLE", "GIT_SSL_CAINFO",
+    ):
+        assert env[var] == MERGED
+    assert any(
+        m["name"] == "ca-merged" and m["mountPath"] == "/etc/ssl/certs-extra"
+        for m in nebi_pull["volumeMounts"]
+    )
+
+
+def test_nebi_pull_no_ca_bundle_when_trust_disabled(monkeypatch):
+    mod = _load(_NEBI_CONFIG)  # trust-bundle-enabled absent -> False
+    monkeypatch.setattr(mod, "get_nebi_jwt", lambda *a, **k: "fake-jwt")
+    monkeypatch.setenv("JUPYTERHUB_OIDC_CLIENT_SECRET", "secret")
+    spawner = _nebi_spawner()
+
+    asyncio.run(mod._nebi_pre_spawn_hook(spawner))
+
+    nebi_pull = next(c for c in spawner.init_containers if c["name"] == "nebi-pull")
+    env = {e["name"] for e in nebi_pull["env"]}
+    assert "REQUESTS_CA_BUNDLE" not in env
+    assert not any(m["name"] == "ca-merged" for m in nebi_pull["volumeMounts"])
+
+
+def test_pre_spawn_hook_orders_merge_ca_before_nebi_pull(monkeypatch):
+    """merge-ca-bundle must run before nebi-pull so the merged file exists."""
+    mod = _load({**_NEBI_CONFIG, "custom.trust-bundle-enabled": True})
+    monkeypatch.setattr(mod, "get_nebi_jwt", lambda *a, **k: "fake-jwt")
+    monkeypatch.setenv("JUPYTERHUB_OIDC_CLIENT_SECRET", "secret")
+    spawner = _nebi_spawner()
+
+    asyncio.run(mod._pre_spawn_hook(spawner))
+
+    names = [c["name"] for c in spawner.init_containers]
+    assert "merge-ca-bundle" in names
+    assert "nebi-pull" in names
+    assert names.index("merge-ca-bundle") < names.index("nebi-pull")

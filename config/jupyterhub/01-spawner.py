@@ -197,6 +197,7 @@ def _setup_trust_bundle(spawner):
         {
             "name": "merge-ca-bundle",
             "image": spawner.image,
+            "imagePullPolicy": get_config("custom.nebi-image-pull-policy", "IfNotPresent"),
             "command": [
                 "/bin/sh",
                 "-c",
@@ -579,6 +580,34 @@ async def _nebi_pre_spawn_hook(spawner):
                 "NEBI_DATA_DIR": nebi_env_dir,
             }
 
+            nebi_pull_env = [
+                {"name": "HOME", "value": nebi_env_dir},
+                {"name": "NEBI_DATA_DIR", "value": nebi_env_dir},
+                {"name": "NEBI_AUTH_TOKEN", "value": nebi_jwt},
+                {"name": "NEBI_REMOTE_URL", "value": nebi_remote},
+            ]
+            nebi_pull_mounts = [
+                {"name": "nebi-bin", "mountPath": "/usr/local/bin/nebi", "subPath": "nebi"},
+                {"name": "nebi-env", "mountPath": nebi_env_dir},
+            ]
+            # When the org CA bundle is enabled, nebi-pull's own egress
+            # (`nebi pull` over HTTPS, `pixi install` from PyPI/conda) also goes
+            # through the inspecting proxy, so it needs the merged bundle too.
+            # _setup_trust_bundle ran first (see _pre_spawn_hook ordering), so
+            # the ca-merged volume exists and merge-ca-bundle precedes this in
+            # init-container order, leaving the merged file ready to mount.
+            if _trust_bundle_enabled:
+                nebi_pull_env += [
+                    {"name": "REQUESTS_CA_BUNDLE", "value": _MERGED_CA_PATH},
+                    {"name": "SSL_CERT_FILE", "value": _MERGED_CA_PATH},
+                    {"name": "NODE_EXTRA_CA_CERTS", "value": _MERGED_CA_PATH},
+                    {"name": "CURL_CA_BUNDLE", "value": _MERGED_CA_PATH},
+                    {"name": "GIT_SSL_CAINFO", "value": _MERGED_CA_PATH},
+                ]
+                nebi_pull_mounts += [
+                    {"name": "ca-merged", "mountPath": "/etc/ssl/certs-extra"},
+                ]
+
             spawner.init_containers = list(spawner.init_containers) + [{
                 "name": "nebi-pull",
                 "image": spawner.image,
@@ -594,16 +623,8 @@ async def _nebi_pre_spawn_hook(spawner):
                     f"chmod -R a+rw {nebi_env_dir}/nebi.db* || "
                     f"echo 'WARNING: nebi pull or pixi install failed for {workspace_name}'",
                 ],
-                "env": [
-                    {"name": "HOME", "value": nebi_env_dir},
-                    {"name": "NEBI_DATA_DIR", "value": nebi_env_dir},
-                    {"name": "NEBI_AUTH_TOKEN", "value": nebi_jwt},
-                    {"name": "NEBI_REMOTE_URL", "value": nebi_remote},
-                ],
-                "volumeMounts": [
-                    {"name": "nebi-bin", "mountPath": "/usr/local/bin/nebi", "subPath": "nebi"},
-                    {"name": "nebi-env", "mountPath": nebi_env_dir},
-                ],
+                "env": nebi_pull_env,
+                "volumeMounts": nebi_pull_mounts,
             }]
     except Exception:
         log.exception("Nebi auto-auth failed for %s (pod will still spawn)", spawner.user.name)
@@ -880,17 +901,13 @@ async def _pre_spawn_hook(spawner):
     preferred_username = oauth_user.get("preferred_username") or username
     spawner.environment = {**spawner.environment, "PREFERRED_USERNAME": preferred_username}
 
-    # 1. Nebi auto-auth (non-fatal)
-    if _nebi_auth_configured:
-        log.debug("pre-spawn: running Nebi auto-auth for %s", username)
-        await _nebi_pre_spawn_hook(spawner)
-    else:
-        log.debug("pre-spawn: Nebi auto-auth not configured, skipping")
-
-    # 1b. Enterprise CA bundle (non-fatal). Off by default; on only when the
-    #     cluster runs trust-manager and the deployer/operator enables it. The
-    #     non-fatal guard lives here at the call site (unlike Nebi, which guards
-    #     inside _nebi_pre_spawn_hook) since _setup_trust_bundle is synchronous.
+    # 1. Enterprise CA bundle (non-fatal). Off by default; on only when the
+    #    cluster runs trust-manager and the deployer/operator enables it. Runs
+    #    BEFORE Nebi auto-auth so the merge-ca-bundle init container is appended
+    #    (and thus executes) before nebi-pull, and so the ca-merged volume
+    #    exists when nebi-pull mounts it. The non-fatal guard lives here at the
+    #    call site (unlike Nebi, which guards inside _nebi_pre_spawn_hook) since
+    #    _setup_trust_bundle is synchronous.
     if _trust_bundle_enabled:
         try:
             _setup_trust_bundle(spawner)
@@ -902,11 +919,18 @@ async def _pre_spawn_hook(spawner):
     else:
         log.debug("trust-bundle: disabled, skipping CA merge for %s", username)
 
-    # 2. Resolve groups from auth_state (stored by KeyCloakOAuthenticator)
+    # 2. Nebi auto-auth (non-fatal)
+    if _nebi_auth_configured:
+        log.debug("pre-spawn: running Nebi auto-auth for %s", username)
+        await _nebi_pre_spawn_hook(spawner)
+    else:
+        log.debug("pre-spawn: Nebi auto-auth not configured, skipping")
+
+    # 3. Resolve groups from auth_state (stored by KeyCloakOAuthenticator)
     groups = _get_user_groups(auth_state)
     log.info("pre-spawn: user %s resolved groups: %s", username, groups)
 
-    # 3. Shared group directory PVC mounts (only when RWX PVC is configured)
+    # 4. Shared group directory PVC mounts (only when RWX PVC is configured)
     if shared_storage_enabled:
         if groups:
             log.info("pre-spawn: setting up shared storage mounts for %s", username)
@@ -926,7 +950,7 @@ async def _pre_spawn_hook(spawner):
     else:
         log.debug("pre-spawn: shared storage disabled, skipping PVC mounts for %s", username)
 
-    # 4. NSS wrapper — always runs; independently guarded so shared storage
+    # 5. NSS wrapper — always runs; independently guarded so shared storage
     #    failures never prevent whoami/id from showing the real username
     log.debug("pre-spawn: running NSS wrapper setup for %s", username)
     try:
