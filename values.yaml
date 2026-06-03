@@ -359,6 +359,25 @@ jupyterhub:
     # kubespawner_override accepts any valid KubeSpawner trait (cpu_limit,
     # mem_limit, node_selector, image, extra_resource_limits, etc.) so deployers
     # can add GPU profiles, custom images, etc. without code changes.
+    #
+    # Per-profile group gating (parity with classic Nebari). Each entry may
+    # declare an ``access`` mode that controls who sees it in the selector:
+    #   access: all   (or omitted) profile is visible to every user.
+    #   access: yaml  profile is visible only to users whose Keycloak groups
+    #                 intersect ``groups``, or whose preferred_username is in
+    #                 ``users``. A user in none of these never sees it.
+    # Any other access value fails closed (the profile is hidden) so a typo
+    # cannot expose an expensive GPU/large-instance profile to everyone.
+    # The ``access``/``groups``/``users`` keys are gating-only and are stripped
+    # before the profile reaches KubeSpawner. Groups come from the same
+    # Keycloak group claim used by shared storage. Example:
+    #   - display_name: "G4 GPU Instance"
+    #     access: yaml
+    #     groups:
+    #       - gpu-access
+    #     kubespawner_override:
+    #       extra_resource_limits:
+    #         nvidia.com/gpu: 1
     # NOTE: when bumping singleuser.image.tag below, also bump the
     # ``image: ...`` lines inside each profile_options.image.choices.default
     # entry so the profile selector shows the right tag. (z2jh values.yaml
