@@ -185,9 +185,121 @@ c.KubeSpawner.environment = env
 # ``kubespawner_override`` accepts any valid KubeSpawner trait so deployers
 # can add node_selector, image, extra_resource_limits (GPU), etc. without
 # code changes. Empty list = no profile selector (single-instance mode).
+# Keys used only for group gating; KubeSpawner must never see them.
+_PROFILE_GATING_KEYS = ("access", "groups", "users")
+
+
+def _get_profile_groups(auth_state):
+    """Resolve the user's full Keycloak group list for profile gating.
+
+    Unlike _get_user_groups (shared-storage), this uses the user's COMPLETE
+    group list — not the mount-role gated subset and not the shared-storage
+    allowlist — so profile visibility does not depend on shared-storage RBAC
+    being deployed. Group names are normalised to the leaf segment
+    (/projects/foo -> foo) and deduplicated, matching classic Nebari.
+    """
+    if not auth_state:
+        return []
+    raw_groups = auth_state.get("groups")
+    if raw_groups is None:
+        raw_groups = (auth_state.get("oauth_user") or {}).get("groups", [])
+
+    seen = set()
+    result = []
+    for g in raw_groups or []:
+        name = Path(g).name
+        if name and name not in seen:
+            seen.add(name)
+            result.append(name)
+    return result
+
+
+def _get_keycloak_profile_names(auth_state):
+    """Profile display_names allowed via ``access: keycloak``.
+
+    Read from the user's ``jupyterlab_profiles`` claim, which a Keycloak
+    attribute mapper stamps into the token from the user's group/user
+    attributes (matches classic Nebari).
+    """
+    oauth_user = (auth_state or {}).get("oauth_user") or {}
+    return oauth_user.get("jupyterlab_profiles", []) or []
+
+
+def _profile_username(auth_state):
+    """Username matched against a profile's ``users`` list.
+
+    Uses the Keycloak ``preferred_username`` (mirrors classic Nebari) so it
+    resolves identically in the spawner and in jhub-apps' fake-spawner path,
+    where ``spawner.user.name`` is a Mock rather than a real username.
+    """
+    oauth_user = (auth_state or {}).get("oauth_user") or {}
+    return oauth_user.get("preferred_username") or ""
+
+
+def _filter_profiles(profiles, groups, username, keycloak_profile_names=()):
+    """Return the profiles a user may select, stripped of gating-only keys.
+
+    Mirrors classic Nebari's ``access:`` semantics on each profile:
+      * ``access: all`` (or omitted) — visible to everyone.
+      * ``access: yaml`` — visible only if the user is in the profile's
+        ``users`` list or shares one of the profile's ``groups``.
+      * ``access: keycloak`` — visible only if the profile's ``display_name``
+        is in the user's ``jupyterlab_profiles`` claim, which a Keycloak
+        attribute mapper stamps into the token from group/user attributes.
+    """
+    group_set = set(groups)
+    profile_name_set = set(keycloak_profile_names)
+    visible = []
+    for profile in profiles:
+        access = profile.get("access", "all")
+        if access == "yaml":
+            in_users = username in set(profile.get("users") or [])
+            in_groups = bool(group_set & set(profile.get("groups") or []))
+            if not in_users and not in_groups:
+                continue
+        elif access == "keycloak":
+            if profile.get("display_name") not in profile_name_set:
+                continue
+        elif access != "all":
+            # Fail closed on an unrecognized access mode: restricted profiles
+            # gate expensive resources, so a typo must hide the profile rather
+            # than expose it to everyone.
+            log.warning(
+                "profiles: hiding %r — unsupported access mode %r "
+                "(use 'all', 'yaml', or 'keycloak')",
+                profile.get("slug") or profile.get("display_name"),
+                access,
+            )
+            continue
+        clean = {k: v for k, v in profile.items() if k not in _PROFILE_GATING_KEYS}
+        visible.append(clean)
+    return visible
+
+
+async def _render_profile_list(spawner):
+    """Per-user profile_list callable — filters profiles by group membership.
+
+    KubeSpawner (and jhub-apps' server-types endpoint) accept an async callable
+    here and invoke it with the spawner at selection time. We resolve the
+    user's Keycloak groups from auth_state and return only the profiles they
+    are allowed to see, with gating-only keys stripped.
+    """
+    auth_state = await spawner.user.get_auth_state()
+    groups = _get_profile_groups(auth_state)
+    username = _profile_username(auth_state)
+    keycloak_profile_names = _get_keycloak_profile_names(auth_state)
+    visible = _filter_profiles(_profiles, groups, username, keycloak_profile_names)
+    log.info(
+        "profiles: user %s (groups=%s) sees %d/%d profile(s): %s",
+        username, groups, len(visible), len(_profiles),
+        [p.get("slug") or p.get("display_name") for p in visible],
+    )
+    return visible
+
+
 _profiles = get_config("custom.profiles", [])
 if _profiles:
-    c.KubeSpawner.profile_list = _profiles
+    c.KubeSpawner.profile_list = _render_profile_list
     log.info(
         "profiles: loaded %d profile(s): %s",
         len(_profiles),
