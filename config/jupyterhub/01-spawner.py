@@ -887,6 +887,19 @@ async def _pre_spawn_hook(spawner):
     else:
         log.debug("pre-spawn: Nebi auto-auth not configured, skipping")
 
+    # 1b. Enterprise CA bundle (non-fatal). Off by default; on only when the
+    #     cluster runs trust-manager and the deployer/operator enables it.
+    if _trust_bundle_enabled:
+        try:
+            _setup_trust_bundle(spawner)
+            log.info("trust-bundle: CA merge configured for %s", username)
+        except Exception:
+            log.exception(
+                "trust-bundle: setup FAILED for %s (pod will still spawn)", username,
+            )
+    else:
+        log.debug("trust-bundle: disabled, skipping CA merge for %s", username)
+
     # 2. Resolve groups from auth_state (stored by KeyCloakOAuthenticator)
     groups = _get_user_groups(auth_state)
     log.info("pre-spawn: user %s resolved groups: %s", username, groups)

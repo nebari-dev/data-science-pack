@@ -109,3 +109,54 @@ def test_setup_trust_bundle_appends_without_clobbering_existing():
     assert any(c["name"] == "merge-ca-bundle" for c in spawner.init_containers)
     assert spawner.environment["HOME"] == "/home/jovyan"
     assert spawner.environment["REQUESTS_CA_BUNDLE"] == MERGED
+
+
+def test_trust_bundle_enabled_flag_reflects_config():
+    enabled = _load({"custom.trust-bundle-enabled": True})
+    assert enabled._trust_bundle_enabled is True
+
+    disabled = _load({})  # key absent -> default False
+    assert disabled._trust_bundle_enabled is False
+
+
+def test_pre_spawn_hook_skips_trust_bundle_when_disabled():
+    """Orchestrator must not touch CA volumes/env when the toggle is off."""
+    import asyncio
+
+    mod = _load({})  # disabled
+
+    class _User:
+        name = "alice@example.test"
+
+        async def get_auth_state(self):
+            return None
+
+    spawner = FakeSpawner()
+    spawner.user = _User()
+    spawner.lifecycle_hooks = None  # _setup_nss_wrapper writes this
+
+    asyncio.run(mod._pre_spawn_hook(spawner))
+
+    assert not any(v["name"] == "org-ca" for v in spawner.volumes)
+    assert "REQUESTS_CA_BUNDLE" not in spawner.environment
+
+
+def test_pre_spawn_hook_applies_trust_bundle_when_enabled():
+    import asyncio
+
+    mod = _load({"custom.trust-bundle-enabled": True})
+
+    class _User:
+        name = "alice@example.test"
+
+        async def get_auth_state(self):
+            return None
+
+    spawner = FakeSpawner()
+    spawner.user = _User()
+    spawner.lifecycle_hooks = None
+
+    asyncio.run(mod._pre_spawn_hook(spawner))
+
+    assert any(v["name"] == "org-ca" for v in spawner.volumes)
+    assert spawner.environment["REQUESTS_CA_BUNDLE"] == MERGED
