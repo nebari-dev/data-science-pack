@@ -151,23 +151,25 @@ if nebi_image:
     c.KubeSpawner.init_containers.append({
         "name": "install-nebi",
         "image": nebi_image,
-        "command": ["sh", "-c", "cp /app/nebi /nebi-bin/nebi && chmod +x /nebi-bin/nebi"],
+        "command": ["sh", "-c", "mkdir -p /nebi-workspaces/workspaces/$JUPYTERHUB_USER && cp /app/nebi /nebi-bin/nebi && chmod +x /nebi-bin/nebi"],
         "imagePullPolicy": get_config("custom.nebi-image-pull-policy", "IfNotPresent"),
         "volumeMounts": [{
             "name": "nebi-bin",
             "mountPath": "/nebi-bin",
+        }, {
+            "name": "nebi-workspaces",
+            "mountPath": "/nebi-workspaces",
         }],
     })
 
 
 # ---------------------------------------------------------------------------
-# Nebi workspaces storage (shared RWX PVC)
+# Nebi workspaces storage (shared RWX PVC with per-user subPath)
 # ---------------------------------------------------------------------------
-# Mount a shared RWX PVC at /var/lib/nebi/workspaces so workspace files
-# persist across pod restarts. The nebi server organizes files by owner
-# internally, so a shared PVC is safe — each user's data lives in its own
-# subdirectory tree. A separate PVC is needed because the home PVC is RWO
-# and per-user, while workspaces benefit from shared access.
+# Mount a shared RWX PVC at /var/lib/nebi/workspaces with a per-user
+# subPath so workspace files persist across pod restarts without cross-user
+# interference. KubeSpawner expands {username} at spawn time, same as the
+# home PVC's claim-{username} pattern.
 c.KubeSpawner.volumes.append({
     "name": "nebi-workspaces",
     "persistentVolumeClaim": {"claimName": "nebi-workspaces"},
@@ -175,6 +177,7 @@ c.KubeSpawner.volumes.append({
 c.KubeSpawner.volume_mounts.append({
     "name": "nebi-workspaces",
     "mountPath": "/var/lib/nebi/workspaces",
+    "subPath": "workspaces/{username}",
 })
 
 
