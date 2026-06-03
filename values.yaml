@@ -249,7 +249,9 @@ nebi:
     # StorageClass for the workspaces PVC. Leave empty for cluster default
     # (must support ReadWriteMany or set accessModes accordingly).
     storageClass: ""
-    size: 15Gi
+    # Shared across all users — size generously to accommodate pixi
+    # environments (2–5 Gi each) for many concurrent users.
+    size: 100Gi
     accessModes:
       - ReadWriteMany
 
