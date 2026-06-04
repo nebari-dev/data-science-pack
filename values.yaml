@@ -367,11 +367,14 @@ jupyterhub:
     #                     groups intersect ``groups``, or whose
     #                     preferred_username is in ``users``. A user in none of
     #                     these never sees it.
-    #   access: keycloak  profile is visible only when its ``display_name`` is
-    #                     in the user's ``jupyterlab_profiles`` claim. That
-    #                     claim is populated by a Keycloak attribute mapper
-    #                     from the user's group/user attributes, so the
-    #                     allow-list lives in Keycloak rather than in this file.
+    #   access: keycloak  profile is visible only when its ``slug`` is in the
+    #                     allow-list granted by the user's ``jupyterlab-profiles``
+    #                     Keycloak role. The deployer creates that client role on
+    #                     the hub client, puts the allowed slugs in its
+    #                     ``profiles`` attribute (and ``component=jupyterhub-profiles``),
+    #                     and assigns the role to users or groups. The hub reads
+    #                     it via the KC Admin API at login, so the allow-list
+    #                     lives in Keycloak rather than in this file.
     # Any other access value fails closed (the profile is hidden) so a typo
     # cannot expose an expensive GPU/large-instance profile to everyone.
     # The ``access``/``groups``/``users`` keys are gating-only and are stripped
