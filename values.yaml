@@ -221,7 +221,7 @@ nebi:
     # Pinned per chart release by CI (scripts/bump_image_tags.py); deployers
     # can override to test a PR build or roll forward. Leave non-empty so
     # the init container is wired by default.
-    tag: "sha-d33bb7e"
+    tag: "sha-32d0bc9"
     pullPolicy: IfNotPresent
   # External Nebi FQDN (browser-side, used for OIDC redirect).
   # If empty, derived from keycloak.hostname as
