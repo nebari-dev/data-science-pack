@@ -19,20 +19,6 @@
 #   * nebari-operator runs in the cluster and provisions the OIDC client
 #
 # =============================================================================
-# IMAGE REFERENCE MAP
-# =============================================================================
-# Lab pod: set by the `kubespawner_override.image` of each entry under
-#   `jupyterhub.custom.profiles` (this chart ships Small + Medium entries, so
-#   that is the image users get). This one field feeds both the native spawn
-#   form and the jhub-apps image box. The `jupyterhub.singleuser.image` below
-#   is used ONLY if a deployer sets `jupyterhub.custom.profiles: []` (no
-#   profiles, i.e. the profile picker is turned off).
-# Hub pod: jupyterhub.hub.image.
-# nebi binary (copied into lab pods by an init container, NOT the lab image):
-#   custom.nebi-image, else nebi.image.repository:nebi.image.tag.
-# scripts/bump_image_tags.py syncs hub + singleuser + all profile images;
-#   nebi / nfsServer / rbac.bootstrap are bumped by hand.
-# =============================================================================
 # Keycloak — only the hostname is required for full zero-config.
 # =============================================================================
 keycloak:
@@ -566,10 +552,9 @@ jupyterhub:
             - port: 10202  # jhub-apps service port
 
   singleuser:
-    # Fallback lab image, used ONLY when `jupyterhub.custom.profiles` is set to
-    # an empty list ([]). With the profiles this chart ships (Small + Medium),
-    # each profile's own `kubespawner_override.image` is used and this value is
-    # never what launches a pod. See IMAGE REFERENCE MAP at top.
+    # Fallback lab image, used ONLY when jupyterhub.custom.profiles is []. With
+    # the profiles this chart ships, each profile's kubespawner_override.image
+    # wins and this is never used. Tag synced by scripts/bump_image_tags.py.
     image:
       name: quay.io/nebari/nebari-data-science-pack-jupyterlab
       tag: "sha-46289ab"
