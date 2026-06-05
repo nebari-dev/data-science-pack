@@ -19,6 +19,17 @@
 #   * nebari-operator runs in the cluster and provisions the OIDC client
 #
 # =============================================================================
+# IMAGE REFERENCE MAP
+# =============================================================================
+# Lab pod image (highest wins): profile_options.image.choices.<picked>.image >
+#   profiles[N].kubespawner_override.image > singleuser.image (fallback, only
+#   when profiles == []). display_name is a cosmetic label, not the image.
+# Hub pod: jupyterhub.hub.image (independent).
+# nebi binary (init-container copy, NOT the lab image): custom.nebi-image, else
+#   nebi.image.repository:nebi.image.tag.
+# scripts/bump_image_tags.py syncs hub + singleuser + all profile lab images;
+#   nebi / nfsServer / rbac.bootstrap images are bumped by hand.
+# =============================================================================
 # Keycloak — only the hostname is required for full zero-config.
 # =============================================================================
 keycloak:
@@ -188,6 +199,7 @@ sharedStorage:
     # nebari-dev/nebari-docker-images#230). We carry it for clusters that
     # cannot provide RWX storage natively; on NIC-managed clusters set
     # `sharedStorage.storageClass: longhorn` and leave nfsServer disabled.
+    # NFS server image; bump_image_tags.py ignores it.
     image:
       repository: quay.io/nebari/volume-nfs
       tag: "0.8-repack"
@@ -213,14 +225,10 @@ sharedStorage:
 # =============================================================================
 # Companion service (nebari-nebi-pack) deployed in its own namespace.
 nebi:
-  # Nebi binary image. An init container copies the nebi binary from this image
-  # into each JupyterLab pod, so the version is controlled at deploy time
-  # rather than baked into the JupyterLab image.
+  # nebi binary image (init container copies the binary into lab pods), NOT
+  # the lab image. Change the version via `tag`; bump_image_tags.py ignores it.
   image:
     repository: quay.io/nebari/nebi
-    # Pinned per chart release by CI (scripts/bump_image_tags.py); deployers
-    # can override to test a PR build or roll forward. Leave non-empty so
-    # the init container is wired by default.
     tag: "sha-32d0bc9"
     pullPolicy: IfNotPresent
   # External Nebi FQDN (browser-side, used for OIDC redirect).
@@ -314,8 +322,8 @@ rbac:
     # lives at ``<kcHost>/admin/realms/...``). In-cluster service URL by
     # default; override if Keycloak sits at a different hostname.
     kcHost: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080"
-    # Image that runs ``files/keycloak_rbac_bootstrap.py``. The script
-    # uses only the standard library, so any small Python image works.
+    # Runs files/keycloak_rbac_bootstrap.py (stdlib only, any small Python
+    # image works); bump_image_tags.py ignores it.
     image: "python:3.12-slim"
 
 # JupyterHub configuration
@@ -330,8 +338,7 @@ jupyterhub:
     # JupyterHub bind URL hostname. If empty, derived from nebariapp.hostname
     # (which itself defaults from keycloak.hostname + subdomains.hub).
     external-url: ""
-    # Nebi binary image (repository:tag) copied into singleuser pods.
-    # If empty, derived as `<nebi.image.repository>:<nebi.image.tag>`.
+    # Override for the nebi binary image. Empty = derive from nebi.image.
     nebi-image: ""
     nebi-image-pull-policy: "IfNotPresent"
     # External Nebi URL. If empty, derived from nebi.remoteURL (which
@@ -384,21 +391,18 @@ jupyterhub:
     #     kubespawner_override:
     #       extra_resource_limits:
     #         nvidia.com/gpu: 1
-    # NOTE: when bumping singleuser.image.tag below, also bump the
-    # ``image: ...`` lines inside each profile_options.image.choices.default
-    # entry so the profile selector shows the right tag. (z2jh values.yaml
-    # cannot reference other values, so the duplication is unavoidable.)
+    # -------------------------------------------------------------------------
+    # Lab image per profile (see IMAGE REFERENCE MAP at top). The outer
+    # kubespawner_override.image and the choices.default image must be kept
+    # equal: z2jh values cannot cross-reference, so the ref is repeated.
     profiles:
       - slug: small-instance
         display_name: "Small Instance"
         description: "1 CPU / 2 GB RAM — interactive notebooks, light data exploration, teaching."
         default: true
         kubespawner_override:
-          # Outer image is what jhub-apps' Create App reads for its image
-          # TextField (server-types.tsx: `type.kubespawner_override.image`).
-          # The same value sits inside profile_options.image.choices.default
-          # so the JupyterLab profile selector keeps showing it too.
-          # scripts/bump_image_tags.py syncs all three on every bump.
+          # Profile base image; also what jhub-apps "Create App" reads. Keep
+          # equal to choices.default below.
           image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-46289ab
           cpu_limit: 1
           cpu_guarantee: 0.5
@@ -409,14 +413,17 @@ jupyterhub:
             display_name: Image
             choices:
               default:
+                # display_name: cosmetic selector label, not the image pulled.
                 display_name: "nebari-data-science-pack-jupyterlab:sha-46289ab"
                 default: true
                 kubespawner_override:
+                  # Image used when this choice is picked.
                   image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-46289ab
       - slug: medium-instance
         display_name: "Medium Instance"
         description: "4 CPU / 8 GB RAM — pandas / scikit-learn workloads on medium datasets."
         kubespawner_override:
+          # Profile base image; keep equal to choices.default below.
           image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-46289ab
           cpu_limit: 4
           cpu_guarantee: 2
@@ -427,9 +434,11 @@ jupyterhub:
             display_name: Image
             choices:
               default:
+                # display_name: cosmetic selector label, not the image pulled.
                 display_name: "nebari-data-science-pack-jupyterlab:sha-46289ab"
                 default: true
                 kubespawner_override:
+                  # Image used when this choice is picked.
                   image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-46289ab
     # Terminal customization: controls Starship prompt in JupyterLab terminals.
     # When false, falls back to the default bash prompt.
@@ -477,6 +486,7 @@ jupyterhub:
       #                          # here to add more or replace the default.
       # startup_apps: []
   hub:
+    # Hub pod image (JupyterHub + jhub-apps), independent of the lab images.
     # Custom Nebari hub image with jhub-apps pre-installed.
     # Tag below is the PR-53 merge-commit SHA at the moment of pinning; the
     # corresponding immutable digest is
@@ -574,6 +584,8 @@ jupyterhub:
             - port: 10202  # jhub-apps service port
 
   singleuser:
+    # Fallback lab image: only launches a pod when profiles == []. Otherwise
+    # each profile's image overrides it (see IMAGE REFERENCE MAP at top).
     image:
       name: quay.io/nebari/nebari-data-science-pack-jupyterlab
       tag: "sha-46289ab"
