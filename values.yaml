@@ -21,14 +21,14 @@
 # =============================================================================
 # IMAGE REFERENCE MAP
 # =============================================================================
-# Lab pod image (highest wins): profile_options.image.choices.<picked>.image >
-#   profiles[N].kubespawner_override.image > singleuser.image (fallback, only
-#   when profiles == []). display_name is a cosmetic label, not the image.
-# Hub pod: jupyterhub.hub.image (independent).
-# nebi binary (init-container copy, NOT the lab image): custom.nebi-image, else
-#   nebi.image.repository:nebi.image.tag.
-# scripts/bump_image_tags.py syncs hub + singleuser + all profile lab images;
-#   nebi / nfsServer / rbac.bootstrap images are bumped by hand.
+# Lab pod: each profile's kubespawner_override.image. (If profiles is empty,
+#   singleuser.image is used instead.) This one field feeds both the native
+#   spawn form and the jhub-apps image box.
+# Hub pod: jupyterhub.hub.image.
+# nebi binary (copied into lab pods by an init container, NOT the lab image):
+#   custom.nebi-image, else nebi.image.repository:nebi.image.tag.
+# scripts/bump_image_tags.py syncs hub + singleuser + all profile images;
+#   nebi / nfsServer / rbac.bootstrap are bumped by hand.
 # =============================================================================
 # Keycloak — only the hostname is required for full zero-config.
 # =============================================================================
@@ -395,54 +395,30 @@ jupyterhub:
     #       extra_resource_limits:
     #         nvidia.com/gpu: 1
     # -------------------------------------------------------------------------
-    # Lab image per profile (see IMAGE REFERENCE MAP at top). The outer
-    # kubespawner_override.image and the choices.default image must be kept
-    # equal: z2jh values cannot cross-reference, so the ref is repeated.
+    # The lab image for each profile is `kubespawner_override.image`. That one
+    # field drives both the native /hub/spawn form and the jhub-apps "Create
+    # App" image box. (Add `profile_options.image.choices` only if you want a
+    # user-selectable image dropdown; the native form alone honours it.)
     profiles:
       - slug: small-instance
         display_name: "Small Instance"
         description: "1 CPU / 2 GB RAM — interactive notebooks, light data exploration, teaching."
         default: true
         kubespawner_override:
-          # Profile base image; also what jhub-apps "Create App" reads. Keep
-          # equal to choices.default below.
           image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-46289ab
           cpu_limit: 1
           cpu_guarantee: 0.5
           mem_limit: "2G"
           mem_guarantee: "1G"
-        profile_options:
-          image:
-            display_name: Image
-            choices:
-              default:
-                # display_name: cosmetic selector label, not the image pulled.
-                display_name: "nebari-data-science-pack-jupyterlab:sha-46289ab"
-                default: true
-                kubespawner_override:
-                  # Image used when this choice is picked.
-                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-46289ab
       - slug: medium-instance
         display_name: "Medium Instance"
         description: "4 CPU / 8 GB RAM — pandas / scikit-learn workloads on medium datasets."
         kubespawner_override:
-          # Profile base image; keep equal to choices.default below.
           image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-46289ab
           cpu_limit: 4
           cpu_guarantee: 2
           mem_limit: "8G"
           mem_guarantee: "4G"
-        profile_options:
-          image:
-            display_name: Image
-            choices:
-              default:
-                # display_name: cosmetic selector label, not the image pulled.
-                display_name: "nebari-data-science-pack-jupyterlab:sha-46289ab"
-                default: true
-                kubespawner_override:
-                  # Image used when this choice is picked.
-                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-46289ab
     # Terminal customization: controls Starship prompt in JupyterLab terminals.
     # When false, falls back to the default bash prompt.
     terminal-customization: true
