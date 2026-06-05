@@ -5,6 +5,9 @@ The data science pack mirrors classic Nebari's ``access:`` semantics on each
 
   * ``access: all`` (or omitted) — every authenticated user sees the profile.
   * ``access: yaml`` — only users in the listed ``groups``/``users`` see it.
+  * ``access: keycloak``: only users whose ``jupyterlab-profiles`` Keycloak
+    role grants the profile's ``slug`` see it (the authenticator resolves the
+    role's ``profiles`` attribute into ``auth_state`` at login).
 
 Gating is applied per user at spawn time by setting
 ``c.KubeSpawner.profile_list`` to an async callable. The callable resolves the
@@ -113,28 +116,41 @@ def test_unknown_access_value_is_hidden():
     assert visible == []
 
 
-def test_keycloak_access_visible_when_display_name_in_profile_attribute():
-    """access: keycloak shows a profile only if its display_name is in the
-    user's ``jupyterlab_profiles`` claim (Keycloak attribute mapper), matching
-    classic Nebari. Gating keys are stripped."""
+def test_keycloak_access_visible_when_slug_in_role_allowlist():
+    """access: keycloak shows a profile only if its ``slug`` is in the
+    allow-list the user's ``jupyterlab-profiles`` Keycloak role grants.
+    Gating keys are stripped."""
     mod, _ = _load()
 
     profiles = [
         {"slug": "gpu", "display_name": "GPU", "access": "keycloak"},
     ]
     visible = mod._filter_profiles(
-        profiles, groups=[], username="alice", keycloak_profile_names=["GPU"]
+        profiles, groups=[], username="alice", keycloak_profile_slugs=["gpu"]
     )
 
     assert visible == [{"slug": "gpu", "display_name": "GPU"}]
 
 
-def test_keycloak_access_hidden_when_display_name_not_in_attribute():
+def test_keycloak_access_hidden_when_slug_not_in_allowlist():
     mod, _ = _load()
 
     profiles = [{"slug": "gpu", "display_name": "GPU", "access": "keycloak"}]
     visible = mod._filter_profiles(
-        profiles, groups=[], username="alice", keycloak_profile_names=["Other"]
+        profiles, groups=[], username="alice", keycloak_profile_slugs=["other"]
+    )
+
+    assert visible == []
+
+
+def test_keycloak_access_matches_slug_not_display_name():
+    """The allow-list is keyed on the stable ``slug``; passing the
+    human-facing ``display_name`` must NOT make the profile visible."""
+    mod, _ = _load()
+
+    profiles = [{"slug": "gpu", "display_name": "GPU", "access": "keycloak"}]
+    visible = mod._filter_profiles(
+        profiles, groups=[], username="alice", keycloak_profile_slugs=["GPU"]
     )
 
     assert visible == []
@@ -159,24 +175,26 @@ def test_get_profile_groups_empty_without_auth_state():
     assert mod._get_profile_groups(None) == []
 
 
-def test_get_keycloak_profile_names_reads_oauth_user_attribute():
-    """The keycloak-mode profile names come from the oauth_user
-    ``jupyterlab_profiles`` claim, matching classic Nebari."""
+def test_get_keycloak_profile_slugs_reads_role_allowlist_from_auth_state():
+    """The keycloak-mode profile slugs come from
+    ``auth_state["allowed_jupyterlab_profiles"]``, which the authenticator
+    resolves from the user's ``jupyterlab-profiles`` Keycloak role."""
     mod, _ = _load()
 
-    auth_state = {"oauth_user": {"jupyterlab_profiles": ["GPU", "High RAM"]}}
-    assert mod._get_keycloak_profile_names(auth_state) == ["GPU", "High RAM"]
+    auth_state = {"allowed_jupyterlab_profiles": ["gpu", "high-ram"]}
+    assert mod._get_keycloak_profile_slugs(auth_state) == ["gpu", "high-ram"]
 
 
-def test_get_keycloak_profile_names_empty_without_attribute():
+def test_get_keycloak_profile_slugs_empty_without_allowlist():
     mod, _ = _load()
 
-    assert mod._get_keycloak_profile_names({"oauth_user": {}}) == []
-    assert mod._get_keycloak_profile_names(None) == []
+    assert mod._get_keycloak_profile_slugs({}) == []
+    assert mod._get_keycloak_profile_slugs(None) == []
 
 
-def test_render_profile_list_applies_keycloak_attribute_gating():
-    """The async callable threads jupyterlab_profiles into keycloak gating."""
+def test_render_profile_list_applies_keycloak_role_gating():
+    """The async callable threads the role-granted slug allow-list
+    (``auth_state["allowed_jupyterlab_profiles"]``) into keycloak gating."""
     mod, _ = _load()
 
     mod._profiles = [
@@ -186,7 +204,8 @@ def test_render_profile_list_applies_keycloak_attribute_gating():
     ]
     auth_state = {
         "groups": [],
-        "oauth_user": {"preferred_username": "alice", "jupyterlab_profiles": ["GPU"]},
+        "allowed_jupyterlab_profiles": ["gpu"],
+        "oauth_user": {"preferred_username": "alice"},
     }
     visible = asyncio.run(mod._render_profile_list(_FakeSpawner(auth_state)))
 

@@ -51,6 +51,9 @@ class KCRealmAdmin:
         "component": "shared-directory",
         "scopes": "write:shared-mount",
     }
+    # A jupyterlab-profiles role must carry this component marker for its
+    # ``profiles`` attribute to be honoured: an unmarked role grants nothing.
+    PROFILES_COMPONENT = "jupyterhub-profiles"
 
     def __init__(self, http_fetch, *, token_url, client_id, client_secret, realm_api_url):
         self._http_fetch = http_fetch
@@ -81,7 +84,67 @@ class KCRealmAdmin:
         role_paths = {g.get("path") for g in role_groups if g.get("path")}
         return [g for g in user_groups if g in role_paths]
 
+    async def get_profile_slugs_for_user(self, user_id, role_name):
+        """Return the JupyterLab profile slugs ``user_id`` may select.
+
+        Reads the client role ``role_name``. When that role carries
+        ``component=jupyterhub-profiles``, its ``profiles`` attribute is the
+        slug allow-list. The slugs apply only if the user effectively holds
+        the role (assigned directly or inherited from a group).
+
+        Returns ``[]`` when: the role does not exist, lacks the
+        ``jupyterhub-profiles`` component marker, has no ``profiles``
+        attribute, or the user does not hold it. Raises whatever the HTTP
+        fetcher raises on transport failure; callers handle.
+        """
+        token = await self._client_credentials_token()
+        client_uuid = await self._lookup_client_uuid(token, self._client_id)
+        role = await self._get_client_role_or_none(token, client_uuid, role_name)
+        if role is None or not self._role_has_profiles_component(role):
+            return []
+        slugs = (role.get("attributes") or {}).get("profiles") or []
+        if not slugs:
+            return []
+        if not await self._user_holds_client_role(
+            token, client_uuid, user_id, role_name,
+        ):
+            return []
+        return list(slugs)
+
     # --- internals (each step is one HTTP round-trip) -------------------
+
+    async def _get_client_role_or_none(self, token, client_uuid, role_name):
+        """Role representation, or ``None`` when the role does not exist.
+
+        A missing role is the normal state on deployments that have not
+        created the profiles role yet, so a 404 returns ``None`` instead of
+        raising. No warning spam, no degraded login.
+        """
+        try:
+            return await self._admin_get(
+                token, f"/clients/{client_uuid}/roles/{role_name}",
+            )
+        except HTTPClientError as e:
+            if e.code == 404:
+                return None
+            raise
+
+    async def _user_holds_client_role(self, token, client_uuid, user_id, role_name):
+        """True when ``user_id`` effectively holds ``role_name`` on the
+        client, whether assigned directly or inherited via a group. KC's
+        ``role-mappings/.../composite`` endpoint resolves both."""
+        if not user_id:
+            return False
+        roles = await self._admin_get(
+            token,
+            f"/users/{user_id}/role-mappings/clients/{client_uuid}/composite",
+        )
+        return any(r.get("name") == role_name for r in roles or [])
+
+    @classmethod
+    def _role_has_profiles_component(cls, role):
+        attrs = role.get("attributes", {}) or {}
+        return cls.PROFILES_COMPONENT in (attrs.get("component") or [])
 
     async def _client_credentials_token(self):
         body = urlencode({
@@ -233,6 +296,13 @@ class KeyCloakOAuthenticator(GenericOAuthenticator):
     shared_mount_role_name = Unicode(
         "allow-group-directory-creation-role", config=True,
     )
+    # Name of the KC client role whose ``profiles`` attribute lists the
+    # JupyterLab profile slugs a holder may select (``access: keycloak``
+    # profiles). The role lives on the hub client and is created + assigned
+    # to users/groups by the deployer in Keycloak; the chart only reads it.
+    jupyterlab_profiles_role_name = Unicode(
+        "jupyterlab-profiles", config=True,
+    )
 
     async def refresh_user(self, user, handler=None):
         """Run KC's refresh_token grant and persist rotated tokens to auth_state.
@@ -324,6 +394,24 @@ class KeyCloakOAuthenticator(GenericOAuthenticator):
                 old_filter = auth_state.get("groups_with_permission_to_mount")
                 if old_filter is not None:
                     new_state["groups_with_permission_to_mount"] = old_filter
+            # Re-resolve the role-granted JupyterLab profiles too, so a
+            # mid-session role grant/revoke takes effect on the next spawn.
+            try:
+                new_state["allowed_jupyterlab_profiles"] = (
+                    await self._realm_admin().get_profile_slugs_for_user(
+                        new_state.get("oauth_user", {}).get("sub"),
+                        self.jupyterlab_profiles_role_name,
+                    )
+                )
+            except Exception:
+                self.log.warning(
+                    "rbac: failed to refresh allowed_jupyterlab_profiles "
+                    "for %s, keeping last known set",
+                    user.name, exc_info=True,
+                )
+                old_profiles = auth_state.get("allowed_jupyterlab_profiles")
+                if old_profiles is not None:
+                    new_state["allowed_jupyterlab_profiles"] = old_profiles
         return {"auth_state": new_state}
 
     async def update_auth_model(self, auth_model):
@@ -362,7 +450,32 @@ class KeyCloakOAuthenticator(GenericOAuthenticator):
             )
             filtered = []
         auth_model["auth_state"]["groups_with_permission_to_mount"] = filtered
+        auth_model["auth_state"]["allowed_jupyterlab_profiles"] = (
+            await self._resolve_allowed_profiles(
+                auth_model.get("auth_state", {}).get("oauth_user", {}),
+                auth_model.get("name"),
+            )
+        )
         return auth_model
+
+    async def _resolve_allowed_profiles(self, oauth_user, who):
+        """Resolve the JupyterLab profile slugs the user's
+        ``jupyterlab-profiles`` KC role grants, degrading to ``[]`` on any
+        Admin API failure so login/refresh never breaks. The spawner reads
+        ``auth_state["allowed_jupyterlab_profiles"]`` to gate
+        ``access: keycloak`` profiles by slug."""
+        user_id = (oauth_user or {}).get("sub")
+        try:
+            return await self._realm_admin().get_profile_slugs_for_user(
+                user_id, self.jupyterlab_profiles_role_name,
+            )
+        except Exception:
+            self.log.warning(
+                "rbac: failed to resolve allowed_jupyterlab_profiles for %s, "
+                "granting no keycloak-gated profiles this session",
+                who, exc_info=True,
+            )
+            return []
 
     def _realm_admin(self):
         """Build a :class:`KCRealmAdmin` from the authenticator's current
@@ -388,15 +501,18 @@ def configure(
     admin_groups=None,
     realm_api_url: str = "",
     shared_mount_role_name: str = "allow-group-directory-creation-role",
+    jupyterlab_profiles_role_name: str = "jupyterlab-profiles",
 ):
     """Wire KeyCloakOAuthenticator onto JupyterHub's `c` config object.
 
-    ``realm_api_url`` enables role-gated shared-mount RBAC.
-    Pass the KC Admin API root for the realm
+    ``realm_api_url`` enables the role-gated KC Admin API lookups. Pass the
+    KC Admin API root for the realm
     (e.g. ``https://kc.example/admin/realms/nebari``); leave empty to
-    disable. ``shared_mount_role_name`` is the KC client role whose
-    holders get ``/shared/<group>`` mounts — default matches classic
-    nebari.
+    disable. ``shared_mount_role_name`` is the KC client role whose holders
+    get ``/shared/<group>`` mounts. ``jupyterlab_profiles_role_name`` is the
+    KC client role whose ``profiles`` attribute lists the slugs a holder may
+    select for ``access: keycloak`` profiles. Both default to the classic
+    nebari names.
     """
     kc_config = KeyCloakConfig.build(
         issuer=issuer, post_logout_redirect_uri=external_url,
@@ -406,6 +522,9 @@ def configure(
     c.KeyCloakOAuthenticator.client_secret = client_secret
     c.KeyCloakOAuthenticator.realm_api_url = realm_api_url
     c.KeyCloakOAuthenticator.shared_mount_role_name = shared_mount_role_name
+    c.KeyCloakOAuthenticator.jupyterlab_profiles_role_name = (
+        jupyterlab_profiles_role_name
+    )
     c.KeyCloakOAuthenticator.oauth_callback_url = callback_url
     c.KeyCloakOAuthenticator.authorize_url = kc_config.authorize_url
     c.KeyCloakOAuthenticator.token_url = kc_config.token_url
@@ -525,5 +644,9 @@ else:
             shared_mount_role_name=os.environ.get(
                 "KC_SHARED_MOUNT_ROLE",
                 "allow-group-directory-creation-role",
+            ),
+            jupyterlab_profiles_role_name=os.environ.get(
+                "KC_JUPYTERLAB_PROFILES_ROLE",
+                "jupyterlab-profiles",
             ),
         )
