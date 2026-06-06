@@ -337,6 +337,10 @@ jupyterhub:
     # If empty, derived as `<nebi.image.repository>:<nebi.image.tag>`.
     nebi-image: ""
     nebi-image-pull-policy: "IfNotPresent"
+    # jhub-app-proxy version installed at app-spawn time. Must be >= v0.2.3 for
+    # apps to run inside a Nebi (pixi) environment; older versions only support
+    # conda activation and fall back to the base env (missing packages).
+    jhub-app-proxy-version: "v0.2.3"
     # External Nebi URL. If empty, derived from nebi.remoteURL (which
     # itself defaults from keycloak.hostname + subdomains.nebi).
     nebi-remote-url: ""

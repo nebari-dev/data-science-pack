@@ -57,6 +57,16 @@ if _nebi_remote and "additional_services" not in japps_config:
         }],
     }
 
+# Pin jhub-app-proxy to a version that supports pixi/nebi env activation.
+# Older proxies (<= v0.2.2) only do conda activation, so apps launched into a
+# Nebi (pixi) environment fail to find their packages. Configurable via
+# jupyterhub.custom.jhub-app-proxy-version (an explicit japps-config entry
+# still wins).
+japps_config.setdefault(
+    "jhub_app_proxy_version",
+    get_config("custom.jhub-app-proxy-version", "v0.2.3"),
+)
+
 for key, value in japps_config.items():
     setattr(c.JAppsConfig, key, value)
 
