@@ -291,7 +291,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterhub-base-5.1.0-pyh31011fe_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-4.2.5-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-favorites-3.2.2-pyhd8ed1ab_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-gallery-0.6.3-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-git-0.51.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-pioneer-1.6.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-spellchecker-0.8.4-pyhd8ed1ab_0.conda
@@ -421,6 +420,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/06/ad/5ba858ffc307ed2b51693d87642f9e9dd6013579840981ac364c6e24c38c/backports_zstd-1.1.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/0d/a5/48cb7efb8b4718b1a4c0c331e3364a3a33f614ff0d6afd2b93ee883d3c47/hatchling-1.28.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0f/73/bb1bc2529f852e7bf64a2dec885e89ff9f5cc7bbf6c9340eed30ff2c69c5/ruamel.yaml-0.18.16-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/11/bd/c35b56ffe2d9a99782a390515a4e0ea9616fb0cb25d7fa2dc1d52e6e1195/jupyterlab_gallery-0.6.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/1e/d3/26bf1008eb3d2daa8ef4cacc7f3bfdc11818d111f7e2d0201bc6e3b49d45/annotated_doc-0.0.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/25/7a/b0178788f8dc6cafce37a212c99565fa1fe7872c70c6c9c1e1a372d9d88f/rich-14.2.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/29/1c/1b83ffb56adb76abe46df91439e9a613bba45e4612a4e6a7bbebca0b35bb/plotlydash_tornado_cmd-0.0.6-py3-none-any.whl
@@ -764,7 +764,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterhub-base-5.1.0-pyh31011fe_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-4.2.5-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-favorites-3.2.2-pyhd8ed1ab_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-gallery-0.6.3-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-git-0.51.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-pioneer-1.6.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-spellchecker-0.8.4-pyhd8ed1ab_0.conda
@@ -894,6 +893,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/04/1e/b832de447dee8b582cac175871d2f6c3d5077cc56d5575cadba1fd1cccfa/linkify_it_py-2.0.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0d/a5/48cb7efb8b4718b1a4c0c331e3364a3a33f614ff0d6afd2b93ee883d3c47/hatchling-1.28.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0f/73/bb1bc2529f852e7bf64a2dec885e89ff9f5cc7bbf6c9340eed30ff2c69c5/ruamel.yaml-0.18.16-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/11/bd/c35b56ffe2d9a99782a390515a4e0ea9616fb0cb25d7fa2dc1d52e6e1195/jupyterlab_gallery-0.6.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/1e/d3/26bf1008eb3d2daa8ef4cacc7f3bfdc11818d111f7e2d0201bc6e3b49d45/annotated_doc-0.0.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/25/7a/b0178788f8dc6cafce37a212c99565fa1fe7872c70c6c9c1e1a372d9d88f/rich-14.2.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/29/1c/1b83ffb56adb76abe46df91439e9a613bba45e4612a4e6a7bbebca0b35bb/plotlydash_tornado_cmd-0.0.6-py3-none-any.whl
@@ -7201,22 +7201,6 @@ packages:
   - pkg:pypi/jupyterlab-favorites?source=hash-mapping
   size: 24685
   timestamp: 1711052887220
-- conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-gallery-0.6.3-pyhcf101f3_0.conda
-  sha256: 008f74822b42d5e3476dcfa950cbf203b9db48fe159e1a0f9360288aa1b2024c
-  md5: 1c9354580595a235dbe1ee0db01bac1e
-  depends:
-  - python >=3.10,<4.0
-  - jupyter_server >=2.0.1,<3
-  - nbgitpuller >=1.2.1
-  - gitpython >=3.1.43
-  - python
-  constrains:
-  - jupyterhub >4
-  license: Apache-2.0 AND BSD-3-Clause
-  purls:
-  - pkg:pypi/jupyterlab-gallery?source=hash-mapping
-  size: 53175
-  timestamp: 1758622936798
 - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-git-0.51.0-pyhd8ed1ab_0.conda
   sha256: 35f573ef65d1b58554f8577205f13b5a25695dfdc9297fb01c2ee55b4cd475b7
   md5: 053d26baf17b58d8d945d9a1bedbe441
@@ -8865,6 +8849,21 @@ packages:
   - ruamel-yaml-jinja2>=0.2 ; extra == 'jinja2'
   - ryd ; extra == 'docs'
   - mercurial>5.7 ; extra == 'docs'
+  requires_python: '>=3.8'
+- pypi: https://files.pythonhosted.org/packages/11/bd/c35b56ffe2d9a99782a390515a4e0ea9616fb0cb25d7fa2dc1d52e6e1195/jupyterlab_gallery-0.6.3-py3-none-any.whl
+  name: jupyterlab-gallery
+  version: 0.6.3
+  sha256: 29b56630151b6d3dfa75eec46b820a2a80d7057b509de0a800db20492883da02
+  requires_dist:
+  - gitpython>=3.1.43
+  - jupyter-server>=2.0.1,<3
+  - nbgitpuller>=1.2.1
+  - ruff==0.4.4 ; extra == 'dev'
+  - coverage ; extra == 'test'
+  - pytest ; extra == 'test'
+  - pytest-asyncio ; extra == 'test'
+  - pytest-cov ; extra == 'test'
+  - pytest-jupyter[server]>=0.6.0 ; extra == 'test'
   requires_python: '>=3.8'
 - pypi: https://files.pythonhosted.org/packages/1e/d3/26bf1008eb3d2daa8ef4cacc7f3bfdc11818d111f7e2d0201bc6e3b49d45/annotated_doc-0.0.4-py3-none-any.whl
   name: annotated-doc

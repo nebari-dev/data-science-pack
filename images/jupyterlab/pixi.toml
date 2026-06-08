@@ -36,7 +36,6 @@ jupyterlab-spellchecker = ">=0.7.3"
 jupyterlab-pioneer = "*"
 jupyter-ai = "*"
 jupyterlab-favorites = ">=3.2.1"
-jupyterlab-gallery = ">=0.5.0"
 # jupyter-scheduler is disabled until the service is configured
 # jupyter-scheduler = ">=2.8.0,<3.0.0"
 
