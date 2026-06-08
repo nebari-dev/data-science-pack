@@ -32,6 +32,8 @@ docs/node_modules/
 docs/build/
 docs/.docusaurus/
 docs/.cache-loader/
+AGENT.md
+AGENTS.md
 
 # Misc
 .DS_Store

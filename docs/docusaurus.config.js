@@ -10,8 +10,8 @@ const config = {
   tagline: 'Deploy JupyterHub with jhub-apps on Nebari',
   favicon: 'img/favicon.ico',
 
-  url: 'https://nebari-data-science-pack.netlify.app',
-  baseUrl: '/',
+  url: 'https://nebari-dev.github.io',
+  baseUrl: '/nebari-data-science-pack/',
 
   organizationName: 'nebari-dev',
   projectName: 'nebari-data-science-pack',
@@ -91,14 +91,6 @@ const config = {
         style: 'dark',
         links: [
           {
-            title: 'Docs',
-            items: [
-              {label: 'Get started', to: '/get-started/'},
-              {label: 'How-to guides', to: '/how-tos/'},
-              {label: 'Reference', to: '/references/'},
-            ],
-          },
-          {
             title: 'Source',
             items: [
               {
@@ -108,19 +100,6 @@ const config = {
               {
                 label: 'Nebari',
                 href: 'https://nebari.dev',
-              },
-            ],
-          },
-          {
-            title: 'JupyterHub',
-            items: [
-              {
-                label: 'Zero to JupyterHub',
-                href: 'https://z2jh.jupyter.org/',
-              },
-              {
-                label: 'jhub-apps',
-                href: 'https://jhub-apps.nebari.dev/',
               },
             ],
           },
