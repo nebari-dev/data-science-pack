@@ -132,6 +132,33 @@ singleuser:
     gatewayName: nebari-gateway
     gatewayPort: 10443
 
+  # ---------------------------------------------------------------------------
+  # jupyterlab-gallery — curated notebook exhibits surfaced in the JupyterLab
+  # launcher. The extension is baked into the singleuser image
+  # (images/jupyterlab/pixi.toml); this block controls whether it is
+  # configured and which exhibits show up. Disabled by default so existing
+  # deploys see no behavior change.
+  # https://github.com/nebari-dev/jupyterlab-gallery
+  # ---------------------------------------------------------------------------
+  gallery:
+    enabled: false
+    # Launcher card title.
+    title: "Gallery"
+    # Where exhibit repos are cloned in the user's home. The extension creates
+    # one subdirectory per exhibit, named after exhibit.title.
+    destination: "/home/jovyan/gallery"
+    # List of exhibits. Each entry produces one launcher card. Minimum
+    # fields: `title` and `git` (a public repo URL). Optional fields:
+    # `description` (subtitle), `icon` (URL to a thumbnail), `account` and
+    # `token` for private repos (typically templated from a Secret via
+    # singleuser.extraEnv rather than hard-coded here). See the extension
+    # README for the full per-exhibit schema. Example:
+    #   exhibits:
+    #     - title: "Tutorials"
+    #       git: "https://github.com/your-org/tutorials"
+    #       description: "End-to-end notebooks"
+    exhibits: []
+
 # =============================================================================
 # Singleuser Idle Culler
 # =============================================================================
