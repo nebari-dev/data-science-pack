@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from kubernetes.client import ApiException
+from kubernetes_asyncio.client.rest import ApiException
 from kubespawner.objects import make_pvc
 from z2jh import get_config
 
