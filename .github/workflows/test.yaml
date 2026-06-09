@@ -26,6 +26,7 @@ jobs:
           uv pip install --python .venv-unit/bin/python \
             jupyterhub==5.1.0 \
             oauthenticator==16.3.0 \
+            kubernetes==36.0.2 \
             pytest
 
       - name: pytest tests/unit
