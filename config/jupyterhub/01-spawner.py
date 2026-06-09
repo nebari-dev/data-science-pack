@@ -153,12 +153,13 @@ if nebi_image:
     c.KubeSpawner.init_containers.append({
         "name": "install-nebi",
         "image": nebi_image,
-        "command": ["sh", "-c", "mkdir -p /nebi-workspaces/workspaces/$JUPYTERHUB_USER && cp /app/nebi /nebi-bin/nebi && chmod +x /nebi-bin/nebi"],
+        "command": ["sh", "-c", "cp /app/nebi /nebi-bin/nebi && chmod +x /nebi-bin/nebi"],
         "imagePullPolicy": get_config("custom.nebi-image-pull-policy", "IfNotPresent"),
         "volumeMounts": [{
             "name": "nebi-bin",
             "mountPath": "/nebi-bin",
-        }, {
+        },
+        {
             "name": "nebi-workspaces",
             "mountPath": "/nebi-workspaces",
         }],
@@ -956,10 +957,15 @@ async def _ensure_workspace_pvc(spawner):
 # ---------------------------------------------------------------------------
 # Pre-spawn hook orchestrator
 # ---------------------------------------------------------------------------
-# Chains the independent concerns: Nebi auto-auth, workspace PVC, shared
-# storage mounts, and NSS wrapper setup. Each is implemented as its own
-# focused function above. The orchestrator always runs so NSS wrapper is
-# active even without Nebi/shared.
+# Chains the independent concerns: 
+# 1. Nebi auto-auth
+# 2. workspace PVC
+# 3. Resolve groups
+# 5. shared storage mounts
+# 4. NSS wrapper setup
+# 
+# Each is implemented as its own focused function above. The orchestrator always
+# runs so NSS wrapper is active even without Nebi/shared.
 
 _nebi_auth_configured = bool(nebi_remote_url and get_chart_config("nebi-internal-url"))
 log.info(

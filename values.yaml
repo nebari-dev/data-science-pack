@@ -243,19 +243,6 @@ nebi:
   # Port the Nebi server listens on (used in hub -> nebi NetworkPolicy
   # egress rule).
   port: 8460
-  # Persistent storage for Nebi workspaces.
-  # Each user gets their own RWO PVC created dynamically by KubeSpawner.
-  # The values below are fed into the hub config as defaults for
-  # workspace-storage-class and workspace-storage-capacity.
-  workspacesStorage:
-    # StorageClass for the per-user workspace PVCs. Leave empty for cluster
-    # default (must support ReadWriteOnce).
-    storageClass: ""
-    # Per-user capacity.
-    size: 5Gi
-    # DEPRECATED: no longer used. Each workspace PVC is hard-coded to RWO.
-    accessModes:
-      - ReadWriteMany
 
 # Helm Job that one-shots Keycloak realm config for role-gated shared
 # mounts. Runs as a post-install / post-upgrade
