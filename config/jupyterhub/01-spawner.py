@@ -11,9 +11,10 @@ from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+import escapism
+import string
 from kubernetes_asyncio.client.rest import ApiException
 from kubespawner.objects import make_pvc
-from kubespawner.slugs import safe_slug
 from z2jh import get_config
 
 log = logging.getLogger(__name__)
@@ -917,7 +918,9 @@ async def _ensure_workspace_pvc(spawner):
     retry logic KubeSpawner uses internally.
     """
     username = spawner.user.name
-    pvc_name = safe_slug(f"nebi-workspaces-{username}", max_length=63)
+    safe_chars = set(string.ascii_lowercase + string.digits)
+    slug = escapism.escape(username, safe=safe_chars, escape_char='-').lower()
+    pvc_name = f"nebi-workspaces-{slug}"
     namespace = spawner.namespace
 
     storage_class = get_config("custom.workspace-storage-class", "") or None
