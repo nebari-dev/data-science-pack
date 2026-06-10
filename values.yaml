@@ -93,7 +93,11 @@ nebariapp:
     # description: supplementary text shown on the service card (max 256 chars).
     description: "Interactive Python notebooks for data science"
     # icon: built-in icon ID (e.g. jupyter, grafana) or a URL to a custom image.
-    icon: "https://jupyter.org/assets/homepage/main-logo.svg"
+    # Using a local SVG with prefers-color-scheme support instead of the upstream
+    # jupyter.org logo which has dark gray elements invisible in dark mode.
+    icon: "https://raw.githubusercontent.com/nebari-dev/nebari-data-science-pack/main/assets/icons/jupyter-icon-light.svg"
+    iconLight: "https://raw.githubusercontent.com/nebari-dev/nebari-data-science-pack/main/assets/icons/jupyter-icon-light.svg"
+    iconDark: "https://raw.githubusercontent.com/nebari-dev/nebari-data-science-pack/main/assets/icons/jupyter-icon-dark.svg"
     # category: groups related services together on the landing page.
     category: "Data Science"
     # priority: sort order within a category; lower numbers appear first (0–1000).
