@@ -35,7 +35,7 @@ jobs:
           helm template test . -f examples/nebari-values.yaml > /dev/null
           # The values embedded in the ArgoCD Application must stay valid chart
           # inputs; extract and render them too.
-          uv run --with PyYAML==6.0.2 tools/extract_helm_values.py \
+          uv run --with PyYAML==6.0.2 scripts/extract_helm_values.py \
             examples/argocd-application.yaml | helm template test . -f - > /dev/null
 
       - name: Lint Python
