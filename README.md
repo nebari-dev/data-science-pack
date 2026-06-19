@@ -16,11 +16,25 @@ A Helm chart for deploying JupyterHub with [jhub-apps](https://github.com/nebari
 
 ### Install from Helm Repository
 
+The chart is published to the central Nebari Helm repository:
+
 ```bash
-helm repo add nebari https://nebari-dev.github.io/nebari-data-science-pack
+helm repo add nebari https://raw.githubusercontent.com/nebari-dev/helm-repository/gh-pages/
 helm repo update
 helm install data-science-pack nebari/nebari-data-science-pack
 ```
+
+It is also available as an OCI artifact on quay.io (no `helm repo add` needed):
+
+```bash
+helm install data-science-pack oci://quay.io/nebari/charts/nebari-data-science-pack --version <version>
+```
+
+> **Cutover note:** releases from `0.1.0-alpha.16` onward publish to the central
+> repository above. The previous per-repo index at
+> `https://nebari-dev.github.io/nebari-data-science-pack` is frozen; releases
+> packaged there before the cutover remain installable from it, but new
+> versions land only in the central repository.
 
 ### Install from Source
 
