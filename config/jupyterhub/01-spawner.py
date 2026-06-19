@@ -1178,7 +1178,7 @@ async def _pre_spawn_hook(spawner):
     except Exception:
         log.exception("pre-spawn: NSS wrapper setup FAILED for %s", username)
 
-    # 5. External auth provider tokens (non-fatal)
+    # 6. Optional external auth provider tokens (disabled unless configured)
     try:
         await _external_auth_pre_spawn_hook(spawner, auth_state)
     except Exception:

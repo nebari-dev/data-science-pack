@@ -215,8 +215,9 @@ sharedStorage:
     # of `/` is broken — see shared-pvc.yaml for details.
     mountOptions: []
 
-# External auth pack integration. Copy these values from the
-# ExternalAuthIntegration contract rendered by nebari-external-auth-pack.
+# Optional external auth pack integration. Leave enabled=false unless
+# nebari-external-auth-pack is installed and has rendered an
+# ExternalAuthIntegration contract for this data-science pack.
 externalAuth:
   enabled: false
   brokerURL: ""
