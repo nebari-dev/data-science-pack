@@ -42,3 +42,5 @@ docs/
 tests/
 *_test.yaml
 .venv-unit/
+# Examples (deploy recipes, not chart sources)
+examples/
