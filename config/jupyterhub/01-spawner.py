@@ -165,6 +165,67 @@ if nebi_image:
 
 
 # ---------------------------------------------------------------------------
+# Enterprise CA bundle (TLS-inspected egress)
+# ---------------------------------------------------------------------------
+# On clusters behind a TLS-inspecting proxy, NIC core's trust-manager projects
+# the org CA into every namespace as a ConfigMap. We merge it with the image's
+# system CA bundle into an emptyDir and point the standard CA env vars at the
+# merged file, so pip/conda/git verify BOTH proxy-inspected (org-signed) and
+# genuine public-root endpoints with no flags. Gated off by default.
+_trust_bundle_enabled = get_chart_config("trust-bundle-enabled", False)
+_trust_bundle_configmap = get_chart_config("trust-bundle-configmap", "nebari-trust-bundle")
+_trust_bundle_key = get_chart_config("trust-bundle-key", "ca-certificates.crt")
+_MERGED_CA_PATH = "/etc/ssl/certs-extra/ca-bundle.crt"
+
+
+def _setup_trust_bundle(spawner):
+    """Mount + merge the org CA into the pod and set the CA env vars.
+
+    The merge init container runs spawner.image so it reads the SAME system CA
+    store the main container has (a generic busybox would not). The org-ca
+    ConfigMap is mounted optional, so a cluster without trust-manager — or a
+    spawn that races the projection — still starts; the merged file is then
+    just the system bundle, i.e. no behavior change.
+    """
+    spawner.volumes = list(spawner.volumes) + [
+        {
+            "name": "org-ca",
+            "configMap": {"name": _trust_bundle_configmap, "optional": True},
+        },
+        {"name": "ca-merged", "emptyDir": {}},
+    ]
+    spawner.volume_mounts = list(spawner.volume_mounts) + [
+        {"name": "ca-merged", "mountPath": "/etc/ssl/certs-extra"},
+    ]
+    spawner.init_containers = list(spawner.init_containers) + [
+        {
+            "name": "merge-ca-bundle",
+            "image": spawner.image,
+            "imagePullPolicy": get_config("custom.nebi-image-pull-policy", "IfNotPresent"),
+            "command": [
+                "/bin/sh",
+                "-c",
+                "cp /etc/ssl/certs/ca-certificates.crt /merged/ca-bundle.crt && "
+                f"if [ -f /org-ca/{_trust_bundle_key} ]; then "
+                f"cat /org-ca/{_trust_bundle_key} >> /merged/ca-bundle.crt; fi",
+            ],
+            "volumeMounts": [
+                {"name": "org-ca", "mountPath": "/org-ca", "readOnly": True},
+                {"name": "ca-merged", "mountPath": "/merged"},
+            ],
+        },
+    ]
+    spawner.environment = {
+        **spawner.environment,
+        "REQUESTS_CA_BUNDLE": _MERGED_CA_PATH,
+        "SSL_CERT_FILE": _MERGED_CA_PATH,
+        "NODE_EXTRA_CA_CERTS": _MERGED_CA_PATH,
+        "CURL_CA_BUNDLE": _MERGED_CA_PATH,
+        "GIT_SSL_CAINFO": _MERGED_CA_PATH,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Environment variables
 # ---------------------------------------------------------------------------
 # Start with extraEnv from values.yaml so deployers can inject env vars
@@ -637,6 +698,34 @@ async def _nebi_pre_spawn_hook(spawner):
                 "NEBI_DATA_DIR": nebi_env_dir,
             }
 
+            nebi_pull_env = [
+                {"name": "HOME", "value": nebi_env_dir},
+                {"name": "NEBI_DATA_DIR", "value": nebi_env_dir},
+                {"name": "NEBI_AUTH_TOKEN", "value": nebi_jwt},
+                {"name": "NEBI_REMOTE_URL", "value": nebi_remote},
+            ]
+            nebi_pull_mounts = [
+                {"name": "nebi-bin", "mountPath": "/usr/local/bin/nebi", "subPath": "nebi"},
+                {"name": "nebi-env", "mountPath": nebi_env_dir},
+            ]
+            # When the org CA bundle is enabled, nebi-pull's own egress
+            # (`nebi pull` over HTTPS, `pixi install` from PyPI/conda) also goes
+            # through the inspecting proxy, so it needs the merged bundle too.
+            # _setup_trust_bundle ran first (see _pre_spawn_hook ordering), so
+            # the ca-merged volume exists and merge-ca-bundle precedes this in
+            # init-container order, leaving the merged file ready to mount.
+            if _trust_bundle_enabled:
+                nebi_pull_env += [
+                    {"name": "REQUESTS_CA_BUNDLE", "value": _MERGED_CA_PATH},
+                    {"name": "SSL_CERT_FILE", "value": _MERGED_CA_PATH},
+                    {"name": "NODE_EXTRA_CA_CERTS", "value": _MERGED_CA_PATH},
+                    {"name": "CURL_CA_BUNDLE", "value": _MERGED_CA_PATH},
+                    {"name": "GIT_SSL_CAINFO", "value": _MERGED_CA_PATH},
+                ]
+                nebi_pull_mounts += [
+                    {"name": "ca-merged", "mountPath": "/etc/ssl/certs-extra"},
+                ]
+
             spawner.init_containers = list(spawner.init_containers) + [{
                 "name": "nebi-pull",
                 "image": spawner.image,
@@ -652,16 +741,8 @@ async def _nebi_pre_spawn_hook(spawner):
                     f"chmod -R a+rw {nebi_env_dir}/nebi.db* || "
                     f"echo 'WARNING: nebi pull or pixi install failed for {workspace_name}'",
                 ],
-                "env": [
-                    {"name": "HOME", "value": nebi_env_dir},
-                    {"name": "NEBI_DATA_DIR", "value": nebi_env_dir},
-                    {"name": "NEBI_AUTH_TOKEN", "value": nebi_jwt},
-                    {"name": "NEBI_REMOTE_URL", "value": nebi_remote},
-                ],
-                "volumeMounts": [
-                    {"name": "nebi-bin", "mountPath": "/usr/local/bin/nebi", "subPath": "nebi"},
-                    {"name": "nebi-env", "mountPath": nebi_env_dir},
-                ],
+                "env": nebi_pull_env,
+                "volumeMounts": nebi_pull_mounts,
             }]
     except Exception:
         log.exception("Nebi auto-auth failed for %s (pod will still spawn)", spawner.user.name)
@@ -992,7 +1073,25 @@ async def _pre_spawn_hook(spawner):
     preferred_username = oauth_user.get("preferred_username") or username
     spawner.environment = {**spawner.environment, "PREFERRED_USERNAME": preferred_username}
 
-    # 1. Nebi auto-auth (non-fatal)
+    # 1. Enterprise CA bundle (non-fatal). Off by default; on only when the
+    #    cluster runs trust-manager and the deployer/operator enables it. Runs
+    #    BEFORE Nebi auto-auth so the merge-ca-bundle init container is appended
+    #    (and thus executes) before nebi-pull, and so the ca-merged volume
+    #    exists when nebi-pull mounts it. The non-fatal guard lives here at the
+    #    call site (unlike Nebi, which guards inside _nebi_pre_spawn_hook) since
+    #    _setup_trust_bundle is synchronous.
+    if _trust_bundle_enabled:
+        try:
+            _setup_trust_bundle(spawner)
+            log.info("trust-bundle: CA merge configured for %s", username)
+        except Exception:
+            log.exception(
+                "trust-bundle: setup FAILED for %s (pod will still spawn)", username,
+            )
+    else:
+        log.debug("trust-bundle: disabled, skipping CA merge for %s", username)
+
+    # 2. Nebi auto-auth (non-fatal)
     if _nebi_auth_configured:
         log.debug("pre-spawn: running Nebi auto-auth for %s", username)
         await _nebi_pre_spawn_hook(spawner)
