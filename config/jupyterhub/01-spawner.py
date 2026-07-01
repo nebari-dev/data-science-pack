@@ -31,6 +31,9 @@ log = logging.getLogger(__name__)
 c.KubeSpawner.storage_pvc_ensure = True
 c.KubeSpawner.storage_capacity = get_config("custom.storage-capacity", "20Gi")
 c.KubeSpawner.storage_access_modes = ["ReadWriteOnce"]
+# KubeSpawner 7 defaults to slug_scheme="safe". Keep the old escaped slug
+# behavior until PVC names and affinity labels are intentionally migrated.
+c.KubeSpawner.slug_scheme = "escape"
 # Without this override, KubeSpawner's default template is
 # `claim-{username}--{servername}`, so for jhub-apps named servers it ensures
 # a per-server PVC — while the `volumes` block below mounts the per-user

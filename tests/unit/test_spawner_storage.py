@@ -38,6 +38,11 @@ def test_pvc_name_template_matches_volume_claim():
     c = FakeConfig()
     load_config_module("01-spawner.py", inject_c=c)
 
+    assert c.KubeSpawner.slug_scheme == "escape", (
+        "KubeSpawner 7 defaults to slug_scheme='safe'; keep 'escape' until "
+        "PVC names and pod-affinity labels are intentionally migrated."
+    )
+
     template = getattr(c.KubeSpawner, "pvc_name_template", None)
     assert template == "claim-{username}", (
         f"pvc_name_template={template!r} — must be 'claim-{{username}}' so "

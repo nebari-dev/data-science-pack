@@ -20,7 +20,7 @@ else:
 c.JupyterHub.default_url = "/hub/home"
 c.JupyterHub.template_paths = theme_template_paths
 # Match JupyterLab default (IBM Plex Sans, PR #75) on hub + JApps pages.
-# Requires jhub-apps >= 2026.5.1rc1 (PR #677: font_family / font_url theme vars).
+# Requires jhub-apps >= 2026.6.1 for font_family / font_url theme vars.
 c.JupyterHub.template_vars = {
     **themes.DEFAULT_THEME,
     "font_family": "'IBM Plex Sans', sans-serif",
