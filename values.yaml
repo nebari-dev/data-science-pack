@@ -228,7 +228,7 @@ nebi:
     # Pinned per chart release by CI (scripts/bump_image_tags.py); deployers
     # can override to test a PR build or roll forward. Leave non-empty so
     # the init container is wired by default.
-    tag: "sha-f4b23ca"
+    tag: "sha-be3187c"
     pullPolicy: IfNotPresent
   # External Nebi FQDN (browser-side, used for OIDC redirect).
   # If empty, derived from keycloak.hostname as
@@ -362,6 +362,22 @@ jupyterhub:
     nebi-client-id: ""
     jupyterhub-client-id: ""
     # ---------------------------------------------------------------------------
+    # Enterprise CA bundle (TLS-inspected egress).
+    # When the cluster sits behind a TLS-inspecting proxy, NIC core's
+    # trust-manager projects the org CA into every namespace as a ConfigMap.
+    # Enabling this merges that CA with the image's system bundle (via an init
+    # container) and sets REQUESTS_CA_BUNDLE / SSL_CERT_FILE / NODE_EXTRA_CA_CERTS
+    # / CURL_CA_BUNDLE / GIT_SSL_CAINFO on singleuser + app pods, so pip/conda/git
+    # work with no --trusted-host / ssl_verify flags.
+    # Leave false on clusters without trust-manager (default; no behavior change).
+    # The ConfigMap is always mounted optional, so a missing CA never blocks spawn.
+    trust-bundle-enabled: false
+    # ConfigMap (in the JupyterHub namespace) holding the org CA. Defaults match
+    # trust-manager's Bundle convention (Bundle name -> ConfigMap name; the data
+    # key set on the Bundle target).
+    trust-bundle-configmap: "nebari-trust-bundle"
+    trust-bundle-key: "ca-certificates.crt"
+    # ---------------------------------------------------------------------------
     # Profiles — resource sizing for JupyterLab pods.
     # Each entry maps directly to a KubeSpawner profile_list item. Slugs are
     # derived from display_name via z2jh's slugify (e.g. "Small Instance" →
@@ -454,6 +470,12 @@ jupyterhub:
     # specific value independent of the PVC/StorageClass setup.
     shared-storage-groups: []       # allowlist; empty = all groups from token
     shared-storage-mount-prefix: "/shared"
+    # Workspace storage — per-user RWO PVC for nebi workspaces.
+    # KubeSpawner creates these dynamically in the pre_spawn_hook.
+    # Leave empty to use the cluster default StorageClass.
+    workspace-storage-class: ""
+    # Pixi environments run 2–5 Gi each, so size accordingly.
+    workspace-storage-capacity: "20Gi"
     # Role-gated shared-mount RBAC configuration
     # is delivered via the hub Deployment's env vars (KC_REALM_API_URL
     # + KC_SHARED_MOUNT_ROLE), NOT via this `custom` block. Reasons:

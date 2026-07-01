@@ -40,11 +40,7 @@ nebi_env = {
         "nebi",
         "nebi.db",
     ),
-    "NEBI_STORAGE_WORKSPACES_DIR": os.path.join(
-        os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")),
-        "nebi",
-        "workspaces",
-    ),
+    "NEBI_STORAGE_WORKSPACES_DIR": "/var/lib/nebi/workspaces",
 }
 nebi_remote_url = os.environ.get("NEBI_REMOTE_URL", "")
 if nebi_remote_url:
