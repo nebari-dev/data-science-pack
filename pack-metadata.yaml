@@ -23,7 +23,7 @@
 
 # Must equal the GitHub repo name exactly (e.g. "nebari-data-science-pack").
 # The dashboard uses this to cross-check that the file is in the right repo.
-name: nebari-data-science-pack
+name: data-science-pack
 
 # Human-readable name shown on the dashboard. Title-case recommended.
 display_name: Data Science Pack
@@ -31,7 +31,7 @@ display_name: Data Science Pack
 # Maturity level. Must be lowercase. Allowed values: experimental | alpha | beta | ga
 # Definitions, per-level promotion checklist, and dashboard flag reference:
 #   https://github.com/nebari-dev/nebari-software-pack-template/blob/main/docs/release-readiness-checklist.md
-level: experimental
+level: beta
 
 # GitHub username of the accountable engineer. No "@" prefix.
 # For packs with multiple maintainers, name the single most-accountable one
