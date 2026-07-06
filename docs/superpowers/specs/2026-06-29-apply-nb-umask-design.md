@@ -2,6 +2,14 @@
 
 **Issue:** https://github.com/nebari-dev/data-science-pack/issues/144
 
+> **Post-review update (PR #146):** review feedback pointed out that the
+> `NB_UMASK` env var was set to a hardcoded `0002` and read in exactly one
+> place, with no working override path. It was removed: the wrapper now applies
+> `umask 0002` directly, and the `printenv NB_UMASK` e2e assertion was dropped.
+> The env-var-based snippets below are the original design; the shipped code
+> hardcodes the value. The rest of the reasoning (hub-side wrapper, `/proc`
+> regression test, single-UID nuance) stands.
+
 ## Problem
 
 `NB_UMASK=0002` is set on the singleuser pod environment (by

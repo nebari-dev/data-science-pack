@@ -3,7 +3,7 @@
 Per-group RWX shared dirs at /shared/<group> are set up by the chart with:
 
   - ownership root:users (uid=0, gid=100), mode 2775 (setgid on 'users')
-  - pod runs with fsGroup=100 + NB_UMASK=0002 so new files are 664/775,
+  - pod runs with fsGroup=100 + umask 0002 so new files are 664/775,
     group-writable, and inherit gid=100 by setgid propagation
   - only the groups a user belongs to are mounted (no cross-group leakage)
   - shared dir is RWX across all members of a group (multi-pod, multi-user)
@@ -23,23 +23,25 @@ import pytest
 USERS_GID = 100               # Linux 'users' group; nebari's fsGroup
 ROOT_UID = 0                  # init container chown's dir to root for setgid
 SHARED_DIR_MODE = 0o2775      # rwxrwsr-x — setgid + group-writable
-EXPECTED_FILE_MODE = 0o664    # under umask 0002
-EXPECTED_DIR_MODE = 0o2775    # umask 0002 + setgid propagated from parent
+SETGID_BIT = 0o2000           # inherited by subdirs from a setgid parent
 
 
 # --- Helpers ---------------------------------------------------------------
 
 
 def _write_under_pod_umask(user, shell_cmd):
-    """Run `shell_cmd` with umask taken from NB_UMASK.
+    """Run `shell_cmd` with the same umask (0002) the singleuser server uses.
 
     A `kubectl exec` shell is not a child of the jupyterhub-singleuser
-    server process, so it does NOT inherit the server's umask — tests have
-    to re-apply it explicitly here to observe the file-mode behavior. That
-    the *server* (and thus kernels/terminals) actually runs with umask 0002
-    is verified separately by test_singleuser_server_runs_with_umask_0002.
+    server process, so it does NOT inherit the server's umask — tests re-apply
+    it explicitly here so writes are group-writable. This means the resulting
+    file *mode* is a property of umask itself, not of the chart, and is
+    therefore not asserted below; that the *server* (and thus kernels/terminals)
+    actually runs with umask 0002 is verified separately by
+    test_singleuser_server_runs_with_umask_0002. What these tests do verify is
+    the chart's directory setup — gid=100 ownership and setgid propagation.
     """
-    rc, out = user.exec("bash", "-c", f'umask "$NB_UMASK"; {shell_cmd}')
+    rc, out = user.exec("bash", "-c", f'umask 0002; {shell_cmd}')
     assert rc == 0, f"setup command failed (rc={rc}): {out}"
 
 
@@ -70,23 +72,13 @@ def test_pod_is_member_of_users_group(spawn_user):
     assert str(USERS_GID) in out.split()
 
 
-def test_pod_environment_sets_nb_umask_to_0002(spawn_user):
-    """NB_UMASK=0002 is set in the pod env by the spawner. This image is not
-    docker-stacks, so the value is consumed by the c.KubeSpawner.cmd wrapper
-    (umask before exec), not a start.sh. Here we just pin the configuration
-    contract; the runtime effect is checked by the test below."""
-    u = spawn_user("alice-data")
-    rc, out = u.exec("printenv", "NB_UMASK")
-    assert rc == 0
-    assert out == "0002"
-
-
 def test_singleuser_server_runs_with_umask_0002(spawn_user):
     """The jupyterhub-singleuser server process must actually run with umask
     0002 — this is what kernels and terminals inherit. We read the live Umask
     from /proc/<pid>/status, which cannot be faked by a re-applied exec shell
     (the exec shell is not a child of the server). Regression guard for #144:
-    NB_UMASK was set in the env but never consumed, so the kernel ran 0022."""
+    the umask was declared but never actually applied to the server, so the
+    kernel ran the default 0022."""
     u = spawn_user("alice-data")
     rc, out = u.exec(
         "sh", "-c",
@@ -96,31 +88,35 @@ def test_singleuser_server_runs_with_umask_0002(spawn_user):
     assert "0002" in out, f"server umask is not 0002: {out!r}"
 
 
-# --- File/dir creation inherits group + umask ------------------------------
+# --- File/dir creation inherits group via setgid ---------------------------
 
 
-def test_new_file_is_group_writable_and_owned_by_users(spawn_user):
-    """A file created in /shared/<group> ends up mode 664, gid 100. This
-    is the core multi-tenancy invariant: any teammate can edit any other
-    teammate's files without explicit coordination."""
+def test_new_file_inherits_users_group(spawn_user):
+    """A file created in /shared/<group> inherits gid 100 from the parent's
+    setgid bit — the core multi-tenancy invariant: files land in the shared
+    'users' group regardless of the creator's primary gid, so any teammate can
+    access them. (The file *mode* follows from umask 0002, a property of umask
+    itself rather than the chart, so it is not asserted here — see
+    _write_under_pod_umask.)"""
     u = spawn_user("alice-data")
     _write_under_pod_umask(u, "touch /shared/data/file_from_alice")
 
     s = u.stat("/shared/data/file_from_alice")
     assert s.gid == USERS_GID
-    assert s.mode == EXPECTED_FILE_MODE
 
 
 def test_new_subdir_inherits_setgid_and_users_group(spawn_user):
     """A subdir created under a setgid parent inherits the setgid bit and
     gid=100. Without this, nested files would silently fall back to the
-    user's primary gid and become invisible to teammates."""
+    user's primary gid and become invisible to teammates. (The lower mode
+    bits follow from umask 0002 and are not asserted — see
+    _write_under_pod_umask.)"""
     u = spawn_user("alice-data")
     _write_under_pod_umask(u, "mkdir /shared/data/subdir_from_alice")
 
     s = u.stat("/shared/data/subdir_from_alice")
     assert s.gid == USERS_GID
-    assert s.mode == EXPECTED_DIR_MODE
+    assert s.mode & SETGID_BIT, f"setgid bit not inherited: {oct(s.mode)}"
 
 
 # --- Multi-tenancy across users and groups ---------------------------------
