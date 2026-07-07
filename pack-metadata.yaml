@@ -52,7 +52,7 @@ deprecated: false
 
 # Required (non-null) ONLY when level: ga. GitHub username of the product
 # owner. May be null for any other level.
-product_owner: null
+product_owner: pmeier
 
 # ----------------------------------------------------------------------------
 # Optional fields - omit any you do not need
@@ -67,11 +67,11 @@ product_owner: null
 # How the pack integrates with the NebariApp CRD.
 # Allowed: full | partial | none | na    Default: na
 # Use "na" for packs that are not user-facing applications.
-# nebariapp_integration: full
+nebariapp_integration: full
 
 # Whether the pack installs without the Nebari operator.
-# scope:
-#   standalone-supported: yes    # yes | no    Default: no
+scope:
+  standalone-supported: no
 
 # When the pack was most recently promoted to its current level.
 # ISO 8601 date. Useful audit trail.
