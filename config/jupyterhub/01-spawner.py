@@ -73,6 +73,24 @@ c.KubeSpawner.volume_mounts = [
 c.KubeSpawner.notebook_dir = "/home/jovyan"
 c.KubeSpawner.working_dir = "/home/jovyan"
 
+# Apply umask 0002 to the singleuser server process so files in /shared/<group>
+# are group-writable (664/2775). This image is NOT jupyter docker-stacks — there
+# is no start.sh to apply the umask, and the k8s `command:` overrides any
+# Dockerfile ENTRYPOINT. So we wrap the server command here: `umask` runs before
+# `exec`, and the kernel and terminal processes (children of the server) inherit
+# it. Done hub-side rather than in the image so it takes effect without an image
+# rebuild / tag bump. The value is hardcoded (not read from an env var) because it
+# is intrinsically coupled to the shared-storage setgid design (2775 dirs), not an
+# independently tunable knob. `$0` is the real command (jupyterhub-singleuser);
+# `$@` is KubeSpawner's args, appended by k8s after `command`. See
+# https://github.com/nebari-dev/data-science-pack/issues/144
+c.KubeSpawner.cmd = [
+    "sh",
+    "-c",
+    'umask 0002; exec "$0" "$@"',
+    "jupyterhub-singleuser",
+]
+
 # affinity — co-locate all pods for the same user on the same node.
 # hcloud-volumes is ReadWriteOnce — only one node can mount it at a time.
 # Pod affinity ensures jhub-apps app pods land on the same node as the
@@ -820,7 +838,8 @@ async def _setup_shared_storage(spawner, groups):
     Creates /shared/<group> on the PVC with:
     - chown 0:100 so group owner is GID 100 (users), matching pod fs_gid
     - chmod 2775 (rwxrwsr-x) so group has write and setgid propagates GID to new files
-    Combined with NB_UMASK=0002, new files are group-writable (664/775).
+    Combined with the server's umask 0002 (see c.KubeSpawner.cmd), new files
+    are group-writable (664/775).
     """
     log.info(
         "shared-storage: setting up PVC mounts for user %s, groups: %s",
@@ -881,7 +900,8 @@ def _generate_nss_files(username, uid=1000, gid=1000):
 async def _setup_nss_wrapper(spawner, username, groups):
     """Configure libnss_wrapper so whoami/id report the real username.
 
-    Sets LD_PRELOAD, NSS_WRAPPER_* paths, and NB_UMASK=0002.
+    Sets LD_PRELOAD and the NSS_WRAPPER_* paths so getpwuid/getgrgid resolve
+    against the generated /tmp/passwd and /tmp/group.
     Adds a postStart lifecycle hook that:
     - writes /tmp/passwd and /tmp/group using printf (safe for special chars in username)
     - when shared PVC is enabled: symlinks ~/shared → PVC mount prefix
@@ -902,7 +922,6 @@ async def _setup_nss_wrapper(spawner, username, groups):
         "LD_PRELOAD": "libnss_wrapper.so",
         "NSS_WRAPPER_PASSWD": "/tmp/passwd",
         "NSS_WRAPPER_GROUP": "/tmp/group",
-        "NB_UMASK": "0002",
     }
     log.debug("nss-wrapper: LD_PRELOAD and NSS_WRAPPER_* set in spawner environment")
 
