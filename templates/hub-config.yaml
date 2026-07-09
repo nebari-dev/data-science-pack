@@ -74,7 +74,7 @@ data:
   00-gateway-auth.py: |
 {{ $gatewayAuthPy | indent 4 }}
   01-spawner.py: |
-{{ .Files.Get "config/jupyterhub/01-spawner.py" | replace "__SINGLEUSER_CONFIG_CM__" (include "nebari-data-science-pack.singleuser-config" .) | indent 4 }}
+{{ .Files.Get "config/jupyterhub/01-spawner.py" | replace "__SINGLEUSER_CONFIG_CM__" (include "nebari-data-science-pack.singleuser-config" .) | replace "__EXTERNAL_AUTH_ENABLED__" (toString .Values.externalAuth.enabled) | replace "__EXTERNAL_AUTH_BROKER_URL__" .Values.externalAuth.brokerURL | replace "__EXTERNAL_AUTH_PROVIDERS_JSON__" (toJson .Values.externalAuth.providers) | replace "__EXTERNAL_AUTH_ENV_VAR_MAP_JSON__" (toJson .Values.externalAuth.envVarMap) | replace "__EXTERNAL_AUTH_TIMEOUT_SECONDS__" (toString .Values.externalAuth.timeoutSeconds) | indent 4 }}
   02-jhub-apps.py: |
 {{ .Files.Get "config/jupyterhub/02-jhub-apps.py" | indent 4 }}
   03-nebi-envs.py: |

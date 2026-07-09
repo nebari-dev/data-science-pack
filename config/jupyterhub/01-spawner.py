@@ -5,10 +5,11 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import urllib.error
 import urllib.request
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 import escapism
@@ -18,6 +19,38 @@ from kubespawner.objects import make_pvc
 from z2jh import get_config
 
 log = logging.getLogger(__name__)
+
+
+def _external_auth_unrendered(value):
+    """Return true for Helm placeholders in unit-test/import contexts."""
+    return str(value).startswith("__EXTERNAL_AUTH_")
+
+
+def _external_auth_json(value, default):
+    if _external_auth_unrendered(value):
+        return default
+    return json.loads(value)
+
+
+def _external_auth_int(value, default):
+    if _external_auth_unrendered(value) or not str(value).strip():
+        return default
+    return int(value)
+
+
+external_auth_enabled = (
+    False
+    if _external_auth_unrendered("__EXTERNAL_AUTH_ENABLED__")
+    else "__EXTERNAL_AUTH_ENABLED__".lower() == "true"
+)
+external_auth_broker_url = (
+    ""
+    if _external_auth_unrendered("__EXTERNAL_AUTH_BROKER_URL__")
+    else "__EXTERNAL_AUTH_BROKER_URL__".strip()
+)
+external_auth_providers = _external_auth_json(r'''__EXTERNAL_AUTH_PROVIDERS_JSON__''', [])
+external_auth_env_var_map = _external_auth_json(r'''__EXTERNAL_AUTH_ENV_VAR_MAP_JSON__''', {})
+external_auth_timeout_seconds = _external_auth_int("__EXTERNAL_AUTH_TIMEOUT_SECONDS__", 10)
 
 
 # ---------------------------------------------------------------------------
@@ -1046,12 +1079,132 @@ async def _ensure_workspace_pvc(spawner):
         log.info("Created workspace PVC %s in namespace %s", pvc_name, namespace)
     except ApiException as exc:
         if exc.status == 409:
-            log.info("Workspace PVC %s already  exists", pvc_name)
+            log.info("Workspace PVC %s already exists", pvc_name)
         else:
             log.error("Failed to create workspace PVC %s: %s", pvc_name, exc)
             raise
 
     return pvc_name
+
+
+# ---------------------------------------------------------------------------
+# External auth pack integration
+# ---------------------------------------------------------------------------
+
+def _external_auth_provider_token(broker_url, provider, bearer_token):
+    """Fetch one provider token from the external-auth broker."""
+    req = Request(
+        f"{broker_url.rstrip('/')}/external-auth/{quote(provider)}/token",
+        headers={"Authorization": f"Bearer {bearer_token}", "Accept": "application/json"},
+        method="GET",
+    )
+    with urlopen(req, timeout=external_auth_timeout_seconds) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _append_post_start_commands(spawner, commands):
+    """Append shell commands to the pod postStart hook."""
+    if not commands:
+        return
+
+    existing = dict(getattr(spawner, "lifecycle_hooks", None) or {})
+    post_start = existing.get("postStart", {})
+    command = post_start.get("exec", {}).get("command") if isinstance(post_start, dict) else None
+    new_script = " && ".join(commands)
+
+    if command and len(command) == 3 and command[:2] == ["/bin/sh", "-c"]:
+        new_script = f"{command[2]} && {new_script}"
+    elif command:
+        log.warning("postStart lifecycle hook has unsupported shape; replacing it")
+
+    spawner.lifecycle_hooks = {
+        **existing,
+        "postStart": {"exec": {"command": ["/bin/sh", "-c", new_script]}},
+    }
+
+
+def _preferred_git_email(oauth_user, username):
+    """Return a usable Git author email from auth claims or username fallback."""
+    email = str((oauth_user or {}).get("email") or "").strip()
+    if email:
+        return email
+    username = str(username or "").strip()
+    if "@" in username:
+        return username
+    return ""
+
+
+def _configure_git_user_identity(spawner):
+    """Set default Git author identity without overwriting user config."""
+    _append_post_start_commands(
+        spawner,
+        [
+            "if command -v git >/dev/null 2>&1; then "
+            "if [ -n \"${PREFERRED_USERNAME:-}\" ] && "
+            "! git config --global --get user.name >/dev/null 2>&1; then "
+            "git config --global user.name \"$PREFERRED_USERNAME\"; fi; "
+            "if [ -n \"${PREFERRED_EMAIL:-}\" ] && "
+            "! git config --global --get user.email >/dev/null 2>&1; then "
+            "git config --global user.email \"$PREFERRED_EMAIL\"; fi; "
+            "fi",
+        ],
+    )
+
+
+def _configure_git_for_github_token(spawner):
+    """Teach git to use the injected GITHUB_TOKEN for normal GitHub HTTPS URLs."""
+    helper = (
+        '!f() { test "$1" = get || exit 0; '
+        'while IFS= read -r line; do test -z "$line" && break; done; '
+        'test -n "${GITHUB_TOKEN:-}" || exit 0; '
+        'printf "username=x-access-token\\npassword=%s\\n" "$GITHUB_TOKEN"; }; f'
+    )
+    _append_post_start_commands(
+        spawner,
+        [
+            "if command -v git >/dev/null 2>&1 && [ -n \"${GITHUB_TOKEN:-}\" ]; then "
+            "git config --global credential.https://github.com.username x-access-token && "
+            f"git config --global credential.https://github.com.helper {shlex.quote(helper)} && "
+            "git config --global url.https://github.com/.insteadOf git@github.com:; "
+            "fi",
+        ],
+    )
+
+
+async def _external_auth_pre_spawn_hook(spawner, auth_state):
+    """Deliver external-auth provider tokens from configured contract fields."""
+    if not external_auth_enabled or not external_auth_broker_url:
+        return
+    access_token = (auth_state or {}).get("access_token")
+    if not access_token:
+        log.debug("external-auth: no access_token for %s; skipping", spawner.user.name)
+        return
+
+    providers = external_auth_providers or list(external_auth_env_var_map)
+    for provider in providers:
+        try:
+            payload = await asyncio.to_thread(
+                _external_auth_provider_token,
+                external_auth_broker_url,
+                provider,
+                access_token,
+            )
+        except urllib.error.HTTPError as exc:
+            log.debug("external-auth: token request failed provider=%s status=%s", provider, exc.code)
+            continue
+        except Exception as exc:
+            log.debug("external-auth: token request failed provider=%s error=%s", provider, exc)
+            continue
+
+        token = str(payload.get("access_token", "")).strip()
+        if payload.get("status") != "token_valid" or not token:
+            continue
+
+        env_var = str(external_auth_env_var_map.get(provider) or f"{provider.upper()}_TOKEN").strip()
+        spawner.environment = {**spawner.environment, env_var: token}
+        if provider == "github":
+            spawner.environment = {**spawner.environment, "GH_TOKEN": token}
+            _configure_git_for_github_token(spawner)
 
 
 # ---------------------------------------------------------------------------
@@ -1090,7 +1243,12 @@ async def _pre_spawn_hook(spawner):
     # downstream tooling read this env var.
     oauth_user = (auth_state or {}).get("oauth_user") or {}
     preferred_username = oauth_user.get("preferred_username") or username
-    spawner.environment = {**spawner.environment, "PREFERRED_USERNAME": preferred_username}
+    preferred_email = _preferred_git_email(oauth_user, username)
+    spawner.environment = {
+        **spawner.environment,
+        "PREFERRED_USERNAME": preferred_username,
+        "PREFERRED_EMAIL": preferred_email,
+    }
 
     # 1. Enterprise CA bundle (non-fatal). Off by default; on only when the
     #    cluster runs trust-manager and the deployer/operator enables it. Runs
@@ -1170,6 +1328,15 @@ async def _pre_spawn_hook(spawner):
         log.info("pre-spawn: NSS wrapper configured for %s", username)
     except Exception:
         log.exception("pre-spawn: NSS wrapper setup FAILED for %s", username)
+
+    # 6. Git commit identity for VSCode/JupyterLab authoring (non-fatal)
+    _configure_git_user_identity(spawner)
+
+    # 7. Optional external auth provider tokens (disabled unless configured)
+    try:
+        await _external_auth_pre_spawn_hook(spawner, auth_state)
+    except Exception:
+        log.exception("pre-spawn: external-auth setup FAILED for %s", username)
 
     log.info("pre-spawn: hook complete for user %s", username)
 
