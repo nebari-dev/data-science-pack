@@ -2,8 +2,9 @@ apiVersion: v2
 name: nebari-data-science-pack
 description: A Helm chart for deploying JupyterHub with jhub-apps on Kubernetes
 type: application
-version: 0.1.0-alpha.16
-appVersion: "1.0.0"
+version: 0.1.0
+# Version of JupyterHub shipped by the jupyterhub subchart pinned below.
+appVersion: "5.4.3"
 
 dependencies:
   - name: jupyterhub
