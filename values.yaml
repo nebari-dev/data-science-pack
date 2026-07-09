@@ -293,11 +293,18 @@ rbac:
     # Realm to bootstrap.
     realmName: "nebari"
     # ClientId of the hub OAuth client in Keycloak (created by the
-    # nebari-operator NebariApp). Leave empty to derive from the
-    # release + chart name (the operator's standard pattern:
-    # ``jupyterhub-<release>-<chart>``). Override for non-standard
-    # client ids.
+    # nebari-operator NebariApp). Leave empty to read it at runtime
+    # from the operator-provisioned OIDC client Secret (the same
+    # Secret the hub mounts at /etc/oauth), which tracks whatever
+    # naming convention the deployed operator uses. Set explicitly
+    # only to skip the Secret read (e.g. BYO client).
     hubClientId: ""
+    # Name of the operator-provisioned OIDC client Secret (in the
+    # release namespace) the Job reads the clientId from. Leave empty
+    # to derive ``<fullname>-oidc-client``, matching the secretName
+    # the hub mounts under ``jupyterhub.hub.extraVolumes``. Override
+    # if that mount is overridden.
+    oidcClientSecretName: ""
     # Name of the client role the Job creates on the hub OIDC client.
     # Must match ``KC_SHARED_MOUNT_ROLE`` env var on the hub Deployment
     # (defaults align).
