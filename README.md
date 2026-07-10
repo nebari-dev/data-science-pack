@@ -72,6 +72,31 @@ make down
 
 See `values.yaml` for all configuration options. The chart wraps the [JupyterHub Helm chart](https://z2jh.jupyter.org/) - all `jupyterhub.*` values are passed through.
 
+## Gallery
+
+Set `singleuser.gallery.enabled=true` and populate `singleuser.gallery.exhibits`
+to surface curated starter notebooks/tutorials in JupyterLab's launcher. Each
+exhibit is a Git repo that clones into the user's home on first open:
+
+```yaml
+singleuser:
+  gallery:
+    enabled: true
+    title: "Examples"
+    destination: "/home/jovyan/gallery"
+    exhibits:
+      - title: "Tutorials"
+        git: "https://github.com/your-org/tutorials"
+        description: "End-to-end tutorial notebooks"
+      - title: "Starters"
+        git: "https://github.com/your-org/starter-notebooks"
+```
+
+The [jupyterlab-gallery](https://github.com/nebari-dev/jupyterlab-gallery)
+extension is baked into the singleuser image; the values block above is the
+only deploy-time configuration needed. See the extension README for the full
+per-exhibit schema (icons, private-repo auth, etc.).
+
 ## Shared Storage
 
 Per-group shared directories (`/shared/<group>` in every user pod) need a

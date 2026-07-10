@@ -15,3 +15,12 @@ data:
     c.TerminalManager.cull_interval = {{ .Values.singleuserCuller.terminal.cullInterval }}
 
     c.ServerApp.shutdown_no_activity_timeout = {{ .Values.singleuserCuller.server.shutdownNoActivityTimeout }}
+    {{- if .Values.singleuser.gallery.enabled }}
+
+    # jupyterlab-gallery: curated notebook exhibits surfaced in the launcher.
+    # GalleryManager is the traitlet config namespace from
+    # https://github.com/nebari-dev/jupyterlab-gallery
+    c.GalleryManager.title = {{ .Values.singleuser.gallery.title | quote }}
+    c.GalleryManager.destination = {{ .Values.singleuser.gallery.destination | quote }}
+    c.GalleryManager.exhibits = {{ .Values.singleuser.gallery.exhibits | toJson }}
+    {{- end }}
