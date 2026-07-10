@@ -230,3 +230,152 @@ jobs:
           kubectl -n keycloak logs statefulset/keycloak-keycloakx --tail=200 || true
           echo "--- port-forward log ---"
           cat /tmp/kc-pf.log || true
+
+  # Deploy examples/nebari-values.yaml onto a real NIC platform sandbox
+  # (operator + Keycloak + gateway) via ArgoCD and assert the resulting
+  # Application reaches Healthy. This is the only job that exercises the
+  # full Nebari path the example targets: NebariApp CRD -> operator
+  # provisions the OIDC client -> hub boots with Keycloak OAuth.
+  #
+  # Two sandbox-specific overlays on top of the example, both legitimate
+  # per-cluster knobs the example documents:
+  #   * keycloak.hostname -> the sandbox's issuer host (the example's
+  #     "edit the hostname" step).
+  #   * sharedStorage.enabled=false -> k3d ships only local-path (RWO); the
+  #     example's longhorn (RWX) isn't present. Shared storage is covered by
+  #     the kind-based e2e job above.
+  deploy-example:
+    name: deploy / example on NIC sandbox
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
+
+      - name: Install Helm
+        run: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      # Vendor the jupyterhub subchart and package a clean chart dir (helm
+      # package applies .helmignore, dropping tests/, examples/, .git/), so
+      # ArgoCD's file:// repo renders offline without a nested .git. The
+      # example values file is helmignored out of the package, so copy it
+      # back to the chart root where the Application's valueFiles expects it.
+      - name: Stage chart + example values
+        run: |
+          helm dependency update
+          helm package . -d /tmp/pkg
+          mkdir -p /tmp/stage
+          tar -xzf /tmp/pkg/*.tgz -C /tmp/stage
+          cp examples/nebari-values.yaml /tmp/stage/nebari-data-science-pack/nebari-values.yaml
+
+      - name: Write ArgoCD Application for the sandbox
+        run: |
+          # Mirrors examples/argocd-application.yaml (releaseName,
+          # ignoreDifferences, syncPolicy) but points the source at the
+          # sandbox's file:// gitops repo and overlays the two per-cluster
+          # values. ${GITOPS_DIR} is expanded by add-software-pack's envsubst.
+          cat > /tmp/application.yaml <<'EOF'
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: data-science-pack
+            namespace: argocd
+          spec:
+            project: default
+            source:
+              repoURL: "file://${GITOPS_DIR}"
+              targetRevision: HEAD
+              path: data-science-pack
+              helm:
+                releaseName: data-science-pack
+                valueFiles:
+                  - nebari-values.yaml
+                values: |
+                  keycloak:
+                    hostname: keycloak.nebari.local
+                  sharedStorage:
+                    enabled: false
+                  jupyterhub:
+                    prePuller:
+                      hook:
+                        enabled: false
+                      continuous:
+                        enabled: false
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: jupyterhub
+            ignoreDifferences:
+              - kind: Secret
+                name: hub
+                namespace: jupyterhub
+                jsonPointers:
+                  - /data/hub.config.ConfigurableHTTPProxy.auth_token
+                  - /data/hub.config.JupyterHub.cookie_secret
+                  - /data/hub.config.CryptKeeper.keys
+              - group: apps
+                kind: Deployment
+                name: hub
+                namespace: jupyterhub
+                jsonPointers:
+                  - /spec/template/metadata/annotations/checksum~1secret
+              - group: apps
+                kind: Deployment
+                name: proxy
+                namespace: jupyterhub
+                jsonPointers:
+                  - /spec/template/metadata/annotations/checksum~1auth-token
+            syncPolicy:
+              managedNamespaceMetadata:
+                labels:
+                  nebari.dev/managed: "true"
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+                - CreateNamespace=true
+                - ServerSideApply=true
+                - RespectIgnoreDifferences=true
+                - SkipDryRunOnMissingResource=true
+          EOF
+
+      - name: Provision Nebari sandbox (k3d + NIC platform stack)
+        id: sandbox
+        uses: nebari-dev/action-nebari-sandbox@09f542cdbcb0ed74307f86fee4f8ad0053a4cd8f  # v2.0.2
+        with:
+          profile: platform
+          cluster-name: deploy-example
+
+      - name: Surface KUBECONFIG for the sub-action's wait
+        run: echo "KUBECONFIG=${{ steps.sandbox.outputs.kubeconfig }}" >> "${GITHUB_ENV}"
+
+      - name: Deploy chart with example values via ArgoCD
+        uses: nebari-dev/action-nebari-sandbox/add-software-pack@09f542cdbcb0ed74307f86fee4f8ad0053a4cd8f  # v2.0.2
+        with:
+          gitops-dir: ${{ steps.sandbox.outputs.gitops-dir }}
+          app-name: data-science-pack
+          chart-source: /tmp/stage/nebari-data-science-pack
+          application-manifest: /tmp/application.yaml
+          wait-healthy: "true"
+          wait-timeout: "10m"
+
+      - name: Verify hub is running
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          kubectl -n jupyterhub rollout status deployment/hub --timeout=120s
+          kubectl -n jupyterhub get pods
+
+      - name: Debug on failure
+        if: failure()
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          kubectl get applications -n argocd -o wide || true
+          kubectl get application/data-science-pack -n argocd -o yaml || true
+          kubectl -n jupyterhub get pods || true
+          kubectl -n jupyterhub get events --sort-by=.lastTimestamp || true
+          kubectl -n jupyterhub logs -l component=hub --tail=200 || true
+
+      - name: Cleanup
+        if: always()
+        run: k3d cluster delete deploy-example 2>/dev/null || true

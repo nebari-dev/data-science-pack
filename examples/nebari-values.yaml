@@ -1,0 +1,21 @@
+# Full Nebari deployment of the data science pack.
+#
+# Deploys as-is after a SINGLE edit: set keycloak.hostname to your cluster's
+# Keycloak FQDN. Everything else (hub/nebi hostnames, OIDC client provisioning,
+# gateway routing, images, kernels) is derived from it by the chart and the
+# nebari-operator.
+#
+# Prerequisites on the target cluster:
+#   * nebari-operator running (provisions the OIDC client + gateway HTTPRoute)
+#   * the install namespace labeled nebari.dev/managed=true
+#   * an RWX StorageClass for /shared group dirs (longhorn on NIC clusters)
+
+keycloak:
+  hostname: keycloak.example.com   # <-- EDIT: your Keycloak FQDN
+
+# NIC-managed clusters ship longhorn (ReadWriteMany). Use it for the per-group
+# shared directories instead of the transitional in-cluster NFS server.
+sharedStorage:
+  storageClass: longhorn
+  nfsServer:
+    enabled: false
