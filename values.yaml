@@ -31,6 +31,30 @@ keycloak:
   # In-cluster bitnami/keycloakx service host:port. Used by the hub <-> nebi
   # token-exchange path when keycloak.hostname is empty.
   serviceHost: "keycloak-keycloakx-http.keycloak.svc.cluster.local:8080"
+  # OPTIONAL split-horizon OIDC. When set, the hub uses this base URL for the
+  # backchannel legs (``token_url`` and ``userdata_url``) while the browser
+  # continues to use ``hostname`` for authorize + end_session. The realm
+  # suffix (``/realms/<realm>``) is appended automatically.
+  #
+  # Needed on private-VPC clusters where in-cluster CoreDNS does NOT resolve
+  # the external Keycloak hostname — the hub pod can't reach ``hostname`` at
+  # all, so token exchange over the primary URL fails. Setting this to the
+  # in-cluster URL (e.g. ``http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080``)
+  # keeps the browser legs on ``hostname`` (where the browser can resolve it)
+  # while the backchannel legs go direct to the in-cluster Service (which
+  # doesn't need external DNS and skips the internal-NLB round-trip).
+  #
+  # Empty (default) means "no split-horizon" — all four URLs use the primary
+  # issuer read from the operator-provisioned Secret. Existing deploys are
+  # not affected by the addition of this field.
+  #
+  # Keycloak side: for the ``iss`` claim to still match ``hostname`` when
+  # tokens are minted via the backchannel URL, run Keycloak with
+  # ``KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`` so backchannel responses embed
+  # the browser-facing issuer rather than the in-cluster URL. Without that
+  # env var Keycloak will emit tokens whose ``iss`` claim matches the
+  # backchannel URL — validators keyed off the browser URL would reject.
+  backchannelURL: ""
 
 # Subdomain convention used to derive hub/nebi hostnames from
 # keycloak.hostname. Override per-deploy if your DNS doesn't follow this.
@@ -355,6 +379,19 @@ jupyterhub:
     # If empty, derived from keycloak.hostname (https) or
     # keycloak.serviceHost (in-cluster http), with keycloak.realm.
     keycloak-token-url: ""
+    # OPTIONAL split-horizon OIDC — full backchannel issuer URL (INCLUDING
+    # ``/realms/<realm>``, e.g. ``http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari``).
+    # When non-empty, the hub uses this as the base for ``token_url`` and
+    # ``userdata_url`` while the browser continues to use the primary
+    # (external) issuer for authorize + end_session. Empty (default) means
+    # no split-horizon.
+    # If empty, derived from top-level ``keycloak.backchannelURL`` + realm.
+    # Set this for the rare case where you need a URL shape that the
+    # ``keycloak.backchannelURL`` + realm pattern cannot express (e.g. a
+    # non-standard realm path). See ``00-gateway-auth.py`` for how it's
+    # consumed and the docstring on ``keycloak.backchannelURL`` at the top
+    # of this file for the motivation.
+    keycloak-backchannel-issuer-url: ""
     # OIDC client IDs (provisioned by nebari-operator's AuthReconciler).
     # If empty, derived from operator naming convention:
     #   jupyterhub-<release>-<chart>   (this chart)
