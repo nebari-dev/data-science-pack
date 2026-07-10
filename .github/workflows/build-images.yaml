@@ -28,12 +28,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # PR-time CI filtering:
+  #   - GPU images (jupyterlab-gpu-base, jupyterlab-gpu) are skipped
+  #     entirely on PRs — the same Dockerfile/pixi paths are exercised
+  #     by the non-GPU variants, so PR cost should not pay for cuda
+  #     base-image pulls and gpu builder runners.
+  #   - linux/arm64 is skipped on PRs — amd64 build proves the pixi
+  #     resolution; arm64 catches per-arch wheel gaps but rarely
+  #     fails in isolation. Main builds full multi-arch.
+  # See issue #86 (section 3) for the audit that drove this.
+
   jupyterlab-base:
     name: "jupyterlab-base"
     uses: ./.github/workflows/build-image.yaml
     with:
       image: nebari-data-science-pack-jupyterlab-base
       target: jupyterlab-base
+      build_arm64: ${{ github.event_name != 'pull_request' }}
     secrets:
       QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
 
@@ -43,11 +54,13 @@ jobs:
     with:
       image: nebari-data-science-pack-jupyterlab
       target: jupyterlab
+      build_arm64: ${{ github.event_name != 'pull_request' }}
     secrets:
       QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
 
   jupyterlab-gpu-base:
     name: "jupyterlab-gpu-base"
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/build-image.yaml
     with:
       image: nebari-data-science-pack-jupyterlab-gpu-base
@@ -60,6 +73,7 @@ jobs:
 
   jupyterlab-gpu:
     name: "jupyterlab-gpu"
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/build-image.yaml
     with:
       image: nebari-data-science-pack-jupyterlab-gpu
@@ -76,5 +90,6 @@ jobs:
     with:
       image: nebari-data-science-pack-jupyterhub
       target: jupyterhub
+      build_arm64: ${{ github.event_name != 'pull_request' }}
     secrets:
       QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
