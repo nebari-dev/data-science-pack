@@ -294,3 +294,107 @@ def test_derive_realm_api_url_returns_empty_for_non_kc_url():
     mod = load_config_module("00-gateway-auth.py")
     assert mod._derive_realm_api_url("https://example.test/no/realms/here") != ""
     assert mod._derive_realm_api_url("https://example.test/oidc") == ""
+
+
+# ---------------------------------------------------------------------------
+# Split-horizon OIDC (backchannel issuer)
+# ---------------------------------------------------------------------------
+# On private-VPC clusters the hub cannot resolve the external Keycloak
+# hostname baked into ``issuer``. Passing a non-empty ``backchannel_issuer``
+# routes ``token_url`` + ``userdata_url`` through an in-cluster URL while
+# ``authorize_url`` + ``end_session_url`` continue to use ``issuer`` (which
+# the browser CAN resolve). The ``iss`` claim in tokens still matches
+# ``issuer`` when Keycloak is run with ``KC_HOSTNAME_BACKCHANNEL_DYNAMIC``.
+
+BACKCHANNEL_ISSUER = "http://kc.svc.cluster.local:8080/realms/nebari"
+
+
+def test_kc_config_build_without_backchannel_derives_all_from_issuer():
+    """Default (backward-compatible) shape: single-issuer, all URLs share
+    the same base. Prior callers that don't pass ``backchannel_issuer``
+    see exactly the pre-PR behaviour."""
+    mod = load_config_module("00-gateway-auth.py")
+    cfg = mod.KeyCloakConfig.build(
+        issuer=ISSUER, post_logout_redirect_uri=EXTERNAL,
+    )
+    base = f"{ISSUER}/protocol/openid-connect"
+    assert cfg.authorize_url == f"{base}/auth"
+    assert cfg.token_url == f"{base}/token"
+    assert cfg.userdata_url == f"{base}/userinfo"
+    assert cfg.end_session_url == f"{base}/logout"
+
+
+def test_kc_config_build_with_backchannel_splits_urls():
+    """Backchannel issuer set: token + userdata use backchannel; authorize
+    + end_session keep using primary issuer. Split-horizon contract."""
+    mod = load_config_module("00-gateway-auth.py")
+    cfg = mod.KeyCloakConfig.build(
+        issuer=ISSUER,
+        backchannel_issuer=BACKCHANNEL_ISSUER,
+        post_logout_redirect_uri=EXTERNAL,
+    )
+    primary_base = f"{ISSUER}/protocol/openid-connect"
+    bc_base = f"{BACKCHANNEL_ISSUER}/protocol/openid-connect"
+    # Browser legs use primary
+    assert cfg.authorize_url == f"{primary_base}/auth"
+    assert cfg.end_session_url == f"{primary_base}/logout"
+    # Backchannel legs use in-cluster
+    assert cfg.token_url == f"{bc_base}/token"
+    assert cfg.userdata_url == f"{bc_base}/userinfo"
+    # ``issuer`` field itself unchanged — this is what ``iss`` claims are
+    # matched against by downstream validators
+    assert cfg.issuer == ISSUER
+
+
+def test_kc_config_build_with_empty_backchannel_matches_default():
+    """Empty-string backchannel_issuer must be treated as "no split-horizon"
+    — same URLs as the default single-issuer signature. Guards against a
+    common footgun where an unset value flows through as ``""`` and would
+    otherwise produce ``//protocol/openid-connect/...`` URLs."""
+    mod = load_config_module("00-gateway-auth.py")
+    default = mod.KeyCloakConfig.build(
+        issuer=ISSUER, post_logout_redirect_uri=EXTERNAL,
+    )
+    explicit_empty = mod.KeyCloakConfig.build(
+        issuer=ISSUER,
+        backchannel_issuer="",
+        post_logout_redirect_uri=EXTERNAL,
+    )
+    assert default == explicit_empty
+
+
+def test_configure_wires_backchannel_issuer_onto_authenticator():
+    """configure() must accept ``backchannel_issuer`` and thread it through
+    KeyCloakConfig.build() so the KeyCloakOAuthenticator ends up with the
+    split URLs on the class."""
+    c, _ = _configure_with_defaults(backchannel_issuer=BACKCHANNEL_ISSUER)
+    kc = c.KeyCloakOAuthenticator
+    primary_base = f"{ISSUER}/protocol/openid-connect"
+    bc_base = f"{BACKCHANNEL_ISSUER}/protocol/openid-connect"
+    assert kc.authorize_url == f"{primary_base}/auth"
+    assert kc.token_url == f"{bc_base}/token"
+    assert kc.userdata_url == f"{bc_base}/userinfo"
+
+
+def test_configure_without_backchannel_leaves_single_issuer_shape():
+    """Backward-compat guard: when configure() is called without the new
+    kwarg (the common case), every existing test in this file still passes
+    — validated by the assertions in ``test_configure_derives_keycloak_urls_from_issuer``
+    at the top of the file. Duplicated here so the split-horizon feature's
+    default-off behaviour is testable in isolation."""
+    c, _ = _configure_with_defaults()  # no backchannel_issuer passed
+    kc = c.KeyCloakOAuthenticator
+    base = f"{ISSUER}/protocol/openid-connect"
+    assert kc.token_url == f"{base}/token"
+    assert kc.userdata_url == f"{base}/userinfo"
+
+
+def test_configure_treats_empty_backchannel_string_as_no_split_horizon():
+    """Explicit empty string reaches configure() when the deployer leaves
+    ``keycloak.backchannelURL`` unset (Helm renders it as ``""``). Must be
+    treated as "no split-horizon", not as a broken URL."""
+    c, _ = _configure_with_defaults(backchannel_issuer="")
+    kc = c.KeyCloakOAuthenticator
+    base = f"{ISSUER}/protocol/openid-connect"
+    assert kc.token_url == f"{base}/token"
+    assert kc.userdata_url == f"{base}/userinfo"
