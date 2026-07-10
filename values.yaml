@@ -630,6 +630,19 @@ jupyterhub:
       - name: merge-ca-bundle
         image: quay.io/nebari/nebari-data-science-pack-jupyterhub:sha-46289ab
         imagePullPolicy: IfNotPresent
+        # z2jh's pod-level securityContext sets ``runAsNonRoot: true`` but
+        # no explicit uid, and the hub image's default ``USER`` is root,
+        # so an init container without its own ``securityContext.runAsUser``
+        # gets blocked by kubelet ("container has runAsNonRoot and image
+        # will run as root"). Match what the hub container itself runs as
+        # so ownership on the shared ``ca-merged`` emptyDir stays coherent.
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
         command:
           - /bin/sh
           - -c

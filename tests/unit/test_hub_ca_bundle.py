@@ -138,6 +138,32 @@ def test_init_container_mounts_org_ca_and_merged():
     assert mounts.get("ca-merged") == "/merged"
 
 
+def test_init_container_declares_non_root_security_context():
+    """z2jh's pod-level ``securityContext`` sets ``runAsNonRoot: true`` but
+    leaves ``runAsUser`` unset, so containers whose image default is root
+    are blocked by kubelet with ``container has runAsNonRoot and image
+    will run as root``. The hub image ships with the default USER as root,
+    so ``merge-ca-bundle`` (which uses the hub image) must set its own
+    ``runAsUser`` — matching the hub container itself keeps ownership on
+    the shared ``ca-merged`` emptyDir coherent.
+    """
+    init_containers = _hub_values().get("initContainers", [])
+    merge = next(c for c in init_containers if c["name"] == "merge-ca-bundle")
+    sc = merge.get("securityContext") or {}
+    assert sc.get("runAsUser") == 1000, (
+        "merge-ca-bundle must set runAsUser=1000 to satisfy z2jh's pod-level "
+        "runAsNonRoot=true — the hub image's default USER is root"
+    )
+    assert sc.get("runAsGroup") == 1000, (
+        "runAsGroup should match runAsUser so ownership of the shared "
+        "ca-merged emptyDir is consistent with the hub container"
+    )
+    assert sc.get("allowPrivilegeEscalation") is False
+    assert "ALL" in (sc.get("capabilities") or {}).get("drop", []), (
+        "drop ALL capabilities to match the hub container's hardening"
+    )
+
+
 # ---------------------------------------------------------------------------
 # extraEnv — five CA env vars for requests / tornado / curl / node / git
 # ---------------------------------------------------------------------------
