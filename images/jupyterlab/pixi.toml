@@ -16,6 +16,11 @@ jupyter_server = ">=2.13.0"
 # still uses in its extension manager. Pin httpx <0.28 until JupyterLab is upgraded.
 httpx = "<0.28"
 jupyterlab = "==4.2.5"
+# Make nodejs explicit (already pulled in transitively): the git-pinned
+# jupyterlab-launchpad below is a TS/JS extension that runs `jlpm build:prod` via its
+# hatch-jupyter-builder hook at install time, so node must be on PATH. Drop once
+# launchpad is pinned back to a prebuilt PyPI wheel.
+nodejs = ">=20"
 jupyter_client = "*"
 jupyter_console = "*"
 jupyterhub = "==5.1.0"
@@ -75,11 +80,14 @@ pyjwt = "<2.10.0"
 
 [pypi-dependencies]
 jupyter-vscode-proxy = { git = "https://github.com/betatim/vscode-binder.git" }
-nb_nebi_kernels = "==0.1"
+# TEST PIN (DO NOT MERGE): nb-nebi-kernels#5 surfaces remote Nebi envs as kernels
+# with nebi_* state metadata; jupyterlab-launchpad#80 consumes that metadata. Pinned
+# together for end-to-end validation. Revert to released versions once both PRs land.
+nb_nebi_kernels = { git = "https://github.com/MUFFANUJ/nb-nebi-kernels.git", branch = "surfaceRemoteEvns" }
 jupyterlab_nvdashboard = "==0.12.0"
 # argo-jupyter-scheduler = "==2024.6.1"  # disabled until service is configured
 jhub-apps = "==2025.11.1"
 jupyterlab-nebari-mode = "==0.3.0"
-jupyterlab-launchpad = "==1.0.5"
+jupyterlab-launchpad = { git = "https://github.com/MUFFANUJ/jupyterlab-launchpad.git", branch = "nebi-kernel-metadata-refresh" }
 jupyterlab-gallery = "==0.6.3"
 jupyterlab-jhub-apps = "==0.3.1"
