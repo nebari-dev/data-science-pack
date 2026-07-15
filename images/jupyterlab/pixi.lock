@@ -225,8 +225,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.12.13-py312hd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2025.2.0-pyhd8ed1ab_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/dask-labextension-7.0.0-pyhd8ed1ab_1.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/dask_labextension-7.0.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dataclasses-json-0.6.7-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/decorator-5.2.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/deepmerge-2.1.0-pyhd8ed1ab_0.conda
@@ -706,8 +704,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.12.13-py312hd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2025.2.0-pyhd8ed1ab_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/dask-labextension-7.0.0-pyhd8ed1ab_1.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/dask_labextension-7.0.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dataclasses-json-0.6.7-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/decorator-5.2.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/deepmerge-2.1.0-pyhd8ed1ab_0.conda
@@ -6383,34 +6379,6 @@ packages:
   - pkg:pypi/dask?source=hash-mapping
   size: 968347
   timestamp: 1739488681467
-- conda: https://conda.anaconda.org/conda-forge/noarch/dask-labextension-7.0.0-pyhd8ed1ab_1.conda
-  sha256: a157787c6c524686d200d35f77ffc12e22d2bcd13e2de3d25c70842d9d3e0ac2
-  md5: 9aef5e5bebe4a054efd88c298beaeae8
-  depends:
-  - bokeh >=1.0.0,!=2.0.0
-  - distributed >=1.24.1
-  - jupyter-server-proxy >=1.3.2
-  - jupyterlab >=4.0.0,<5
-  - python >=3.9
-  license: BSD-3-Clause
-  license_family: BSD
-  purls:
-  - pkg:pypi/dask-labextension?source=hash-mapping
-  run_exports: {}
-  size: 39682
-  timestamp: 1735227027456
-- conda: https://conda.anaconda.org/conda-forge/noarch/dask_labextension-7.0.0-pyhd8ed1ab_1.conda
-  sha256: 1ea22e0a9849bc582383aa8dd709b3580244b4ed52e868ccc15729a2e1f12ddb
-  md5: 77f79142b4f27c2d1d64621a5252299b
-  depends:
-  - dask-labextension >=7.0.0,<7.0.1.0a0
-  - python >=3.9
-  license: BSD-3-Clause
-  license_family: BSD
-  purls: []
-  run_exports: {}
-  size: 7477
-  timestamp: 1735227038365
 - conda: https://conda.anaconda.org/conda-forge/noarch/dataclasses-json-0.6.7-pyhcf101f3_2.conda
   sha256: 50194bcf80a7f5bc5d43a7121cf5f20099d6b125f5519c2269b5b07d6b7ccb23
   md5: fe899acb5379abcb553a18613460a976
