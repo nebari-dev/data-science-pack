@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from conftest import FakeConfig, load_config_module
 
 
@@ -64,9 +66,32 @@ def test_configure_enables_auth_state_so_refresh_user_can_run():
     assert 0 < kc.auth_refresh_age <= 300
 
 
-def test_configure_reads_groups_claim_for_authorization():
+def test_configure_reads_groups_from_auth_state_for_authorization():
     c, _ = _configure_with_defaults()
-    assert c.KeyCloakOAuthenticator.claim_groups_key == "groups"
+    kc = c.KeyCloakOAuthenticator
+    assert kc.manage_groups is True
+    assert kc.auth_state_groups_key({
+        "oauth_user": {"groups": ["/admin", "/projects/data", "data"]}
+    }) == ["admin", "data"]
+
+
+def test_full_keycloak_group_path_can_grant_jupyterhub_admin():
+    c, mod = _configure_with_defaults()
+    auth = mod.KeyCloakOAuthenticator()
+    auth.manage_groups = c.KeyCloakOAuthenticator.manage_groups
+    auth.auth_state_groups_key = c.KeyCloakOAuthenticator.auth_state_groups_key
+    auth.admin_groups = c.KeyCloakOAuthenticator.admin_groups
+
+    auth_model = {
+        "name": "alice",
+        "admin": None,
+        "auth_state": {"oauth_user": {"groups": ["/admin"]}},
+    }
+
+    out = asyncio.run(auth._apply_managed_groups(auth_model))
+
+    assert out["groups"] == ["admin"]
+    assert out["admin"] is True
 
 
 def test_admin_groups_default_to_admin_when_unset():
@@ -75,7 +100,7 @@ def test_admin_groups_default_to_admin_when_unset():
 
 
 def test_admin_groups_can_be_overridden_per_deployment():
-    c, _ = _configure_with_defaults(admin_groups=["site-admins", "platform"])
+    c, _ = _configure_with_defaults(admin_groups=["site-admins", "/platform"])
     assert c.KeyCloakOAuthenticator.admin_groups == {"site-admins", "platform"}
 
 

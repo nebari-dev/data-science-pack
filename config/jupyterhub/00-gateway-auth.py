@@ -534,8 +534,14 @@ def configure(
     # scope param entirely; KC then issues a token without `openid` and
     # /userinfo returns 403 at token_to_user.
     c.KeyCloakOAuthenticator.scope = ["openid", "profile", "email", "groups"]
-    c.KeyCloakOAuthenticator.claim_groups_key = "groups"
-    c.KeyCloakOAuthenticator.admin_groups = set(admin_groups or ["admin"])
+    # OAuthenticator 17 requires managed groups for admin_groups and replaces
+    # GenericOAuthenticator.claim_groups_key with auth_state_groups_key.
+    # Keep KC's raw full group paths in auth_state for RBAC/shared storage,
+    # but expose leaf names to JupyterHub groups so admin_groups=["admin"]
+    # matches a KC claim like "/admin".
+    c.KeyCloakOAuthenticator.manage_groups = True
+    c.KeyCloakOAuthenticator.auth_state_groups_key = _jupyterhub_group_names
+    c.KeyCloakOAuthenticator.admin_groups = set(_leaf_group_names(admin_groups or ["admin"]))
     # Persist tokens so refresh_user can use the stored refresh_token.
     c.KeyCloakOAuthenticator.enable_auth_state = True
     c.KeyCloakOAuthenticator.refresh_pre_spawn = True
@@ -563,6 +569,25 @@ def configure(
 def _read_secret_file(secret_dir: Path, key: str) -> str:
     """Read a single value out of the operator-mounted KC client Secret."""
     return (secret_dir / key).read_text().strip()
+
+
+def _leaf_group_names(raw_groups):
+    """Return group leaf names while preserving first-seen order."""
+    seen = set()
+    groups = []
+    for group in raw_groups or []:
+        if not group:
+            continue
+        name = Path(group).name
+        if name and name not in seen:
+            seen.add(name)
+            groups.append(name)
+    return groups
+
+
+def _jupyterhub_group_names(auth_state):
+    """Return Keycloak group names in the form OAuthenticator admin groups use."""
+    return _leaf_group_names((auth_state.get("oauth_user") or {}).get("groups"))
 
 
 def _derive_realm_api_url(issuer_url: str) -> str:

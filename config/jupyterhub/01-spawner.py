@@ -35,6 +35,9 @@ log = logging.getLogger(__name__)
 c.KubeSpawner.storage_pvc_ensure = True
 c.KubeSpawner.storage_capacity = get_config("custom.storage-capacity", "20Gi")
 c.KubeSpawner.storage_access_modes = ["ReadWriteOnce"]
+# KubeSpawner 7 defaults to slug_scheme="safe". Keep the old escaped slug
+# behavior until PVC names and affinity labels are intentionally migrated.
+c.KubeSpawner.slug_scheme = "escape"
 # Without this override, KubeSpawner's default template is
 # `claim-{username}--{servername}`, so for jhub-apps named servers it ensures
 # a per-server PVC — while the `volumes` block below mounts the per-user
@@ -1057,13 +1060,13 @@ async def _ensure_workspace_pvc(spawner):
 # ---------------------------------------------------------------------------
 # Pre-spawn hook orchestrator
 # ---------------------------------------------------------------------------
-# Chains the independent concerns: 
+# Chains the independent concerns:
 # 1. Nebi auto-auth
 # 2. workspace PVC
 # 3. Resolve groups
 # 5. shared storage mounts
 # 4. NSS wrapper setup
-# 
+#
 # Each is implemented as its own focused function above. The orchestrator always
 # runs so NSS wrapper is active even without Nebi/shared.
 
