@@ -73,6 +73,24 @@ c.KubeSpawner.volume_mounts = [
 c.KubeSpawner.notebook_dir = "/home/jovyan"
 c.KubeSpawner.working_dir = "/home/jovyan"
 
+# Apply umask 0002 to the singleuser server process so files in /shared/<group>
+# are group-writable (664/2775). This image is NOT jupyter docker-stacks — there
+# is no start.sh to apply the umask, and the k8s `command:` overrides any
+# Dockerfile ENTRYPOINT. So we wrap the server command here: `umask` runs before
+# `exec`, and the kernel and terminal processes (children of the server) inherit
+# it. Done hub-side rather than in the image so it takes effect without an image
+# rebuild / tag bump. The value is hardcoded (not read from an env var) because it
+# is intrinsically coupled to the shared-storage setgid design (2775 dirs), not an
+# independently tunable knob. `$0` is the real command (jupyterhub-singleuser);
+# `$@` is KubeSpawner's args, appended by k8s after `command`. See
+# https://github.com/nebari-dev/data-science-pack/issues/144
+c.KubeSpawner.cmd = [
+    "sh",
+    "-c",
+    'umask 0002; exec "$0" "$@"',
+    "jupyterhub-singleuser",
+]
+
 # affinity — co-locate all pods for the same user on the same node.
 # hcloud-volumes is ReadWriteOnce — only one node can mount it at a time.
 # Pod affinity ensures jhub-apps app pods land on the same node as the
@@ -162,6 +180,67 @@ if nebi_image:
             "mountPath": "/nebi-bin",
         }],
     })
+
+
+# ---------------------------------------------------------------------------
+# Enterprise CA bundle (TLS-inspected egress)
+# ---------------------------------------------------------------------------
+# On clusters behind a TLS-inspecting proxy, NIC core's trust-manager projects
+# the org CA into every namespace as a ConfigMap. We merge it with the image's
+# system CA bundle into an emptyDir and point the standard CA env vars at the
+# merged file, so pip/conda/git verify BOTH proxy-inspected (org-signed) and
+# genuine public-root endpoints with no flags. Gated off by default.
+_trust_bundle_enabled = get_chart_config("trust-bundle-enabled", False)
+_trust_bundle_configmap = get_chart_config("trust-bundle-configmap", "nebari-trust-bundle")
+_trust_bundle_key = get_chart_config("trust-bundle-key", "ca-certificates.crt")
+_MERGED_CA_PATH = "/etc/ssl/certs-extra/ca-bundle.crt"
+
+
+def _setup_trust_bundle(spawner):
+    """Mount + merge the org CA into the pod and set the CA env vars.
+
+    The merge init container runs spawner.image so it reads the SAME system CA
+    store the main container has (a generic busybox would not). The org-ca
+    ConfigMap is mounted optional, so a cluster without trust-manager — or a
+    spawn that races the projection — still starts; the merged file is then
+    just the system bundle, i.e. no behavior change.
+    """
+    spawner.volumes = list(spawner.volumes) + [
+        {
+            "name": "org-ca",
+            "configMap": {"name": _trust_bundle_configmap, "optional": True},
+        },
+        {"name": "ca-merged", "emptyDir": {}},
+    ]
+    spawner.volume_mounts = list(spawner.volume_mounts) + [
+        {"name": "ca-merged", "mountPath": "/etc/ssl/certs-extra"},
+    ]
+    spawner.init_containers = list(spawner.init_containers) + [
+        {
+            "name": "merge-ca-bundle",
+            "image": spawner.image,
+            "imagePullPolicy": get_config("custom.nebi-image-pull-policy", "IfNotPresent"),
+            "command": [
+                "/bin/sh",
+                "-c",
+                "cp /etc/ssl/certs/ca-certificates.crt /merged/ca-bundle.crt && "
+                f"if [ -f /org-ca/{_trust_bundle_key} ]; then "
+                f"cat /org-ca/{_trust_bundle_key} >> /merged/ca-bundle.crt; fi",
+            ],
+            "volumeMounts": [
+                {"name": "org-ca", "mountPath": "/org-ca", "readOnly": True},
+                {"name": "ca-merged", "mountPath": "/merged"},
+            ],
+        },
+    ]
+    spawner.environment = {
+        **spawner.environment,
+        "REQUESTS_CA_BUNDLE": _MERGED_CA_PATH,
+        "SSL_CERT_FILE": _MERGED_CA_PATH,
+        "NODE_EXTRA_CA_CERTS": _MERGED_CA_PATH,
+        "CURL_CA_BUNDLE": _MERGED_CA_PATH,
+        "GIT_SSL_CAINFO": _MERGED_CA_PATH,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -637,6 +716,34 @@ async def _nebi_pre_spawn_hook(spawner):
                 "NEBI_DATA_DIR": nebi_env_dir,
             }
 
+            nebi_pull_env = [
+                {"name": "HOME", "value": nebi_env_dir},
+                {"name": "NEBI_DATA_DIR", "value": nebi_env_dir},
+                {"name": "NEBI_AUTH_TOKEN", "value": nebi_jwt},
+                {"name": "NEBI_REMOTE_URL", "value": nebi_remote},
+            ]
+            nebi_pull_mounts = [
+                {"name": "nebi-bin", "mountPath": "/usr/local/bin/nebi", "subPath": "nebi"},
+                {"name": "nebi-env", "mountPath": nebi_env_dir},
+            ]
+            # When the org CA bundle is enabled, nebi-pull's own egress
+            # (`nebi pull` over HTTPS, `pixi install` from PyPI/conda) also goes
+            # through the inspecting proxy, so it needs the merged bundle too.
+            # _setup_trust_bundle ran first (see _pre_spawn_hook ordering), so
+            # the ca-merged volume exists and merge-ca-bundle precedes this in
+            # init-container order, leaving the merged file ready to mount.
+            if _trust_bundle_enabled:
+                nebi_pull_env += [
+                    {"name": "REQUESTS_CA_BUNDLE", "value": _MERGED_CA_PATH},
+                    {"name": "SSL_CERT_FILE", "value": _MERGED_CA_PATH},
+                    {"name": "NODE_EXTRA_CA_CERTS", "value": _MERGED_CA_PATH},
+                    {"name": "CURL_CA_BUNDLE", "value": _MERGED_CA_PATH},
+                    {"name": "GIT_SSL_CAINFO", "value": _MERGED_CA_PATH},
+                ]
+                nebi_pull_mounts += [
+                    {"name": "ca-merged", "mountPath": "/etc/ssl/certs-extra"},
+                ]
+
             spawner.init_containers = list(spawner.init_containers) + [{
                 "name": "nebi-pull",
                 "image": spawner.image,
@@ -652,16 +759,8 @@ async def _nebi_pre_spawn_hook(spawner):
                     f"chmod -R a+rw {nebi_env_dir}/nebi.db* || "
                     f"echo 'WARNING: nebi pull or pixi install failed for {workspace_name}'",
                 ],
-                "env": [
-                    {"name": "HOME", "value": nebi_env_dir},
-                    {"name": "NEBI_DATA_DIR", "value": nebi_env_dir},
-                    {"name": "NEBI_AUTH_TOKEN", "value": nebi_jwt},
-                    {"name": "NEBI_REMOTE_URL", "value": nebi_remote},
-                ],
-                "volumeMounts": [
-                    {"name": "nebi-bin", "mountPath": "/usr/local/bin/nebi", "subPath": "nebi"},
-                    {"name": "nebi-env", "mountPath": nebi_env_dir},
-                ],
+                "env": nebi_pull_env,
+                "volumeMounts": nebi_pull_mounts,
             }]
     except Exception:
         log.exception("Nebi auto-auth failed for %s (pod will still spawn)", spawner.user.name)
@@ -739,7 +838,8 @@ async def _setup_shared_storage(spawner, groups):
     Creates /shared/<group> on the PVC with:
     - chown 0:100 so group owner is GID 100 (users), matching pod fs_gid
     - chmod 2775 (rwxrwsr-x) so group has write and setgid propagates GID to new files
-    Combined with NB_UMASK=0002, new files are group-writable (664/775).
+    Combined with the server's umask 0002 (see c.KubeSpawner.cmd), new files
+    are group-writable (664/775).
     """
     log.info(
         "shared-storage: setting up PVC mounts for user %s, groups: %s",
@@ -800,7 +900,8 @@ def _generate_nss_files(username, uid=1000, gid=1000):
 async def _setup_nss_wrapper(spawner, username, groups):
     """Configure libnss_wrapper so whoami/id report the real username.
 
-    Sets LD_PRELOAD, NSS_WRAPPER_* paths, and NB_UMASK=0002.
+    Sets LD_PRELOAD and the NSS_WRAPPER_* paths so getpwuid/getgrgid resolve
+    against the generated /tmp/passwd and /tmp/group.
     Adds a postStart lifecycle hook that:
     - writes /tmp/passwd and /tmp/group using printf (safe for special chars in username)
     - when shared PVC is enabled: symlinks ~/shared → PVC mount prefix
@@ -821,7 +922,6 @@ async def _setup_nss_wrapper(spawner, username, groups):
         "LD_PRELOAD": "libnss_wrapper.so",
         "NSS_WRAPPER_PASSWD": "/tmp/passwd",
         "NSS_WRAPPER_GROUP": "/tmp/group",
-        "NB_UMASK": "0002",
     }
     log.debug("nss-wrapper: LD_PRELOAD and NSS_WRAPPER_* set in spawner environment")
 
@@ -992,7 +1092,25 @@ async def _pre_spawn_hook(spawner):
     preferred_username = oauth_user.get("preferred_username") or username
     spawner.environment = {**spawner.environment, "PREFERRED_USERNAME": preferred_username}
 
-    # 1. Nebi auto-auth (non-fatal)
+    # 1. Enterprise CA bundle (non-fatal). Off by default; on only when the
+    #    cluster runs trust-manager and the deployer/operator enables it. Runs
+    #    BEFORE Nebi auto-auth so the merge-ca-bundle init container is appended
+    #    (and thus executes) before nebi-pull, and so the ca-merged volume
+    #    exists when nebi-pull mounts it. The non-fatal guard lives here at the
+    #    call site (unlike Nebi, which guards inside _nebi_pre_spawn_hook) since
+    #    _setup_trust_bundle is synchronous.
+    if _trust_bundle_enabled:
+        try:
+            _setup_trust_bundle(spawner)
+            log.info("trust-bundle: CA merge configured for %s", username)
+        except Exception:
+            log.exception(
+                "trust-bundle: setup FAILED for %s (pod will still spawn)", username,
+            )
+    else:
+        log.debug("trust-bundle: disabled, skipping CA merge for %s", username)
+
+    # 2. Nebi auto-auth (non-fatal)
     if _nebi_auth_configured:
         log.debug("pre-spawn: running Nebi auto-auth for %s", username)
         await _nebi_pre_spawn_hook(spawner)
