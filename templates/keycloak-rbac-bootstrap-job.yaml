@@ -109,10 +109,16 @@ spec:
             - name: SHARED_MOUNT_GROUPS
               value: {{ .Values.rbac.bootstrap.sharedMountGroups | join "," | quote }}
             - name: HUB_EXTERNAL_URL
-              {{- /* Defaults to https://{nebariapp.hostname} when unset so the
+              {{- /* Defaults to the derived external hub URL (nebariapp.hostname,
+              falling back to hub.<base-domain-of-keycloak.hostname>) so the
               bootstrap can patch rootUrl / baseUrl / initiate.login.uri on the
-              hub OIDC client. Empty value disables the patch. */}}
-              value: {{ .Values.rbac.bootstrap.hubExternalUrl | default (printf "https://%s" .Values.nebariapp.hostname) | quote }}
+              hub OIDC client. Empty value disables the patch. Must go through
+              the hubExternalURL helper, NOT nebariapp.hostname directly: with
+              the hostname left to derivation the raw value renders "https://",
+              which the script's rstrip("/") reduces to "https:" - truthy, so
+              the empty-value guard never fires and Keycloak 400s the reconcile
+              (issue #185). */}}
+              value: {{ .Values.rbac.bootstrap.hubExternalUrl | default (include "nebari-data-science-pack.hubExternalURL" . | trimSuffix "/") | quote }}
             - name: PYTHONUNBUFFERED
               value: "1"
           volumeMounts:
