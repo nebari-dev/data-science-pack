@@ -75,7 +75,7 @@ pyjwt = "<2.10.0"
 
 [pypi-dependencies]
 jupyter-vscode-proxy = { git = "https://github.com/betatim/vscode-binder.git" }
-nb_nebi_kernels = "==0.1"
+nb_nebi_kernels = { git = "https://github.com/MUFFANUJ/nb-nebi-kernels", branch = "kernelFollowUps" }
 jupyterlab_nvdashboard = "==0.12.0"
 # argo-jupyter-scheduler = "==2024.6.1"  # disabled until service is configured
 jhub-apps = "==2025.11.1"
