@@ -565,27 +565,6 @@ jupyterhub:
       #     - email
       # ============================================================
 
-    # jhub-apps "Individuals and group access": the share dropdown is built
-    # from (other hub users + hub groups) filtered by the requesting user's
-    # TOKEN scopes. JupyterHub's default `user` role is self-only, so without
-    # this extension the dropdown is empty for every user - admins included
-    # (#188). These are the scopes jhub-apps' reference jupyterhub_config.py
-    # prescribes for sharing.
-    #
-    # NOTE: read:users:name lets any authenticated user enumerate all
-    # usernames - inherent to sharing by name. Opt out by overriding this
-    # role to scopes: [self].
-    #
-    # `self` is repeated deliberately: naming a role in load_roles REPLACES
-    # its default definition rather than extending it.
-    loadRoles:
-      user:
-        scopes:
-          - self
-          - read:users:name
-          - read:groups:name
-          - shares!user
-
     # Mount custom config files from ConfigMap + the operator-provisioned
     # Keycloak OIDC client Secret. 00-gateway-auth.py reads client-id /
     # client-secret / issuer-url from /etc/oauth/ when KC OAuth is wired.

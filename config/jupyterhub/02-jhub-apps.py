@@ -73,6 +73,28 @@ for key, value in japps_config.items():
 # Install jhub-apps (sets up service, roles, etc.)
 c = install_jhub_apps(c, spawner_to_subclass=KubeSpawner)
 
+# Extend the `user` role with the scopes the jhub-apps sharing dropdown
+# ("Individuals and group access") needs: the dropdown is (other hub users +
+# hub groups) filtered by the requesting user's token scopes, and without
+# read:users:name / read:groups:name it is empty for every user - admins
+# included (#188). This MUST extend, in place, the `user` role that
+# install_jhub_apps just appended to load_roles: defining a second role via
+# z2jh's hub.loadRoles (which runs before this file) makes JupyterHub abort
+# startup with "Role user multiply defined". Mirrors jhub-apps' reference
+# jupyterhub_config.py.
+#
+# NOTE: read:users:name lets any authenticated user enumerate all usernames,
+# inherent to sharing by name. Opt out via
+# ``jupyterhub.custom.sharing-scopes-enabled: false``.
+if get_config("custom.sharing-scopes-enabled", True):
+    for _role in c.JupyterHub.load_roles:
+        if _role.get("name") == "user":
+            _role["scopes"] = sorted(
+                set(_role["scopes"])
+                | {"read:users:name", "read:groups:name", "shares!user"}
+            )
+            break
+
 # Forward JUPYTERHUB_OIDC_CLIENT_SECRET to the jhub-apps subprocess so that
 # 03-nebi-envs.py (which is re-evaluated inside the subprocess via
 # get_jupyterhub_config()) can read it for Keycloak token exchange.
