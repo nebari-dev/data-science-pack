@@ -80,6 +80,6 @@ jupyterlab_nvdashboard = "==0.12.0"
 # argo-jupyter-scheduler = "==2024.6.1"  # disabled until service is configured
 jhub-apps = "==2025.11.1"
 jupyterlab-nebari-mode = "==0.3.0"
-jupyterlab-launchpad = "==1.0.5"
+jupyterlab-launchpad = { git = "https://github.com/nebari-dev/jupyterlab-launchpad", branch = "main" }
 jupyterlab-gallery = "==0.6.3"
 jupyterlab-jhub-apps = "==0.3.1"

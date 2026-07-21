@@ -414,6 +414,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
       - pypi: git+https://github.com/MUFFANUJ/nb-nebi-kernels?branch=kernelFollowUps#dae3322df3b44ee81aebea302733c0f7a2a83468
       - pypi: git+https://github.com/betatim/vscode-binder.git#25d70ec4ca208d01a6bcbfd616de1b2b2c7d431c
+      - pypi: git+https://github.com/nebari-dev/jupyterlab-launchpad?branch=main#33fb41efcd5a50481e60a3e613f541b233f25819
       - pypi: https://files.pythonhosted.org/packages/02/11/9cae49425dbb3e89a7bb3a4d2e974711ad86baa6cc1f47c9bb4e009adced/jupyterlab_jhub_apps-0.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/04/1e/b832de447dee8b582cac175871d2f6c3d5077cc56d5575cadba1fd1cccfa/linkify_it_py-2.0.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/06/ad/5ba858ffc307ed2b51693d87642f9e9dd6013579840981ac364c6e24c38c/backports_zstd-1.1.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
@@ -466,7 +467,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c8/22/9460e311f340cb62d26a38c419b1381b8593b0bb6b5d1f056938b086d362/lockfile-0.12.2-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/8c/2b30c12155ad8de0cf641d76a8b396a16d2c36bc6d50b621a62b7c4567c1/build-1.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cc/3e/8228047497767397d5e9ef195fb2739b6ed755d042ad3c0edb28f4f6d578/conda_lock-3.0.4-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/cc/7e/e0cc8c945693b9e28cc45d45145f2cf1670cca587da5a96f05371d4bf46e/jupyterlab_launchpad-1.0.5-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d0/30/dc54f88dd4a2b5dc8a0279bdd7270e735851848b762aeb1c1184ed1f6b14/tqdm-4.67.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d9/52/1064f510b141bd54025f9b55105e26d1fa970b9be67ad766380a3c9b74b0/starlette-0.50.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/da/e5/148ab5edb339f5833d04f0bcb8380a53e8b19bd5f091ae67222ed188b393/uv-0.9.13-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -885,6 +885,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
       - pypi: git+https://github.com/MUFFANUJ/nb-nebi-kernels?branch=kernelFollowUps#dae3322df3b44ee81aebea302733c0f7a2a83468
       - pypi: git+https://github.com/betatim/vscode-binder.git#25d70ec4ca208d01a6bcbfd616de1b2b2c7d431c
+      - pypi: git+https://github.com/nebari-dev/jupyterlab-launchpad?branch=main#33fb41efcd5a50481e60a3e613f541b233f25819
       - pypi: https://files.pythonhosted.org/packages/02/11/9cae49425dbb3e89a7bb3a4d2e974711ad86baa6cc1f47c9bb4e009adced/jupyterlab_jhub_apps-0.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/02/57/7163ed06a2d9bf1f34d89dcc7c5881119beeed287022c997b0a706edcfbe/dulwich-0.22.8-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/04/1e/b832de447dee8b582cac175871d2f6c3d5077cc56d5575cadba1fd1cccfa/linkify_it_py-2.0.3-py3-none-any.whl
@@ -937,7 +938,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c8/22/9460e311f340cb62d26a38c419b1381b8593b0bb6b5d1f056938b086d362/lockfile-0.12.2-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/8c/2b30c12155ad8de0cf641d76a8b396a16d2c36bc6d50b621a62b7c4567c1/build-1.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cc/3e/8228047497767397d5e9ef195fb2739b6ed755d042ad3c0edb28f4f6d578/conda_lock-3.0.4-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/cc/7e/e0cc8c945693b9e28cc45d45145f2cf1670cca587da5a96f05371d4bf46e/jupyterlab_launchpad-1.0.5-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d0/30/dc54f88dd4a2b5dc8a0279bdd7270e735851848b762aeb1c1184ed1f6b14/tqdm-4.67.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d9/52/1064f510b141bd54025f9b55105e26d1fa970b9be67ad766380a3c9b74b0/starlette-0.50.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e0/f9/0595336914c5619e5f28a1fb793285925a8cd4b432c9da0a987836c7f822/shellingham-1.5.4-py2.py3-none-any.whl
@@ -8765,6 +8765,13 @@ packages:
   name: jupyter-vscode-proxy
   version: '0.7'
   requires_python: '>=3.8'
+- pypi: git+https://github.com/nebari-dev/jupyterlab-launchpad?branch=main#33fb41efcd5a50481e60a3e613f541b233f25819
+  name: jupyterlab-launchpad
+  version: 1.0.5
+  requires_dist:
+  - jupyter-server>=2.0.1,<3
+  - jupyter-server-proxy ; extra == 'test'
+  requires_python: '>=3.8'
 - pypi: https://files.pythonhosted.org/packages/02/11/9cae49425dbb3e89a7bb3a4d2e974711ad86baa6cc1f47c9bb4e009adced/jupyterlab_jhub_apps-0.3.1-py3-none-any.whl
   name: jupyterlab-jhub-apps
   version: 0.3.1
@@ -9419,14 +9426,6 @@ packages:
   - xattr>=1.0.0,<2.0.0 ; sys_platform == 'darwin'
   - zstandard>=0.15
   requires_python: '>=3.9'
-- pypi: https://files.pythonhosted.org/packages/cc/7e/e0cc8c945693b9e28cc45d45145f2cf1670cca587da5a96f05371d4bf46e/jupyterlab_launchpad-1.0.5-py3-none-any.whl
-  name: jupyterlab-launchpad
-  version: 1.0.5
-  sha256: 14d7455c4f16d22f8a866c38a804c5ad0ac5ebc752da6c7e72d35805f7ea3551
-  requires_dist:
-  - jupyter-server>=2.0.1,<3
-  - jupyter-server-proxy ; extra == 'test'
-  requires_python: '>=3.8'
 - pypi: https://files.pythonhosted.org/packages/d0/30/dc54f88dd4a2b5dc8a0279bdd7270e735851848b762aeb1c1184ed1f6b14/tqdm-4.67.1-py3-none-any.whl
   name: tqdm
   version: 4.67.1
