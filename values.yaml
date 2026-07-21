@@ -531,6 +531,16 @@ jupyterhub:
         # For production, use GenericOAuthenticator with Keycloak (see below)
         authenticator_class: dummy
 
+      # Mirror each user's Keycloak groups into JupyterHub groups at login so
+      # groups can be jhub-apps share targets (#188) - without this the hub
+      # has no groups at all and the "Individuals and group access" dropdown
+      # can never list one. Standard oauthenticator trait (the pack's
+      # KeyCloakOAuthenticator subclasses GenericOAuthenticator); inert under
+      # the dummy authenticator. A group appears once one of its members
+      # logs in. Opt out by overriding to false.
+      KeyCloakOAuthenticator:
+        manage_groups: true
+
       # ============================================================
       # Optional: Keycloak/OAuth Configuration
       # ============================================================
@@ -554,6 +564,27 @@ jupyterhub:
       #     - profile
       #     - email
       # ============================================================
+
+    # jhub-apps "Individuals and group access": the share dropdown is built
+    # from (other hub users + hub groups) filtered by the requesting user's
+    # TOKEN scopes. JupyterHub's default `user` role is self-only, so without
+    # this extension the dropdown is empty for every user - admins included
+    # (#188). These are the scopes jhub-apps' reference jupyterhub_config.py
+    # prescribes for sharing.
+    #
+    # NOTE: read:users:name lets any authenticated user enumerate all
+    # usernames - inherent to sharing by name. Opt out by overriding this
+    # role to scopes: [self].
+    #
+    # `self` is repeated deliberately: naming a role in load_roles REPLACES
+    # its default definition rather than extending it.
+    loadRoles:
+      user:
+        scopes:
+          - self
+          - read:users:name
+          - read:groups:name
+          - shares!user
 
     # Mount custom config files from ConfigMap + the operator-provisioned
     # Keycloak OIDC client Secret. 00-gateway-auth.py reads client-id /
