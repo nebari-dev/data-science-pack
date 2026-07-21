@@ -531,6 +531,16 @@ jupyterhub:
         # For production, use GenericOAuthenticator with Keycloak (see below)
         authenticator_class: dummy
 
+      # Mirror each user's Keycloak groups into JupyterHub groups at login so
+      # groups can be jhub-apps share targets (#188) - without this the hub
+      # has no groups at all and the "Individuals and group access" dropdown
+      # can never list one. Standard oauthenticator trait (the pack's
+      # KeyCloakOAuthenticator subclasses GenericOAuthenticator); inert under
+      # the dummy authenticator. A group appears once one of its members
+      # logs in. Opt out by overriding to false.
+      KeyCloakOAuthenticator:
+        manage_groups: true
+
       # ============================================================
       # Optional: Keycloak/OAuth Configuration
       # ============================================================
