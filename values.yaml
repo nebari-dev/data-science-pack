@@ -218,8 +218,22 @@ sharedStorage:
 # =============================================================================
 # Nebi Integration
 # =============================================================================
-# Companion service (nebari-nebi-pack) deployed in its own namespace.
+# Companion software pack for standalone Nebi (nebari-nebi-pack) deployed in its
+# own namespace and integrated with JupyterLab users' local environments.
 nebi:
+  # Master switch for integration with a *separate* nebi-pack deployment.
+  # When false, the remoteURL/internalURL helpers below return empty
+  # regardless of any explicit value, so every downstream surface that keys
+  # off them is disabled:
+  #   - the jhub-apps environment selector (config/jupyterhub/03-nebi-envs.py,
+  #     gated on a non-empty nebi-internal-url)
+  #   - the remote pre-spawn auth + "Nebi" launcher card (01-spawner.py,
+  #     gated on a non-empty nebi-remote-url)
+  #   - the hub -> nebi egress NetworkPolicy
+  # The in-pod standalone nebi binary is INDEPENDENT of this flag — it is
+  # driven solely by nebi.image.tag below and stays wired when this is false.
+  # Leave true for deployment (where nebi-pack is present).
+  enabled: true
   # Nebi binary image. An init container copies the nebi binary from this image
   # into each JupyterLab pod, so the version is controlled at deploy time
   # rather than baked into the JupyterLab image.
