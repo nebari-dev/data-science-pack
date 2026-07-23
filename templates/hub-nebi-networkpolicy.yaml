@@ -1,4 +1,4 @@
-{{- if and .Values.nebi.internalURL .Values.nebi.namespace }}
+{{- if and .Values.nebi.enabled .Values.nebi.internalURL .Values.nebi.namespace }}
 # Allows the JupyterHub pod to reach the Nebi server for token exchange
 # at spawn time (pre_spawn_hook calls /api/v1/auth/session).
 # Kubernetes NetworkPolicy is additive — this rule is evaluated alongside
