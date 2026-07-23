@@ -411,7 +411,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/xyzservices-2025.1.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zict-3.0.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
-      - pypi: git+https://github.com/MUFFANUJ/nb-nebi-kernels?branch=kernelFollowUps#dae3322df3b44ee81aebea302733c0f7a2a83468
+      - pypi: git+https://github.com/MUFFANUJ/nb-nebi-kernels?branch=kernelFollowUps#1c7305d37044309e6fd4ab701966f07e82a2cef9
       - pypi: git+https://github.com/betatim/vscode-binder.git#25d70ec4ca208d01a6bcbfd616de1b2b2c7d431c
       - pypi: git+https://github.com/nebari-dev/jupyterlab-launchpad?branch=main#33fb41efcd5a50481e60a3e613f541b233f25819
       - pypi: https://files.pythonhosted.org/packages/02/11/9cae49425dbb3e89a7bb3a4d2e974711ad86baa6cc1f47c9bb4e009adced/jupyterlab_jhub_apps-0.3.1-py3-none-any.whl
@@ -881,7 +881,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/xyzservices-2025.1.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zict-3.0.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
-      - pypi: git+https://github.com/MUFFANUJ/nb-nebi-kernels?branch=kernelFollowUps#dae3322df3b44ee81aebea302733c0f7a2a83468
+      - pypi: git+https://github.com/MUFFANUJ/nb-nebi-kernels?branch=kernelFollowUps#1c7305d37044309e6fd4ab701966f07e82a2cef9
       - pypi: git+https://github.com/betatim/vscode-binder.git#25d70ec4ca208d01a6bcbfd616de1b2b2c7d431c
       - pypi: git+https://github.com/nebari-dev/jupyterlab-launchpad?branch=main#33fb41efcd5a50481e60a3e613f541b233f25819
       - pypi: https://files.pythonhosted.org/packages/02/11/9cae49425dbb3e89a7bb3a4d2e974711ad86baa6cc1f47c9bb4e009adced/jupyterlab_jhub_apps-0.3.1-py3-none-any.whl
@@ -8741,16 +8741,15 @@ packages:
   - pkg:pypi/zipp?source=hash-mapping
   size: 21809
   timestamp: 1732827613585
-- pypi: git+https://github.com/MUFFANUJ/nb-nebi-kernels?branch=kernelFollowUps#dae3322df3b44ee81aebea302733c0f7a2a83468
+- pypi: git+https://github.com/MUFFANUJ/nb-nebi-kernels?branch=kernelFollowUps#1c7305d37044309e6fd4ab701966f07e82a2cef9
   name: nb-nebi-kernels
-  version: 0.1.dev31+gdae3322df
+  version: 0.1.dev32+g1c7305d37
   requires_dist:
   - ipykernel>=6.0.0
   - jupyter-client>=8.0.0
   - jupyter-core>=5.0.0
   - jupyter-server>=2.0.0
-  - tomli>=2.0.0 ; python_full_version < '3.11'
-  requires_python: '>=3.10'
+  requires_python: '>=3.11'
 - pypi: git+https://github.com/betatim/vscode-binder.git#25d70ec4ca208d01a6bcbfd616de1b2b2c7d431c
   name: jupyter-vscode-proxy
   version: '0.7'
