@@ -3,9 +3,9 @@
 # ruff: noqa: F821 - `c` is a magic global provided by JupyterHub
 import os
 
-from kubespawner import KubeSpawner
 from jhub_apps import theme_template_paths, themes
 from jhub_apps.configuration import install_jhub_apps
+from kubespawner import KubeSpawner
 from z2jh import get_config
 
 # Configure jhub-apps
