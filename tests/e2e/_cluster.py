@@ -100,11 +100,14 @@ def patch_nfs_hosts_entry(release, cluster_name):
     pv_name = ""
     deadline = time.time() + 90
     while time.time() < deadline:
-        rc, pv_name, _ = kctl_out(
-            "get", "pv", "-l", f"app.kubernetes.io/instance={release}",
-            "-o", "jsonpath={.items[?(@.spec.nfs)].metadata.name}",
-            timeout=15,
-        )
+        try:
+            rc, pv_name, _ = kctl_out(
+                "get", "pv", "-l", f"app.kubernetes.io/instance={release}",
+                "-o", "jsonpath={.items[?(@.spec.nfs)].metadata.name}",
+                timeout=15,
+            )
+        except subprocess.TimeoutExpired:
+            pv_name = ""
         if pv_name:
             break
         time.sleep(2)

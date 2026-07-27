@@ -20,6 +20,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 from urllib.parse import urlencode
 
 from oauthenticator.generic import GenericOAuthenticator
@@ -47,7 +48,7 @@ class KCRealmAdmin:
     Construction is pure; only the public method does I/O.
     """
 
-    REQUIRED_ATTRS = {
+    REQUIRED_ATTRS: ClassVar[dict[str, str]] = {
         "component": "shared-directory",
         "scopes": "write:shared-mount",
     }
@@ -348,7 +349,7 @@ class KeyCloakOAuthenticator(GenericOAuthenticator):
             if e.response is not None and e.response.body:
                 try:
                     err_kind = json.loads(e.response.body).get("error", "")
-                except Exception:
+                except (ValueError, AttributeError):
                     pass
             if e.code == 400 and err_kind == "invalid_grant":
                 self.log.warning(
@@ -614,7 +615,7 @@ def _resolve_oauth_urls() -> tuple[str, str] | None:
 # Without (2), the chart's default authenticator (dummy) stays in place,
 # so plain `kind` deploys come up without needing the operator Secret.
 try:
-    c  # type: ignore[used-before-def]
+    _ = c  # type: ignore[used-before-def]
 except NameError:
     pass
 else:
@@ -634,7 +635,7 @@ else:
             or _derive_realm_api_url(_issuer)
         )
         configure(
-            c,  # noqa: F821
+            c,
             issuer=_issuer,
             client_id=_read_secret_file(_secret_dir, "client-id"),
             client_secret=_read_secret_file(_secret_dir, "client-secret"),
