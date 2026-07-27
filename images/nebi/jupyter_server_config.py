@@ -60,6 +60,13 @@ c.ServerProxy.servers = {
         "absolute_url": True,
         "new_browser_tab": False,
         "environment": nebi_env,
+        # jupyter-server-proxy forwards the browser's original Host header
+        # (e.g. hub.example.com) unchanged to the proxied backend. nebi's
+        # local-mode listener only accepts loopback Host headers (netguard),
+        # so without this override every proxied request 403s even though
+        # the actual connection is loopback. Force the Host nebi sees to
+        # match the port it's actually listening on.
+        "request_headers_override": {"Host": "localhost:{port}"},
         "launcher_entry": {
             "title": "Nebi",
             "enabled": True,

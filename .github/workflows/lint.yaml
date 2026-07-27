@@ -30,4 +30,4 @@ jobs:
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b  # v7.2.0
 
       - name: Lint Python
-        run: uvx ruff check config/
+        run: uvx ruff@0.16.0 check config/
