@@ -32,6 +32,17 @@ client-id pattern: ``jupyterhub-<release>-<chart>``. Override via
 ``rbac.bootstrap.hubClientId`` for non-standard layouts.
 */}}
 {{- $hubClientId := .Values.rbac.bootstrap.hubClientId | default (printf "jupyterhub-%s-%s" .Release.Name .Chart.Name) }}
+{{/*
+Hub external URL for the KC client URL patch. Uses the same zero-config
+hubHostname helper every other hostname derivation in this chart uses
+(keycloak.hostname -> baseDomain -> hub.<baseDomain>), instead of reading
+.Values.nebariapp.hostname directly — that raw value is unset on
+zero-config deployments, which produced a bare "https:" rootUrl and made
+Keycloak reject the client update with "Root URL is not a valid URL".
+*/}}
+{{- $hubHost := include "nebari-data-science-pack.hubHostname" . }}
+{{- $derivedHubExternalUrl := "" }}
+{{- if $hubHost }}{{- $derivedHubExternalUrl = printf "https://%s" $hubHost }}{{- end }}
 {{- $script := .Files.Get "files/keycloak_rbac_bootstrap.py" }}
 {{- if not $script }}
 {{- fail "files/keycloak_rbac_bootstrap.py missing from the chart — repackage with the file included." }}
@@ -112,7 +123,7 @@ spec:
               {{- /* Defaults to https://{nebariapp.hostname} when unset so the
               bootstrap can patch rootUrl / baseUrl / initiate.login.uri on the
               hub OIDC client. Empty value disables the patch. */}}
-              value: {{ .Values.rbac.bootstrap.hubExternalUrl | default (printf "https://%s" .Values.nebariapp.hostname) | quote }}
+              value: {{ .Values.rbac.bootstrap.hubExternalUrl | default $derivedHubExternalUrl | quote }}
             - name: PYTHONUNBUFFERED
               value: "1"
           volumeMounts:
