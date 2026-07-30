@@ -247,6 +247,24 @@ nebi:
   # Port the Nebi server listens on (used in hub -> nebi NetworkPolicy
   # egress rule).
   port: 8460
+  # Seed nebi's built-in default registry (quay.io/nebari_environments) in
+  # each user's per-pod nebi instance. Set false to remove it everywhere.
+  seedDefaultRegistry: true
+  # Admin-provisioned OCI registries for every user's nebi instance.
+  # Rendered into a Secret mounted at /etc/nebi/config.yaml in user pods
+  # (which nebi searches at boot). Each entry uses nebi's own
+  # `registries.entries` schema: name, url, namespace, username, password,
+  # api_token, default. Credential values support nebi's ${ENV_VAR}
+  # expansion, but note that anything mounted into a user pod, including
+  # these credentials, is readable by that pod's user.
+  registries: []
+  # registries:
+  #   - name: acme-registry
+  #     url: registry.acme.com
+  #     namespace: acme-envs
+  #     username: shared-user
+  #     password: "s3cret"
+  #     default: true
 
 # Helm Job that one-shots Keycloak realm config for role-gated shared
 # mounts. Runs as a post-install / post-upgrade

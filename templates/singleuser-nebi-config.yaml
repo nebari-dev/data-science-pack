@@ -1,0 +1,24 @@
+{{- /*
+  Nebi config for singleuser pods: admin-provisioned OCI registries and the
+  default-registry seed flag. Rendered only when the deployer customizes
+  either value; mounted by 01-spawner.py at /etc/nebi/config.yaml, a path
+  nebi searches at boot. A Secret (not ConfigMap) because registry
+  credentials may be inline.
+*/}}
+{{- if or .Values.nebi.registries (not .Values.nebi.seedDefaultRegistry) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "nebari-data-science-pack.nebi-config-secret" . }}
+  labels:
+    {{- include "nebari-data-science-pack.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  config.yaml: |
+    registries:
+      seed_default: {{ .Values.nebi.seedDefaultRegistry }}
+      {{- with .Values.nebi.registries }}
+      entries:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

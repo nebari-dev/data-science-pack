@@ -50,6 +50,13 @@ Singleuser config ConfigMap name
 {{- end }}
 
 {{/*
+Nebi config Secret name (admin-provisioned registries)
+*/}}
+{{- define "nebari-data-science-pack.nebi-config-secret" -}}
+{{- printf "%s-nebi-config" (include "nebari-data-science-pack.name" .) -}}
+{{- end }}
+
+{{/*
 Selector labels
 */}}
 {{- define "nebari-data-science-pack.selectorLabels" -}}
