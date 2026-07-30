@@ -72,6 +72,35 @@ make down
 
 See `values.yaml` for all configuration options. The chart wraps the [JupyterHub Helm chart](https://z2jh.jupyter.org/) - all `jupyterhub.*` values are passed through.
 
+### Nebi Registries
+
+Admins can provision OCI registries for every user's nebi instance via
+`nebi.registries`:
+
+```yaml
+nebi:
+  registries:
+    - name: acme-registry
+      url: registry.acme.com
+      namespace: acme-envs
+      username: shared-user
+      password: "s3cret"
+      default: true
+```
+
+Each entry follows nebi's own `registries.entries` schema (`name`, `url`,
+`namespace`, `username`, `password`, `api_token`, `default`) and is rendered
+into a Secret mounted into user pods, so entries are locked in the UI rather
+than editable per-user. Credentials mounted this way are readable by the pod
+they land in, so treat `nebi.registries` credentials as visible to the user
+they're provisioned for.
+
+Set `nebi.seedDefaultRegistry: false` to remove the built-in
+`quay.io/nebari_environments` registry that nebi seeds by default.
+
+Both settings only take effect for user servers started after the hub pod
+restarts, since the mount wiring lives in the hub ConfigMap.
+
 ## Shared Storage
 
 Per-group shared directories (`/shared/<group>` in every user pod) need a
