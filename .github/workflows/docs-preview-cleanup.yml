@@ -1,0 +1,62 @@
+name: Docs preview cleanup
+# When a PR closes (merged or not), delete the Cloudflare Pages preview
+# deployments for that branch. Direct Upload deploys are not tied to the git
+# branch lifecycle, so without this they linger after the branch is gone.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-preview-cleanup-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  CF_PROJECT: data-science-pack
+
+jobs:
+  cleanup:
+    # Fork PRs never get a preview (deploy is skipped, secrets unavailable),
+    # so there is nothing to clean up for them.
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete this branch's preview deployments
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          # No secrets (e.g. not yet provisioned for this repo) -> nothing to do.
+          if [ -z "${CF_API_TOKEN}" ] || [ -z "${CF_ACCOUNT_ID}" ]; then
+            echo "Cloudflare secrets unavailable; nothing to clean up."
+            exit 0
+          fi
+          base="https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects/${CF_PROJECT}/deployments"
+          # The Pages deployments API rejects per_page (HTTP 400) but supports
+          # `page`, so walk pages until one comes back empty. Filtering by branch
+          # is client-side because the API has no branch filter.
+          ids=""
+          page=1
+          while [ "$page" -le 50 ]; do
+            resp=$(curl -fsS -H "Authorization: Bearer ${CF_API_TOKEN}" "${base}?env=preview&page=${page}")
+            count=$(printf '%s' "$resp" | jq '(.result // []) | length')
+            [ "$count" -eq 0 ] && break
+            match=$(printf '%s' "$resp" \
+              | jq -r --arg b "$BRANCH" '(.result // [])[] | select((.deployment_trigger?.metadata?.branch?) == $b) | .id')
+            [ -n "$match" ] && ids="${ids}${match}"$'\n'
+            page=$((page + 1))
+          done
+          ids=$(printf '%s' "$ids" | sed '/^$/d' | sort -u)
+          if [ -z "$ids" ]; then
+            echo "No preview deployments found for branch '$BRANCH'."
+            exit 0
+          fi
+          while IFS= read -r id; do
+            echo "Deleting preview deployment $id (branch '$BRANCH')"
+            curl -fsS -X DELETE -H "Authorization: Bearer ${CF_API_TOKEN}" "${base}/${id}?force=true" >/dev/null
+          done <<< "$ids"
+          echo "Cleaned up preview deployments for branch '$BRANCH'."
