@@ -16,10 +16,7 @@ metadata:
 {{- if $hubHost }}
 {{- $gatewayAuthPy = $gatewayAuthPy | replace "__CHART_OAUTH_CALLBACK_URL__" (printf "https://%s/hub/oauth_callback" $hubHost) | replace "__CHART_OAUTH_EXTERNAL_URL__" (printf "https://%s/" $hubHost) -}}
 {{- end }}
-{{- $nebiConfigSecret := "" -}}
-{{- if or .Values.nebi.registries (not .Values.nebi.seedDefaultRegistry) -}}
-{{- $nebiConfigSecret = include "nebari-data-science-pack.nebi-config-secret" . -}}
-{{- end }}
+{{- $nebiConfigSecret := include "nebari-data-science-pack.nebi-config-secret" . }}
 data:
   # ---------------------------------------------------------------------------
   # 00-chart-derived.py — Helm-rendered defaults for every `custom.*` URL /

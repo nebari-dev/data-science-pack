@@ -5,7 +5,7 @@
   nebi searches at boot. A Secret (not ConfigMap) because registry
   credentials may be inline.
 */}}
-{{- if or .Values.nebi.registries (not .Values.nebi.seedDefaultRegistry) }}
+{{- if include "nebari-data-science-pack.nebi-config-secret" . }}
 apiVersion: v1
 kind: Secret
 metadata:

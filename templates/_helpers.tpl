@@ -50,10 +50,14 @@ Singleuser config ConfigMap name
 {{- end }}
 
 {{/*
-Nebi config Secret name (admin-provisioned registries)
+Nebi config Secret name (admin-provisioned registries). Returns "" when the
+deployer customizes neither nebi.registries nor nebi.seedDefaultRegistry,
+so consumers can use emptiness as the single enable/disable signal.
 */}}
 {{- define "nebari-data-science-pack.nebi-config-secret" -}}
+{{- if or .Values.nebi.registries (not .Values.nebi.seedDefaultRegistry) -}}
 {{- printf "%s-nebi-config" (include "nebari-data-science-pack.name" .) -}}
+{{- end -}}
 {{- end }}
 
 {{/*

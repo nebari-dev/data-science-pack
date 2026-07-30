@@ -257,6 +257,9 @@ nebi:
   # api_token, default. Credential values support nebi's ${ENV_VAR}
   # expansion, but note that anything mounted into a user pod, including
   # these credentials, is readable by that pod's user.
+  # Changes to this value (and to seedDefaultRegistry above) take effect
+  # only for user servers started after the hub pod restarts, since the
+  # mount wiring lives in the hub ConfigMap (01-spawner.py).
   registries: []
   # registries:
   #   - name: acme-registry
