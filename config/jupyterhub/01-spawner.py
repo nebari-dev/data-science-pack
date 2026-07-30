@@ -70,6 +70,29 @@ c.KubeSpawner.volume_mounts = [
     },
 ]
 
+# ---------------------------------------------------------------------------
+# Admin-provisioned nebi config (OCI registries, default-registry seed flag).
+# Helm renders the deployer's `nebi.registries` / `nebi.seedDefaultRegistry`
+# values into a Secret and substitutes its name below; the placeholder stays
+# literal (and is skipped) when the deployer customizes neither value.
+# nebi searches /etc/nebi/config.yaml at boot, so mounting is all it takes.
+# ---------------------------------------------------------------------------
+_NEBI_CONFIG_SECRET = "__NEBI_CONFIG_SECRET__"
+if _NEBI_CONFIG_SECRET and not _NEBI_CONFIG_SECRET.startswith("__"):
+    c.KubeSpawner.volumes.append(
+        {
+            "name": "nebi-config",
+            "secret": {"secretName": _NEBI_CONFIG_SECRET},
+        }
+    )
+    c.KubeSpawner.volume_mounts.append(
+        {
+            "name": "nebi-config",
+            "mountPath": "/etc/nebi/config.yaml",
+            "subPath": "config.yaml",
+        }
+    )
+
 c.KubeSpawner.notebook_dir = "/home/jovyan"
 c.KubeSpawner.working_dir = "/home/jovyan"
 
