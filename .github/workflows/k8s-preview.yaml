@@ -125,13 +125,23 @@ jobs:
           helm repo add jupyterhub https://hub.jupyter.org/helm-chart/
           helm dependency build .
 
+      # nic-operator's CoreReconciler ignores any namespace without this
+      # label (NamespaceNotOptedIn) — without it the NebariApp never
+      # reconciles regardless of what the chart deploys.
+      - name: Create and opt-in the preview namespace
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          kubectl create namespace pr-preview
+          kubectl label namespace pr-preview nebari.dev/managed=true
+
       - name: Deploy chart
         id: deploy
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: |
           helm upgrade --install preview . \
-            --namespace pr-preview --create-namespace \
+            --namespace pr-preview \
             --set jupyterhub.hub.image.name=nebari-data-science-pack-jupyterhub \
             --set jupyterhub.hub.image.tag=preview \
             --set nebariapp.enabled=true \
@@ -153,6 +163,37 @@ jobs:
         run: |
           kubectl -n pr-preview get nebariapp -o wide || true
           kubectl -n pr-preview describe nebariapp preview-nebari-data-science-pack || true
+
+      # Cleanup deletes the whole cluster next, so this is the only chance
+      # to see why a pod/job didn't reach Ready if `helm --wait` timed out.
+      - name: Debug pod/job status on deploy failure
+        if: failure()
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          kubectl -n pr-preview get pods -o wide || true
+          kubectl -n pr-preview get jobs || true
+          kubectl -n pr-preview get events --sort-by=.lastTimestamp || true
+          for pod in $(kubectl -n pr-preview get pods -o name 2>/dev/null); do
+            echo "--- describe $pod ---"
+            kubectl -n pr-preview describe "$pod" || true
+            echo "--- logs $pod ---"
+            kubectl -n pr-preview logs "$pod" --all-containers --tail=100 || true
+          done
+
+      # Interactive SSH debug session into the live runner (cluster still
+      # up, KUBECONFIG still valid) instead of guessing blind from static
+      # logs. limit-access-to-actor restricts the SSH session to whoever
+      # triggered this run — required on a public repo. Bounded to 20min
+      # so a forgotten session doesn't eat the whole 90min job timeout.
+      - name: Debug via tmate SSH on deploy failure
+        if: failure()
+        uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
+        timeout-minutes: 20
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        with:
+          limit-access-to-actor: true
 
       - name: Port-forward JupyterHub proxy
         env:
