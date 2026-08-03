@@ -116,6 +116,13 @@ jobs:
       - name: Side-load hub image into the sandbox cluster
         run: k3d image import nebari-data-science-pack-jupyterhub:preview -c ${{ steps.sandbox.outputs.cluster-name }}
 
+      # charts/ is gitignored (dependency .tgz files aren't committed), so a
+      # fresh checkout needs this before `helm upgrade --install` can find
+      # the jupyterhub subchart. Resolves against the version/digest already
+      # pinned in the committed Chart.lock, not a new or bumped dependency.
+      - name: Fetch chart dependencies
+        run: helm dependency build .
+
       - name: Deploy chart
         id: deploy
         env:
