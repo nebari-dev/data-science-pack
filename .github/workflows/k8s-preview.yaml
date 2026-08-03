@@ -9,14 +9,15 @@ name: K8s Stack Preview
 # (a quick-tunnel URL, a basic-auth password) is readable by anyone who
 # opens the PR, not just intended reviewers. Access closes that gap by
 # authenticating the *person*, not a string in the comment: Cloudflare
-# challenges every request to *.dspack.iakte.ch with a GitHub SSO
-# login and only lets it through to cloudflared if the signed-in account
-# is a member of this GitHub org. The PR comment only ever contains a URL.
+# challenges every request to *.github.fyi with a GitHub SSO login and
+# only lets it through to cloudflared if the signed-in account is a
+# member of this GitHub org. The PR comment only ever contains a URL.
 #
-# iakte.ch is a placeholder domain used temporarily because it lives in
-# the same Cloudflare account as the Tunnel and Zero Trust setup; swap
-# PREVIEW_DOMAIN below once a permanent domain is available in that
-# account.
+# Hostnames are single-level (pr-<n>.github.fyi, not pr-<n>.dspack.github.fyi)
+# deliberately: Cloudflare's free Universal SSL only auto-covers the zone
+# apex plus one wildcard level (github.fyi + *.github.fyi); a second level
+# needs the paid Advanced Certificate Manager add-on, which this setup
+# doesn't use.
 #
 # Scope, deliberately: the tunnel points straight at the `proxy-public`
 # service (dummy-authenticator login, same as local Tilt dev), not the
@@ -33,12 +34,15 @@ name: K8s Stack Preview
 #
 # One-time setup this workflow assumes already exists (Cloudflare Zero
 # Trust dashboard, done by a repo admin, not scripted here). The tunnel,
-# the `iakte.ch` zone, and Zero Trust/Access all live in ONE Cloudflare
+# the `github.fyi` zone, and Zero Trust/Access all live in ONE Cloudflare
 # account (aktechlabs) — not the account behind CLOUDFLARE_API_TOKEN /
 # CLOUDFLARE_ACCOUNT_ID, which docs.yml uses for Pages:
-#   - Zone `iakte.ch` in that account, with an Access self-hosted
-#     application for `*.dspack.iakte.ch`, GitHub as identity provider,
-#     policy scoped to this org.
+#   - Zone `github.fyi` in that account, with an Access self-hosted
+#     application for `*.github.fyi`, GitHub as identity provider,
+#     policy scoped to this org. Note this wildcard covers ANY
+#     single-label subdomain of github.fyi, not just previews — fine as
+#     long as github.fyi isn't also hosting unrelated services outside
+#     this org's control.
 #   - Secret CLOUDFLARE_TUNNEL_ACCOUNT_ID: that account's id (the
 #     `cfd_tunnel` API is account-scoped; can't be derived from the
 #     token alone).
@@ -47,7 +51,7 @@ name: K8s Stack Preview
 #       * Account -> Cloudflare Tunnel -> Edit
 #       * Zone -> Zone -> Read        (to resolve the zone id by name)
 #       * Zone -> DNS -> Edit         (to create/delete the CNAME record)
-#     Zone Resources: Include -> Specific zone -> iakte.ch.
+#     Zone Resources: Include -> Specific zone -> github.fyi.
 #     Account Resources: Include -> Specific account -> aktechlabs.
 #
 # Only runs when a maintainer/collaborator adds the `deploy-preview` label
@@ -74,7 +78,7 @@ concurrency:
 
 env:
   PREVIEW_LABEL: deploy-preview
-  PREVIEW_DOMAIN: dspack.iakte.ch
+  PREVIEW_DOMAIN: github.fyi
   CLOUDFLARED_VERSION: "2026.7.3"
   # sha256 of cloudflared-linux-amd64 for the pinned version above,
   # computed from the official release asset at
@@ -206,10 +210,10 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
           PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}.${{ env.PREVIEW_DOMAIN }}
         run: |
-          zone_id=$(curl -fsS "https://api.cloudflare.com/client/v4/zones?name=iakte.ch" \
+          zone_id=$(curl -fsS "https://api.cloudflare.com/client/v4/zones?name=github.fyi" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id')
           if [ -z "$zone_id" ] || [ "$zone_id" = "null" ]; then
-            echo "::error::Could not resolve zone id for iakte.ch"
+            echo "::error::Could not resolve zone id for github.fyi"
             exit 1
           fi
           echo "ZONE_ID=${zone_id}" >> "$GITHUB_ENV"

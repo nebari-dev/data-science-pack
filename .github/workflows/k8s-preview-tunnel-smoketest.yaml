@@ -22,7 +22,7 @@ on:
       - .github/workflows/k8s-preview-tunnel-smoketest.yaml
 
 env:
-  PREVIEW_DOMAIN: dspack.iakte.ch
+  PREVIEW_DOMAIN: github.fyi
   CLOUDFLARED_VERSION: "2026.7.3"
   CLOUDFLARED_SHA256: "9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17"
 
@@ -95,10 +95,10 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
           PREVIEW_HOSTNAME: smoketest-${{ github.run_id }}.${{ env.PREVIEW_DOMAIN }}
         run: |
-          zone_id=$(curl -fsS "https://api.cloudflare.com/client/v4/zones?name=iakte.ch" \
+          zone_id=$(curl -fsS "https://api.cloudflare.com/client/v4/zones?name=github.fyi" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id')
           if [ -z "$zone_id" ] || [ "$zone_id" = "null" ]; then
-            echo "::error::Could not resolve zone id for iakte.ch"
+            echo "::error::Could not resolve zone id for github.fyi"
             exit 1
           fi
           echo "ZONE_ID=${zone_id}" >> "$GITHUB_ENV"
