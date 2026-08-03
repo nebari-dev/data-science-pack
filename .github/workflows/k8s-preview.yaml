@@ -121,7 +121,9 @@ jobs:
       # the jupyterhub subchart. Resolves against the version/digest already
       # pinned in the committed Chart.lock, not a new or bumped dependency.
       - name: Fetch chart dependencies
-        run: helm dependency build .
+        run: |
+          helm repo add jupyterhub https://hub.jupyter.org/helm-chart/
+          helm dependency build .
 
       - name: Deploy chart
         id: deploy
