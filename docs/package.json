@@ -1,0 +1,28 @@
+{
+  "name": "data-science-pack-docs",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@astrojs/markdown-remark": "7.2.2",
+    "@astrojs/starlight": "0.41.5",
+    "@nebari/starlight": "0.2.1",
+    "astro": "7.1.6",
+    "rehype-mermaid": "3.0.0",
+    "sharp": "0.35.3"
+  },
+  "devDependencies": {
+    "playwright": "1.62.0",
+    "remark": "15.0.1",
+    "unist-util-visit": "5.1.0",
+    "vitest": "4.1.10"
+  }
+}

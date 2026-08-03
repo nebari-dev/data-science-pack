@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import string
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -12,7 +13,6 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import escapism
-import string
 from kubernetes_asyncio.client.rest import ApiException
 from kubespawner.objects import make_pvc
 from z2jh import get_config
@@ -223,9 +223,11 @@ def _setup_trust_bundle(spawner):
             "command": [
                 "/bin/sh",
                 "-c",
-                "cp /etc/ssl/certs/ca-certificates.crt /merged/ca-bundle.crt && "
-                f"if [ -f /org-ca/{_trust_bundle_key} ]; then "
-                f"cat /org-ca/{_trust_bundle_key} >> /merged/ca-bundle.crt; fi",
+                (
+                    "cp /etc/ssl/certs/ca-certificates.crt /merged/ca-bundle.crt && "
+                    f"if [ -f /org-ca/{_trust_bundle_key} ]; then "
+                    f"cat /org-ca/{_trust_bundle_key} >> /merged/ca-bundle.crt; fi"
+                ),
             ],
             "volumeMounts": [
                 {"name": "org-ca", "mountPath": "/org-ca", "readOnly": True},
@@ -415,7 +417,7 @@ def _extract_error_body(exc):
     if hasattr(exc, "read"):
         try:
             return exc.read().decode("utf-8", errors="replace")
-        except Exception:
+        except (AttributeError, OSError):
             pass
     return ""
 
@@ -434,7 +436,7 @@ def _decode_jwt_claims(token):
         # Add padding
         payload += "=" * (4 - len(payload) % 4)
         return json.loads(base64.urlsafe_b64decode(payload))
-    except Exception:
+    except (ValueError, TypeError):
         return {}
 
 
@@ -493,9 +495,9 @@ def _sync_refresh_access_token(refresh_token, keycloak_url, hub_client_id, hub_c
             return token
     except Exception as exc:
         resp_body = _extract_error_body(exc)
-        log.error(
-            "token-exchange step 1 FAILED: %s response=%s (url=%s, client_id=%s)",
-            exc, resp_body, keycloak_url, hub_client_id,
+        log.exception(
+            "token-exchange step 1 FAILED: response=%s (url=%s, client_id=%s)",
+            resp_body, keycloak_url, hub_client_id,
         )
         return ""
 
@@ -539,9 +541,9 @@ def _sync_exchange_access_token_for_nebi_id_token(
             return token
     except Exception as exc:
         resp_body = _extract_error_body(exc)
-        log.error(
-            "token-exchange step 2 FAILED: %s response=%s (url=%s, audience=%s, client_id=%s)",
-            exc, resp_body, keycloak_url, nebi_client_id, hub_client_id,
+        log.exception(
+            "token-exchange step 2 FAILED: response=%s (url=%s, audience=%s, client_id=%s)",
+            resp_body, keycloak_url, nebi_client_id, hub_client_id,
         )
         return ""
 
@@ -579,9 +581,9 @@ def _sync_exchange_nebi_id_token_for_jwt(nebi_id_token, nebi_internal_url):
             return token
     except Exception as exc:
         resp_body = _extract_error_body(exc)
-        log.error(
-            "token-exchange step 3 FAILED: %s response=%s (url=%s)",
-            exc, resp_body, session_url,
+        log.exception(
+            "token-exchange step 3 FAILED: response=%s (url=%s)",
+            resp_body, session_url,
         )
         return ""
 
@@ -753,11 +755,13 @@ async def _nebi_pre_spawn_hook(spawner):
                     # Pull workspace files into the ephemeral dir, then
                     # pre-install the pixi environment so jhub-app-proxy's
                     # `pixi run` doesn't hit the ready-check timeout.
-                    f"mkdir -p {ws_dir} && "
-                    f"nebi pull {workspace_name} -o {ws_dir} --force && "
-                    f"pixi install --manifest-path {ws_dir}/pixi.toml && "
-                    f"chmod -R a+rw {nebi_env_dir}/nebi.db* || "
-                    f"echo 'WARNING: nebi pull or pixi install failed for {workspace_name}'",
+                    (
+                        f"mkdir -p {ws_dir} && "
+                        f"nebi pull {workspace_name} -o {ws_dir} --force && "
+                        f"pixi install --manifest-path {ws_dir}/pixi.toml && "
+                        f"chmod -R a+rw {nebi_env_dir}/nebi.db* || "
+                        f"echo 'WARNING: nebi pull or pixi install failed for {workspace_name}'"
+                    ),
                 ],
                 "env": nebi_pull_env,
                 "volumeMounts": nebi_pull_mounts,

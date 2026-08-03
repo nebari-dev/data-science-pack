@@ -69,6 +69,10 @@ product_owner: pmeier
 # Use "na" for packs that are not user-facing applications.
 nebariapp_integration: full
 
+# Routes packs.nebari.dev/data-science-pack/ to this pack's Cloudflare Pages
+# project (the dashboard's route generator adds it once this is true).
+docs_site: true
+
 # Whether the pack installs without the Nebari operator.
 scope:
   standalone-supported: no
@@ -88,9 +92,7 @@ scope:
 #   on cluster provisioning.
 
 # Links shown alongside the pack on the dashboard. Both are optional.
-# links:
-#   Extended documentation (NOT the README - that is auto-linked from the
-#   pack name column).
-#   docs: https://example.com/docs/my-pack
+links:
+  docs: https://packs.nebari.dev/data-science-pack/
 #   Recorded or live demo URL.
 #   demo: https://example.com/demos/my-pack
