@@ -122,7 +122,7 @@ jobs:
           echo "Live for up to 15 minutes (this job's timeout)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run tunnel until the job times out
-        run: /tmp/cloudflared tunnel run --token "${TUNNEL_TOKEN}" --no-autoupdate
+        run: /tmp/cloudflared tunnel --no-autoupdate run --token "${TUNNEL_TOKEN}"
 
       - name: Delete DNS record
         if: always()
