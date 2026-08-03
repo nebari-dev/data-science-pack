@@ -20,12 +20,13 @@ name: K8s Stack Preview
 # doesn't use.
 #
 # Scope, deliberately: the tunnel points straight at the `proxy-public`
-# service (dummy-authenticator login, same as local Tilt dev), not the
-# operator-provisioned NebariApp/OIDC route — that route exists for its
-# own Keycloak realm and redirect URIs, unrelated to Access's GitHub SSO.
-# The NebariApp CRD is still installed (auth.enabled=true) purely so the
-# operator/Keycloak reconcile is exercised and its Ready condition
-# reported in the run; it is not what the reviewer clicks through.
+# service (dummy-authenticator login, same as local Tilt dev). The chart
+# deploys with nebariapp.enabled=false — nebariapp.auth.enabled=true
+# was tried to additionally exercise the operator/Keycloak reconcile,
+# but 00-gateway-auth.py reads /etc/oauth/issuer-url unconditionally at
+# import time, before the operator's async client provisioning can ever
+# populate it, so the hub pod crash-loops. Not worth chasing for a
+# preview link; the operator/OIDC path stays untested here.
 #
 # The link only lives for the run's duration (bounded by timeout-minutes
 # below) — it is not a persistent per-PR environment. Each run creates its
@@ -125,28 +126,16 @@ jobs:
           helm repo add jupyterhub https://hub.jupyter.org/helm-chart/
           helm dependency build .
 
-      # nic-operator's CoreReconciler ignores any namespace without this
-      # label (NamespaceNotOptedIn) — without it the NebariApp never
-      # reconciles regardless of what the chart deploys.
-      - name: Create and opt-in the preview namespace
-        env:
-          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
-        run: |
-          kubectl create namespace pr-preview
-          kubectl label namespace pr-preview nebari.dev/managed=true
-
       - name: Deploy chart
         id: deploy
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: |
           helm upgrade --install preview . \
-            --namespace pr-preview \
+            --namespace pr-preview --create-namespace \
             --set jupyterhub.hub.image.name=nebari-data-science-pack-jupyterhub \
             --set jupyterhub.hub.image.tag=preview \
-            --set nebariapp.enabled=true \
-            --set nebariapp.hostname="pr-${{ github.event.pull_request.number }}.${{ steps.sandbox.outputs.domain }}" \
-            --set nebariapp.auth.enabled=true \
+            --set nebariapp.enabled=false \
             --wait --timeout 5m
 
       - name: Wait for hub + proxy
@@ -155,14 +144,6 @@ jobs:
         run: |
           kubectl -n pr-preview rollout status deployment/hub --timeout=180s
           kubectl -n pr-preview rollout status deployment/proxy --timeout=180s
-
-      - name: Report NebariApp reconcile status
-        if: always()
-        env:
-          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
-        run: |
-          kubectl -n pr-preview get nebariapp -o wide || true
-          kubectl -n pr-preview describe nebariapp preview-nebari-data-science-pack || true
 
       # Cleanup deletes the whole cluster next, so this is the only chance
       # to see why a pod/job didn't reach Ready if `helm --wait` timed out.
@@ -296,11 +277,9 @@ jobs:
             reaching JupyterHub — only members of this GitHub org get through.
             **Then JupyterHub login:** dummy authenticator, any username + any password.
 
-            This goes straight to JupyterHub's proxy and skips the operator-provisioned
-            OIDC/Keycloak route (unrelated realm/redirect URIs to Access's GitHub SSO).
-            The `NebariApp` resource is still deployed alongside it so the operator/
-            Keycloak reconcile itself is exercised — see the "Report NebariApp reconcile
-            status" step in this run for its `Ready` condition.
+            This goes straight to JupyterHub's proxy; the operator-provisioned
+            NebariApp/OIDC route isn't deployed here (see workflow header comment
+            for why) — this preview doesn't exercise operator/Keycloak reconcile.
 
             Live only for this job's run (up to 90 min), or until the `deploy-preview`
             label is removed. Push a new commit or re-add the label to redeploy.
