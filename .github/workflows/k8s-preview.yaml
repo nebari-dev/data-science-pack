@@ -136,6 +136,7 @@ jobs:
             --set jupyterhub.hub.image.name=nebari-data-science-pack-jupyterhub \
             --set jupyterhub.hub.image.tag=preview \
             --set nebariapp.enabled=false \
+            --set jupyterhub.custom.external-url="pr-${{ github.event.pull_request.number }}.${{ env.PREVIEW_DOMAIN }}" \
             --wait --timeout 5m
 
       - name: Wait for hub + proxy
