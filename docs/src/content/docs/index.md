@@ -27,6 +27,7 @@ Nebari's custom images, per-group shared storage, and integration with the
 - [Quick Start](/quick-start/) — install the chart and access JupyterHub.
 - [Architecture](/architecture/) — how the proxy, hub, jhub-apps, and user pods fit together.
 - [Shared Storage](/shared-storage/) — per-group directories, StorageClass requirements, and the transitional NFS mode.
+- [Nebi in JupyterLab](/nebi-in-jupyterlab/) — everyday workflows: your own environments, sharing them with a team, and using shared ones.
 
 ## Reference
 

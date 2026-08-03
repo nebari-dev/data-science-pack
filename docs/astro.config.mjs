@@ -31,6 +31,7 @@ export default defineConfig({
             { label: 'Quick Start', slug: 'quick-start' },
             { label: 'Architecture', slug: 'architecture' },
             { label: 'Shared Storage', slug: 'shared-storage' },
+            { label: 'Nebi in JupyterLab', slug: 'nebi-in-jupyterlab' },
           ],
         },
         {
