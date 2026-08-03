@@ -12,6 +12,14 @@ name: K8s Preview Tunnel Smoketest
 
 on:
   workflow_dispatch:
+  # TEMPORARY, for iterating on this PR before workflow_dispatch is
+  # reachable (it needs the file on the default branch first). Scoped to
+  # this file only so it can't fire on unrelated PRs. Remove this
+  # `pull_request` block before merging.
+  pull_request:
+    types: [synchronize]
+    paths:
+      - .github/workflows/k8s-preview-tunnel-smoketest.yaml
 
 env:
   PREVIEW_DOMAIN: dspack.iakte.ch
