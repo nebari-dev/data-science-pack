@@ -1,0 +1,309 @@
+name: K8s Stack Preview
+# Deploys the full Nebari platform stack (Keycloak + nic-operator + Envoy
+# Gateway, via nebari-dev/action-nebari-sandbox's `platform` profile) plus
+# this PR's chart into an ephemeral k3d cluster on the runner, then exposes
+# JupyterHub through a per-PR Cloudflare Tunnel behind Cloudflare Access
+# (GitHub-org SSO) so a reviewer can click a link and use it.
+#
+# This repo is public, so a plain shared secret posted in the PR comment
+# (a quick-tunnel URL, a basic-auth password) is readable by anyone who
+# opens the PR, not just intended reviewers. Access closes that gap by
+# authenticating the *person*, not a string in the comment: Cloudflare
+# challenges every request to *.dspack.iakte.ch with a GitHub SSO
+# login and only lets it through to cloudflared if the signed-in account
+# is a member of this GitHub org. The PR comment only ever contains a URL.
+#
+# iakte.ch is a placeholder domain used temporarily because it lives in
+# the same Cloudflare account as the Tunnel and Zero Trust setup; swap
+# PREVIEW_DOMAIN below once a permanent domain is available in that
+# account.
+#
+# Scope, deliberately: the tunnel points straight at the `proxy-public`
+# service (dummy-authenticator login, same as local Tilt dev), not the
+# operator-provisioned NebariApp/OIDC route — that route exists for its
+# own Keycloak realm and redirect URIs, unrelated to Access's GitHub SSO.
+# The NebariApp CRD is still installed (auth.enabled=true) purely so the
+# operator/Keycloak reconcile is exercised and its Ready condition
+# reported in the run; it is not what the reviewer clicks through.
+#
+# The link only lives for the run's duration (bounded by timeout-minutes
+# below) — it is not a persistent per-PR environment. Each run creates its
+# own Cloudflare Tunnel + DNS record (so concurrent previews on different
+# PRs don't collide on the same route) and deletes both on cleanup.
+#
+# One-time setup this workflow assumes already exists (Cloudflare Zero
+# Trust dashboard, done by a repo admin, not scripted here). The tunnel,
+# the `iakte.ch` zone, and Zero Trust/Access all live in ONE Cloudflare
+# account (aktechlabs) — not the account behind CLOUDFLARE_API_TOKEN /
+# CLOUDFLARE_ACCOUNT_ID, which docs.yml uses for Pages:
+#   - Zone `iakte.ch` in that account, with an Access self-hosted
+#     application for `*.dspack.iakte.ch`, GitHub as identity provider,
+#     policy scoped to this org.
+#   - Secret CLOUDFLARE_TUNNEL_ACCOUNT_ID: that account's id (the
+#     `cfd_tunnel` API is account-scoped; can't be derived from the
+#     token alone).
+#   - Secret CLOUDFLARE_TUNNEL_API_TOKEN: a custom token scoped to
+#     EXACTLY three permissions, nothing broader:
+#       * Account -> Cloudflare Tunnel -> Edit
+#       * Zone -> Zone -> Read        (to resolve the zone id by name)
+#       * Zone -> DNS -> Edit         (to create/delete the CNAME record)
+#     Zone Resources: Include -> Specific zone -> iakte.ch.
+#     Account Resources: Include -> Specific account -> aktechlabs.
+#
+# Only runs when a maintainer/collaborator adds the `deploy-preview` label
+# (GitHub restricts who can label a PR) — arbitrary PR authors, including
+# from forks, cannot trigger this themselves. Even so, a fork PR still runs
+# attacker-authored code once labeled; the comment flags this so whoever
+# labels it is doing so knowingly.
+#
+# Residual risk not covered here: k3d pods share the runner's Docker daemon
+# rather than being hardware-isolated, and k3d's default CNI (flannel)
+# does not enforce NetworkPolicy, so a container escape or outbound abuse
+# from inside a spawned notebook pod is not blocked at the network layer.
+# Per-job GITHUB_TOKEN permissions are scoped to the minimum each job
+# needs so a compromised runner in the exposed 90-minute window can't use
+# an ambient token to touch other workflows or repo state.
+
+on:
+  pull_request:
+    types: [labeled, unlabeled, synchronize]
+
+concurrency:
+  group: k8s-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  PREVIEW_LABEL: deploy-preview
+  PREVIEW_DOMAIN: dspack.iakte.ch
+  CLOUDFLARED_VERSION: "2026.7.3"
+  # sha256 of cloudflared-linux-amd64 for the pinned version above,
+  # computed from the official release asset at
+  # https://github.com/cloudflare/cloudflared/releases/tag/2026.7.3
+  CLOUDFLARED_SHA256: "9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17"
+
+jobs:
+  deploy-preview:
+    if: contains(github.event.pull_request.labels.*.name, 'deploy-preview') && github.event.action != 'unlabeled'
+    name: Deploy preview
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Provision sandbox (k3d + full NIC platform stack)
+        id: sandbox
+        uses: nebari-dev/action-nebari-sandbox@dbdb054c16efee3b29e26aee406c12fb9639bfd0 # v2.2.0
+        with:
+          profile: platform
+          cluster-name: pr-preview-${{ github.event.pull_request.number }}
+
+      - name: Build hub image from this PR
+        run: docker build --target jupyterhub -t nebari-data-science-pack-jupyterhub:preview images/
+
+      - name: Install k3d CLI (for image import)
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | \
+            TAG=v5.8.3 bash
+
+      - name: Side-load hub image into the sandbox cluster
+        run: k3d image import nebari-data-science-pack-jupyterhub:preview -c ${{ steps.sandbox.outputs.cluster-name }}
+
+      - name: Deploy chart
+        id: deploy
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          helm upgrade --install preview . \
+            --namespace pr-preview --create-namespace \
+            --set jupyterhub.hub.image.name=nebari-data-science-pack-jupyterhub \
+            --set jupyterhub.hub.image.tag=preview \
+            --set nebariapp.enabled=true \
+            --set nebariapp.hostname="pr-${{ github.event.pull_request.number }}.${{ steps.sandbox.outputs.domain }}" \
+            --set nebariapp.auth.enabled=true \
+            --wait --timeout 5m
+
+      - name: Wait for hub + proxy
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          kubectl -n pr-preview rollout status deployment/hub --timeout=180s
+          kubectl -n pr-preview rollout status deployment/proxy --timeout=180s
+
+      - name: Report NebariApp reconcile status
+        if: always()
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          kubectl -n pr-preview get nebariapp -o wide || true
+          kubectl -n pr-preview describe nebariapp preview-nebari-data-science-pack || true
+
+      - name: Port-forward JupyterHub proxy
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          kubectl -n pr-preview port-forward svc/proxy-public 8000:80 \
+            > /tmp/port-forward.log 2>&1 &
+          echo "PORT_FORWARD_PID=$!" >> "$GITHUB_ENV"
+
+      - name: Install cloudflared
+        run: |
+          curl -fsSL -o /tmp/cloudflared \
+            "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64"
+          echo "${CLOUDFLARED_SHA256}  /tmp/cloudflared" | sha256sum -c -
+          chmod +x /tmp/cloudflared
+
+      # A per-run named Tunnel (not the anonymous quick-tunnel) so:
+      # (a) it can sit behind an Access application (quick tunnels have no
+      #     account/zone attached, so no policy can be bound to them), and
+      # (b) each PR gets its own tunnel + hostname, so two PRs previewing
+      #     at once don't share one route and cross-talk.
+      - name: Create Cloudflare Tunnel for this PR
+        id: cf_tunnel
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_TUNNEL_ACCOUNT_ID }}
+          PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}.${{ env.PREVIEW_DOMAIN }}
+        run: |
+          tunnel_secret=$(openssl rand -base64 32)
+          echo "::add-mask::${tunnel_secret}"
+
+          create_resp=$(curl -fsS -X POST \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg name "pr-${{ github.event.pull_request.number }}-${{ github.run_id }}" --arg secret "$tunnel_secret" \
+              '{name: $name, config_src: "cloudflare", tunnel_secret: $secret}')")
+          tunnel_id=$(jq -r '.result.id' <<< "$create_resp")
+          if [ -z "$tunnel_id" ] || [ "$tunnel_id" = "null" ]; then
+            echo "::error::Tunnel creation failed: $create_resp"
+            exit 1
+          fi
+          echo "tunnel_id=${tunnel_id}" >> "$GITHUB_OUTPUT"
+          echo "TUNNEL_ID=${tunnel_id}" >> "$GITHUB_ENV"
+
+          token_resp=$(curl -fsS \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${tunnel_id}/token" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}")
+          tunnel_token=$(jq -r '.result' <<< "$token_resp")
+          echo "::add-mask::${tunnel_token}"
+          echo "TUNNEL_TOKEN=${tunnel_token}" >> "$GITHUB_ENV"
+
+          curl -fsS -X PUT \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${tunnel_id}/configurations" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg host "$PREVIEW_HOSTNAME" \
+              '{config: {ingress: [{hostname: $host, service: "http://localhost:8000"}, {service: "http_status:404"}]}}')" \
+            > /dev/null
+
+      - name: Point DNS at the tunnel
+        id: cf_dns
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
+          PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}.${{ env.PREVIEW_DOMAIN }}
+        run: |
+          zone_id=$(curl -fsS "https://api.cloudflare.com/client/v4/zones?name=iakte.ch" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id')
+          if [ -z "$zone_id" ] || [ "$zone_id" = "null" ]; then
+            echo "::error::Could not resolve zone id for iakte.ch"
+            exit 1
+          fi
+          echo "ZONE_ID=${zone_id}" >> "$GITHUB_ENV"
+
+          record_resp=$(curl -fsS -X POST "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg host "$PREVIEW_HOSTNAME" --arg target "${TUNNEL_ID}.cfargotunnel.com" \
+              '{type: "CNAME", name: $host, content: $target, proxied: true}')")
+          record_id=$(jq -r '.result.id' <<< "$record_resp")
+          if [ -z "$record_id" ] || [ "$record_id" = "null" ]; then
+            echo "::error::DNS record creation failed: $record_resp"
+            exit 1
+          fi
+          echo "DNS_RECORD_ID=${record_id}" >> "$GITHUB_ENV"
+          echo "url=https://${PREVIEW_HOSTNAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Comment preview link on PR
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: k8s-preview
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          message: |
+            **K8s stack preview** for `${{ github.event.pull_request.head.ref }}`:
+            ${{ steps.cf_dns.outputs.url }}
+
+            ${{ github.event.pull_request.head.repo.fork && '⚠️ **This PR is from a fork** — the code running in this preview is not from a trusted maintainer branch.' || '' }}
+
+            You'll be asked to sign in via Cloudflare Access (GitHub SSO) before
+            reaching JupyterHub — only members of this GitHub org get through.
+            **Then JupyterHub login:** dummy authenticator, any username + any password.
+
+            This goes straight to JupyterHub's proxy and skips the operator-provisioned
+            OIDC/Keycloak route (unrelated realm/redirect URIs to Access's GitHub SSO).
+            The `NebariApp` resource is still deployed alongside it so the operator/
+            Keycloak reconcile itself is exercised — see the "Report NebariApp reconcile
+            status" step in this run for its `Ready` condition.
+
+            Live only for this job's run (up to 90 min), or until the `deploy-preview`
+            label is removed. Push a new commit or re-add the label to redeploy.
+
+      - name: Run tunnel until the job times out
+        run: /tmp/cloudflared tunnel run --token "${TUNNEL_TOKEN}" --no-autoupdate
+
+      - name: Delete DNS record
+        if: always()
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
+        run: |
+          [ -n "${ZONE_ID:-}" ] && [ -n "${DNS_RECORD_ID:-}" ] || exit 0
+          curl -fsS -X DELETE \
+            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${DNS_RECORD_ID}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" || true
+
+      - name: Delete Cloudflare Tunnel
+        if: always()
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_TUNNEL_ACCOUNT_ID }}
+        run: |
+          [ -n "${TUNNEL_ID:-}" ] || exit 0
+          curl -fsS -X DELETE \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${TUNNEL_ID}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" || true
+
+      - name: Cleanup cluster
+        if: always()
+        run: k3d cluster delete ${{ steps.sandbox.outputs.cluster-name }} || true
+
+  cleanup-preview:
+    if: github.event.action == 'unlabeled' && github.event.label.name == 'deploy-preview'
+    name: Stop preview
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      actions: write
+    steps:
+      - name: Cancel the in-flight preview run for this PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          run_id=$(gh api "repos/${{ github.repository }}/actions/runs?event=pull_request&status=in_progress" \
+            --jq '.workflow_runs[] | select(.name == "K8s Stack Preview") | select(.pull_requests[]?.number == ${{ github.event.pull_request.number }}) | .id' \
+            | head -1)
+          if [ -n "$run_id" ]; then
+            gh run cancel "$run_id" --repo "${{ github.repository }}"
+          fi
+
+      - name: Comment that the preview stopped
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: k8s-preview
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          message: |
+            **K8s stack preview** stopped — the `deploy-preview` label was removed.
+
+            Add it again to redeploy.

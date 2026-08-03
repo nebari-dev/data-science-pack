@@ -1,0 +1,138 @@
+name: K8s Preview Tunnel Smoketest
+# Manual, on-demand check of the Cloudflare Tunnel + DNS + Access plumbing
+# that k8s-preview.yaml depends on — without paying for a full k3d +
+# platform-stack + helm deploy on every iteration. Serves a static
+# index.html instead of JupyterHub; same tunnel/DNS create+configure+
+# delete API calls as the real workflow, same secrets. Run this first
+# when validating the Cloudflare-side setup (token scopes, Access
+# application, GitHub identity provider); once a visit to the printed
+# URL round-trips through GitHub SSO successfully, k8s-preview.yaml's
+# tunnel plumbing is known-good and any remaining issue is in the
+# k3d/helm/chart side, not Cloudflare.
+
+on:
+  workflow_dispatch:
+
+env:
+  PREVIEW_DOMAIN: dspack.iakte.ch
+  CLOUDFLARED_VERSION: "2026.7.3"
+  CLOUDFLARED_SHA256: "9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17"
+
+jobs:
+  smoketest:
+    name: Tunnel smoketest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Serve a trivial static page
+        run: |
+          mkdir -p /tmp/preview-test
+          cat > /tmp/preview-test/index.html <<'EOF'
+          <!doctype html>
+          <html><body><h1>Tunnel smoketest OK</h1></body></html>
+          EOF
+          python3 -m http.server 8000 --directory /tmp/preview-test \
+            > /tmp/http-server.log 2>&1 &
+
+      - name: Install cloudflared
+        run: |
+          curl -fsSL -o /tmp/cloudflared \
+            "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64"
+          echo "${CLOUDFLARED_SHA256}  /tmp/cloudflared" | sha256sum -c -
+          chmod +x /tmp/cloudflared
+
+      - name: Create Cloudflare Tunnel for this run
+        id: cf_tunnel
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_TUNNEL_ACCOUNT_ID }}
+          PREVIEW_HOSTNAME: smoketest-${{ github.run_id }}.${{ env.PREVIEW_DOMAIN }}
+        run: |
+          tunnel_secret=$(openssl rand -base64 32)
+          echo "::add-mask::${tunnel_secret}"
+
+          create_resp=$(curl -fsS -X POST \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg name "smoketest-${{ github.run_id }}" --arg secret "$tunnel_secret" \
+              '{name: $name, config_src: "cloudflare", tunnel_secret: $secret}')")
+          tunnel_id=$(jq -r '.result.id' <<< "$create_resp")
+          if [ -z "$tunnel_id" ] || [ "$tunnel_id" = "null" ]; then
+            echo "::error::Tunnel creation failed: $create_resp"
+            exit 1
+          fi
+          echo "TUNNEL_ID=${tunnel_id}" >> "$GITHUB_ENV"
+
+          token_resp=$(curl -fsS \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${tunnel_id}/token" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}")
+          tunnel_token=$(jq -r '.result' <<< "$token_resp")
+          echo "::add-mask::${tunnel_token}"
+          echo "TUNNEL_TOKEN=${tunnel_token}" >> "$GITHUB_ENV"
+
+          curl -fsS -X PUT \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${tunnel_id}/configurations" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg host "$PREVIEW_HOSTNAME" \
+              '{config: {ingress: [{hostname: $host, service: "http://localhost:8000"}, {service: "http_status:404"}]}}')" \
+            > /dev/null
+
+      - name: Point DNS at the tunnel
+        id: cf_dns
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
+          PREVIEW_HOSTNAME: smoketest-${{ github.run_id }}.${{ env.PREVIEW_DOMAIN }}
+        run: |
+          zone_id=$(curl -fsS "https://api.cloudflare.com/client/v4/zones?name=iakte.ch" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id')
+          if [ -z "$zone_id" ] || [ "$zone_id" = "null" ]; then
+            echo "::error::Could not resolve zone id for iakte.ch"
+            exit 1
+          fi
+          echo "ZONE_ID=${zone_id}" >> "$GITHUB_ENV"
+
+          record_resp=$(curl -fsS -X POST "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg host "$PREVIEW_HOSTNAME" --arg target "${TUNNEL_ID}.cfargotunnel.com" \
+              '{type: "CNAME", name: $host, content: $target, proxied: true}')")
+          record_id=$(jq -r '.result.id' <<< "$record_resp")
+          if [ -z "$record_id" ] || [ "$record_id" = "null" ]; then
+            echo "::error::DNS record creation failed: $record_resp"
+            exit 1
+          fi
+          echo "DNS_RECORD_ID=${record_id}" >> "$GITHUB_ENV"
+
+          echo "## Smoketest URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://${PREVIEW_HOSTNAME}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Visiting it should challenge you with Cloudflare Access GitHub SSO," >> "$GITHUB_STEP_SUMMARY"
+          echo "then show 'Tunnel smoketest OK' once you're through." >> "$GITHUB_STEP_SUMMARY"
+          echo "Live for up to 15 minutes (this job's timeout)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run tunnel until the job times out
+        run: /tmp/cloudflared tunnel run --token "${TUNNEL_TOKEN}" --no-autoupdate
+
+      - name: Delete DNS record
+        if: always()
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
+        run: |
+          [ -n "${ZONE_ID:-}" ] && [ -n "${DNS_RECORD_ID:-}" ] || exit 0
+          curl -fsS -X DELETE \
+            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${DNS_RECORD_ID}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" || true
+
+      - name: Delete Cloudflare Tunnel
+        if: always()
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_TUNNEL_ACCOUNT_ID }}
+        run: |
+          [ -n "${TUNNEL_ID:-}" ] || exit 0
+          curl -fsS -X DELETE \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${TUNNEL_ID}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" || true
