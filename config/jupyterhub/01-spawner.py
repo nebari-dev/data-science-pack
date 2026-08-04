@@ -1064,13 +1064,13 @@ async def _ensure_workspace_pvc(spawner):
 # ---------------------------------------------------------------------------
 # Pre-spawn hook orchestrator
 # ---------------------------------------------------------------------------
-# Chains the independent concerns:
+# Chains the independent concerns: 
 # 1. Nebi auto-auth
 # 2. workspace PVC
 # 3. Resolve groups
 # 5. shared storage mounts
 # 4. NSS wrapper setup
-#
+# 
 # Each is implemented as its own focused function above. The orchestrator always
 # runs so NSS wrapper is active even without Nebi/shared.
 
