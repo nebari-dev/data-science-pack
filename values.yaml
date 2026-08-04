@@ -371,10 +371,23 @@ jupyterhub:
     # work with no --trusted-host / ssl_verify flags.
     # Leave false on clusters without trust-manager (default; no behavior change).
     # The ConfigMap is always mounted optional, so a missing CA never blocks spawn.
+    #
+    # HUB SIDE: the equivalent wiring on the hub pod is always-on and lives in
+    # ``jupyterhub.hub.extraVolumes`` / ``extraVolumeMounts`` / ``initContainers``
+    # / ``extraEnv`` (search this file for ``merge-ca-bundle``). It uses
+    # ``optional: true`` on the org-ca volume so it is a no-op when trust-manager
+    # is not installed. The ``trust-bundle-configmap`` and ``trust-bundle-key``
+    # values below drive BOTH the hub-side and singleuser-side setup, so if a
+    # deployer names their trust-manager Bundle differently they need to override
+    # the value once (here) and both sides pick it up (singleuser via the runtime
+    # helper, hub via z2jh's static volume rendering).
     trust-bundle-enabled: false
     # ConfigMap (in the JupyterHub namespace) holding the org CA. Defaults match
     # trust-manager's Bundle convention (Bundle name -> ConfigMap name; the data
-    # key set on the Bundle target).
+    # key set on the Bundle target). Referenced by both the singleuser
+    # ``_setup_trust_bundle`` helper AND the hub-side ``jupyterhub.hub.*``
+    # entries; changing either value requires editing both places until the
+    # chart grows a helper to bind them.
     trust-bundle-configmap: "nebari-trust-bundle"
     trust-bundle-key: "ca-certificates.crt"
     # ---------------------------------------------------------------------------
@@ -575,6 +588,23 @@ jupyterhub:
         secret:
           secretName: data-science-pack-nebari-data-science-pack-oidc-client
           optional: true
+      # Enterprise CA bundle — hub side. Mirrors the singleuser-pod wiring in
+      # ``config/jupyterhub/01-spawner.py`` (``_setup_trust_bundle``) so the
+      # hub can reach TLS-inspected external endpoints (external Keycloak,
+      # oauthenticator refresh, jhub-apps configuration fetches). Both
+      # volumes are unconditional: ``org-ca`` uses ``optional: true`` so a
+      # missing trust-manager ConfigMap does not block hub startup, and the
+      # ``merge-ca-bundle`` init container skips its append step when
+      # ``org-ca/<key>`` does not exist. Result on clusters WITHOUT a trust
+      # bundle: merged bundle == system bundle, functionally a no-op. The
+      # ``custom.trust-bundle-*`` values below drive the ConfigMap name and
+      # key used by both the singleuser hook and this hub-side setup.
+      - name: org-ca
+        configMap:
+          name: nebari-trust-bundle
+          optional: true
+      - name: ca-merged
+        emptyDir: {}
 
     extraVolumeMounts:
       - name: custom-config
@@ -582,6 +612,50 @@ jupyterhub:
       - name: oauth-client
         mountPath: /etc/oauth
         readOnly: true
+      # Merged CA bundle produced by the ``merge-ca-bundle`` init container.
+      # The env vars below point pip/requests/tornado/git/curl/node at this
+      # file so outbound HTTPS from the hub honours both public CAs and the
+      # org CA. Same path convention as the singleuser side.
+      - name: ca-merged
+        mountPath: /etc/ssl/certs-extra
+
+    # Merge the org CA (if any) with the hub image's own system CA bundle
+    # into an emptyDir at pod start. Uses the hub image so the system CA
+    # store the init container reads (``/etc/ssl/certs/ca-certificates.crt``)
+    # matches what the hub container has at runtime. Keep the image
+    # reference below in sync with ``hub.image`` above; z2jh's Deployment
+    # template renders this list verbatim, so the two references cannot be
+    # bound to a single source without a chart-side helper.
+    initContainers:
+      - name: merge-ca-bundle
+        image: quay.io/nebari/nebari-data-science-pack-jupyterhub:sha-46289ab
+        imagePullPolicy: IfNotPresent
+        # z2jh's pod-level securityContext sets ``runAsNonRoot: true`` but
+        # no explicit uid, and the hub image's default ``USER`` is root,
+        # so an init container without its own ``securityContext.runAsUser``
+        # gets blocked by kubelet ("container has runAsNonRoot and image
+        # will run as root"). Match what the hub container itself runs as
+        # so ownership on the shared ``ca-merged`` emptyDir stays coherent.
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+        command:
+          - /bin/sh
+          - -c
+          - "cp /etc/ssl/certs/ca-certificates.crt /merged/ca-bundle.crt && \
+             if [ -f /org-ca/ca-certificates.crt ]; then \
+               cat /org-ca/ca-certificates.crt >> /merged/ca-bundle.crt; \
+             fi"
+        volumeMounts:
+          - name: org-ca
+            mountPath: /org-ca
+            readOnly: true
+          - name: ca-merged
+            mountPath: /merged
 
     # KC OIDC client secret. ``02-jhub-apps.py`` and ``03-nebi-envs.py``
     # read this env var to do KC token exchange for the Nebi service.
@@ -589,6 +663,13 @@ jupyterhub:
     # for the KeyCloakOAuthenticator wiring — both paths point at the
     # same operator-provisioned Secret.
     # The secretName follows the same convention as oauth-client above.
+    #
+    # The five CA env vars point the standard HTTPS libraries at the merged
+    # bundle produced by the ``merge-ca-bundle`` init container above:
+    # ``requests`` / ``tornado.httpclient`` (SSL_CERT_FILE + REQUESTS_CA_BUNDLE),
+    # ``curl`` (CURL_CA_BUNDLE), ``node`` (NODE_EXTRA_CA_CERTS), ``git``
+    # (GIT_SSL_CAINFO). When no org CA is present the merged file is a
+    # byte-copy of the system bundle, so pointing at it is a no-op.
     extraEnv:
       JUPYTERHUB_OIDC_CLIENT_SECRET:
         valueFrom:
@@ -596,6 +677,11 @@ jupyterhub:
             name: data-science-pack-nebari-data-science-pack-oidc-client
             key: client-secret
             optional: true
+      REQUESTS_CA_BUNDLE: /etc/ssl/certs-extra/ca-bundle.crt
+      SSL_CERT_FILE: /etc/ssl/certs-extra/ca-bundle.crt
+      NODE_EXTRA_CA_CERTS: /etc/ssl/certs-extra/ca-bundle.crt
+      CURL_CA_BUNDLE: /etc/ssl/certs-extra/ca-bundle.crt
+      GIT_SSL_CAINFO: /etc/ssl/certs-extra/ca-bundle.crt
 
     service:
       extraPorts:
