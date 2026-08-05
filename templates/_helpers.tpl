@@ -180,6 +180,35 @@ Nebari deployment ships with.
 {{- end -}}
 
 {{/*
+Backchannel issuer URL for split-horizon OIDC. When non-empty, the hub uses
+this URL as the base for ``token_url`` and ``userdata_url`` while the browser
+continues to use the primary (``issuer``) URL for authorize + end_session.
+Needed on private-VPC clusters where in-cluster CoreDNS cannot resolve the
+external Keycloak hostname.
+
+Order of precedence:
+  1. .Values.jupyterhub.custom.keycloak-backchannel-issuer-url (explicit
+     full issuer URL, e.g. http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari)
+  2. .Values.keycloak.backchannelURL + /realms/<realm> (base URL only,
+     realm suffix added by the helper)
+  3. Empty string — no split-horizon (the caller falls back to the primary
+     issuer for all four URLs)
+
+Emits WITHOUT a trailing ``/protocol/openid-connect`` — that suffix is
+appended by the Python side in ``KeyCloakConfig.build()`` so the tokens
+URL and userinfo URL sit next to each other under one base.
+*/}}
+{{- define "nebari-data-science-pack.keycloakBackchannelIssuerURL" -}}
+{{- $explicit := index .Values.jupyterhub.custom "keycloak-backchannel-issuer-url" | default "" -}}
+{{- $realm := .Values.keycloak.realm | default "nebari" -}}
+{{- if $explicit -}}
+{{- $explicit -}}
+{{- else if .Values.keycloak.backchannelURL -}}
+{{- printf "%s/realms/%s" .Values.keycloak.backchannelURL $realm -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 OIDC client IDs follow nebari-operator's naming convention:
   jupyterhub-<release>-<chart>  (hub's own client)
   nebi-<release>-<chart>        (nebi service client, provisioned by nebi-pack)

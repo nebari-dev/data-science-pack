@@ -26,12 +26,14 @@ The chart deploys fine without RBAC bootstrap pre-configured.
 */}}
 {{- if and .Values.nebariapp.enabled .Values.rbac.bootstrap.enabled .Values.rbac.bootstrap.kcAdminCredentialSecret }}
 {{/*
-Auto-derive hubClientId from release + chart name when the deployer
-hasn't set one explicitly. Matches the nebari-operator NebariApp
-client-id pattern: ``jupyterhub-<release>-<chart>``. Override via
-``rbac.bootstrap.hubClientId`` for non-standard layouts.
+The hub OIDC client id is read at runtime from the operator-provisioned
+OIDC client Secret (the same Secret the hub mounts at /etc/oauth), so
+the Job never has to guess the operator's client-naming convention.
+``rbac.bootstrap.hubClientId`` remains as an explicit override that
+skips the Secret read entirely.
 */}}
-{{- $hubClientId := .Values.rbac.bootstrap.hubClientId | default (printf "jupyterhub-%s-%s" .Release.Name .Chart.Name) }}
+{{- $jobNamespace := .Values.rbac.bootstrap.namespace | default .Release.Namespace }}
+{{- $oidcSecretName := .Values.rbac.bootstrap.oidcClientSecretName | default (printf "%s-oidc-client" (include "nebari-data-science-pack.fullname" .)) }}
 {{- $script := .Files.Get "files/keycloak_rbac_bootstrap.py" }}
 {{- if not $script }}
 {{- fail "files/keycloak_rbac_bootstrap.py missing from the chart — repackage with the file included." }}
@@ -54,6 +56,66 @@ metadata:
 data:
   keycloak_rbac_bootstrap.py: |
 {{ $script | indent 4 }}
+---
+{{/*
+The Job usually runs in the ``keycloak`` namespace (to read the KC
+admin Secret via env) while the operator writes the OIDC client Secret
+into the release namespace, a cross-namespace read that env
+``secretKeyRef`` can't do. The script reads it through the K8s API
+instead, so the Job gets a ServiceAccount plus a get-one-secret Role
+in the release namespace.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "nebari-data-science-pack.fullname" . }}-rbac-bootstrap
+  namespace: {{ $jobNamespace | quote }}
+  labels:
+    {{- include "nebari-data-science-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "nebari-data-science-pack.fullname" . }}-rbac-bootstrap-oidc-read
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nebari-data-science-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ $oidcSecretName | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "nebari-data-science-pack.fullname" . }}-rbac-bootstrap-oidc-read
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nebari-data-science-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "nebari-data-science-pack.fullname" . }}-rbac-bootstrap-oidc-read
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "nebari-data-science-pack.fullname" . }}-rbac-bootstrap
+    namespace: {{ $jobNamespace | quote }}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -86,6 +148,7 @@ spec:
         app.kubernetes.io/component: rbac-bootstrap
     spec:
       restartPolicy: Never
+      serviceAccountName: {{ include "nebari-data-science-pack.fullname" . }}-rbac-bootstrap
       containers:
         - name: bootstrap
           image: {{ .Values.rbac.bootstrap.image | quote }}
@@ -102,8 +165,14 @@ spec:
                   key: {{ .Values.rbac.bootstrap.kcAdminCredentialSecretKey | default "password" | quote }}
             - name: REALM
               value: {{ .Values.rbac.bootstrap.realmName | quote }}
+            {{- with .Values.rbac.bootstrap.hubClientId }}
             - name: HUB_CLIENT_ID
-              value: {{ $hubClientId | quote }}
+              value: {{ . | quote }}
+            {{- end }}
+            - name: HUB_CLIENT_SECRET_NAME
+              value: {{ $oidcSecretName | quote }}
+            - name: HUB_CLIENT_SECRET_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
             - name: ROLE_NAME
               value: {{ .Values.rbac.bootstrap.sharedMountRoleName | quote }}
             - name: SHARED_MOUNT_GROUPS
