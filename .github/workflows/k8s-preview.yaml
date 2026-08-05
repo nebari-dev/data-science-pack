@@ -263,6 +263,15 @@ jobs:
           echo "DNS_RECORD_ID=${record_id}" >> "$GITHUB_ENV"
           echo "url=https://${PREVIEW_HOSTNAME}" >> "$GITHUB_OUTPUT"
 
+      # The URL itself (pr-<n>.github.fyi) is identical on every run, so
+      # without a timestamp the sticky comment would post byte-identical
+      # text each redeploy and look like it never updated.
+      - name: Compute deployment timestamps
+        id: timestamps
+        run: |
+          echo "deployed_at=$(date -u +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
+          echo "expires_at=$(date -u -d '+90 minutes' +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
+
       - name: Comment preview link on PR
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
@@ -271,6 +280,8 @@ jobs:
           message: |
             **K8s stack preview** for `${{ github.event.pull_request.head.ref }}`:
             ${{ steps.cf_dns.outputs.url }}
+
+            Deployed: ${{ steps.timestamps.outputs.deployed_at }} · Expires: ${{ steps.timestamps.outputs.expires_at }}
 
             ${{ github.event.pull_request.head.repo.fork && '⚠️ **This PR is from a fork** — the code running in this preview is not from a trusted maintainer branch.' || '' }}
 
@@ -282,8 +293,8 @@ jobs:
             NebariApp/OIDC route isn't deployed here (see workflow header comment
             for why) — this preview doesn't exercise operator/Keycloak reconcile.
 
-            Live only for this job's run (up to 90 min), or until the `deploy-preview`
-            label is removed. Push a new commit or re-add the label to redeploy.
+            Live until the expiry time above, or until the `deploy-preview` label
+            is removed. Push a new commit or re-add the label to redeploy.
 
       - name: Run tunnel until the job times out
         run: /tmp/cloudflared tunnel --no-autoupdate run --token "${TUNNEL_TOKEN}"

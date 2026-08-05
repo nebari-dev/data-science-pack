@@ -119,6 +119,12 @@ jobs:
           echo "Live for up to 15 minutes (this job's timeout)." >> "$GITHUB_STEP_SUMMARY"
           echo "url=https://${PREVIEW_HOSTNAME}" >> "$GITHUB_OUTPUT"
 
+      - name: Compute deployment timestamps
+        id: timestamps
+        run: |
+          echo "deployed_at=$(date -u +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
+          echo "expires_at=$(date -u -d '+15 minutes' +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
+
       - name: Comment smoketest link on PR
         if: github.event.inputs.pr_number != ''
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
@@ -130,8 +136,9 @@ jobs:
             **Tunnel smoketest** (static page, not the real stack):
             ${{ steps.cf_dns.outputs.url }}
 
+            Deployed: ${{ steps.timestamps.outputs.deployed_at }} · Expires: ${{ steps.timestamps.outputs.expires_at }}
+
             Sign-in via Cloudflare Access (GitHub SSO), then should show "Tunnel smoketest OK".
-            Live for up to 15 minutes from this run.
 
       - name: Run tunnel until the job times out
         run: /tmp/cloudflared tunnel --no-autoupdate run --token "${TUNNEL_TOKEN}"
