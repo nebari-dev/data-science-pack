@@ -207,15 +207,28 @@ jobs:
           tunnel_secret=$(openssl rand -base64 32)
           echo "::add-mask::${tunnel_secret}"
 
-          create_resp=$(curl -fsS -X POST \
+          tunnel_name="pr-${{ github.event.pull_request.number }}-${{ github.run_id }}"
+          create_resp=$(curl -sS -X POST \
             "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg name "pr-${{ github.event.pull_request.number }}-${{ github.run_id }}" --arg secret "$tunnel_secret" \
+            -d "$(jq -n --arg name "$tunnel_name" --arg secret "$tunnel_secret" \
               '{name: $name, config_src: "cloudflare", tunnel_secret: $secret}')")
-          tunnel_id=$(jq -r '.result.id' <<< "$create_resp")
-          if [ -z "$tunnel_id" ] || [ "$tunnel_id" = "null" ]; then
-            echo "::error::Tunnel creation failed: $create_resp"
+          tunnel_id=$(jq -r '.result.id // empty' <<< "$create_resp")
+
+          # A GitHub Actions retry reuses the same run_id (only run_attempt
+          # changes), so a re-run after the first attempt already created
+          # this tunnel (and didn't get to clean it up) hits a 409 name
+          # conflict here. Reuse the existing tunnel by name instead of
+          # failing — it doesn't need the original tunnel_secret, just a
+          # fresh --token from the /token endpoint below.
+          if [ -z "$tunnel_id" ]; then
+            echo "::warning::Tunnel create failed (likely a name conflict from a retry), looking up existing tunnel named ${tunnel_name}: $create_resp"
+            tunnel_id=$(curl -fsS "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel?name=${tunnel_name}&is_deleted=false" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id // empty')
+          fi
+          if [ -z "$tunnel_id" ]; then
+            echo "::error::Tunnel creation failed and no existing tunnel named ${tunnel_name} found: $create_resp"
             exit 1
           fi
           echo "tunnel_id=${tunnel_id}" >> "$GITHUB_OUTPUT"
