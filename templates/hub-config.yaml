@@ -43,6 +43,10 @@ data:
         "nebi-remote-url": {{ include "nebari-data-science-pack.nebiRemoteURL" . | quote }},
         "nebi-internal-url": {{ include "nebari-data-science-pack.nebiInternalURL" . | quote }},
         "keycloak-token-url": {{ include "nebari-data-science-pack.keycloakTokenURL" . | quote }},
+        # Split-horizon OIDC backchannel URL. Empty when unset — the caller in
+        # 00-gateway-auth.py treats empty as "no split-horizon" and uses the
+        # primary issuer for all four URLs. See KeyCloakConfig.build().
+        "keycloak-backchannel-issuer-url": {{ include "nebari-data-science-pack.keycloakBackchannelIssuerURL" . | quote }},
         "nebi-client-id": {{ include "nebari-data-science-pack.nebiClientID" . | quote }},
         "jupyterhub-client-id": {{ include "nebari-data-science-pack.hubClientID" . | quote }},
         # Mirrors .Values.sharedStorage.enabled so deployers don't have to set
