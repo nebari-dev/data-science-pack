@@ -72,7 +72,7 @@ make down
 
 See `values.yaml` for all configuration options. The chart wraps the [JupyterHub Helm chart](https://z2jh.jupyter.org/) - all `jupyterhub.*` values are passed through.
 
-- [GPU profiles](docs/gpu-profiles.md) - requesting GPUs and scheduling onto tainted GPU nodes on EKS.
+- [GPU profiles](docs/src/content/docs/gpu-profiles.md) - requesting GPUs and scheduling onto tainted GPU nodes.
 
 ## Shared Storage
 
