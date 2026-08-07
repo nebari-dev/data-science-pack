@@ -438,7 +438,15 @@ class KeyCloakOAuthenticator(GenericOAuthenticator):
                 old_profiles = auth_state.get("allowed_jupyterlab_profiles")
                 if old_profiles is not None:
                     new_state["allowed_jupyterlab_profiles"] = old_profiles
-        return {"auth_state": new_state}
+        auth_model = {"auth_state": new_state}
+        if self.manage_groups:
+            # With manage_groups enabled, JupyterHub treats a refresh
+            # auth_model whose "groups" is absent/None as an error at
+            # spawn time (refresh_pre_spawn), failing the spawn with 500.
+            # Re-derive groups from the preserved oauth_user claims the
+            # same way update_auth_model does at login.
+            auth_model["groups"] = sorted(await self.get_user_groups(new_state))
+        return auth_model
 
     async def update_auth_model(self, auth_model):
         """Stamp auth_state with the subset of KC groups that hold the
