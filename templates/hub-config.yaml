@@ -16,7 +16,7 @@ metadata:
 {{- if $hubHost }}
 {{- $gatewayAuthPy = $gatewayAuthPy | replace "__CHART_OAUTH_CALLBACK_URL__" (printf "https://%s/hub/oauth_callback" $hubHost) | replace "__CHART_OAUTH_EXTERNAL_URL__" (printf "https://%s/" $hubHost) -}}
 {{- end }}
-{{- $nebiConfigSecret := include "nebari-data-science-pack.nebi-config-secret" . }}
+{{- $nebiConfigCM := include "nebari-data-science-pack.nebi-config" . }}
 data:
   # ---------------------------------------------------------------------------
   # 00-chart-derived.py — Helm-rendered defaults for every `custom.*` URL /
@@ -75,7 +75,7 @@ data:
   00-gateway-auth.py: |
 {{ $gatewayAuthPy | indent 4 }}
   01-spawner.py: |
-{{ .Files.Get "config/jupyterhub/01-spawner.py" | replace "__SINGLEUSER_CONFIG_CM__" (include "nebari-data-science-pack.singleuser-config" .) | replace "__NEBI_CONFIG_SECRET__" $nebiConfigSecret | indent 4 }}
+{{ .Files.Get "config/jupyterhub/01-spawner.py" | replace "__SINGLEUSER_CONFIG_CM__" (include "nebari-data-science-pack.singleuser-config" .) | replace "__NEBI_CONFIG_CM__" $nebiConfigCM | indent 4 }}
   02-jhub-apps.py: |
 {{ .Files.Get "config/jupyterhub/02-jhub-apps.py" | indent 4 }}
   03-nebi-envs.py: |

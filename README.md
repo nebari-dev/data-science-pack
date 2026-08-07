@@ -75,7 +75,8 @@ See `values.yaml` for all configuration options. The chart wraps the [JupyterHub
 ### Nebi Registries
 
 Admins can provision OCI registries for every user's nebi instance via
-`nebi.registries`:
+`nebi.registries`. Only public (unauthenticated) registries are supported;
+entries carry no credentials:
 
 ```yaml
 nebi:
@@ -83,17 +84,12 @@ nebi:
     - name: acme-registry
       url: registry.acme.com
       namespace: acme-envs
-      username: shared-user
-      password: "s3cret"
       default: true
 ```
 
 Each entry follows nebi's own `registries.entries` schema (`name`, `url`,
-`namespace`, `username`, `password`, `api_token`, `default`) and is rendered
-into a Secret mounted into user pods, so entries are locked in the UI rather
-than editable per-user. Credentials mounted this way are readable by the pod
-they land in, so treat `nebi.registries` credentials as visible to the user
-they're provisioned for.
+`namespace`, `default`) and is rendered into a ConfigMap mounted into user
+pods, so entries are locked in the UI rather than editable per-user.
 
 Set `nebi.seedDefaultRegistry: false` to remove the built-in
 `quay.io/nebari_environments` registry that nebi seeds by default.

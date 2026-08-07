@@ -1,6 +1,6 @@
-"""Tests for the nebi-config Secret mount wiring in `01-spawner.py`.
+"""Tests for the nebi-config ConfigMap mount wiring in `01-spawner.py`.
 
-Helm substitutes __NEBI_CONFIG_SECRET__ with the Secret name when the
+Helm substitutes __NEBI_CONFIG_CM__ with the ConfigMap name when the
 deployer sets `nebi.registries` or disables `nebi.seedDefaultRegistry`,
 and with "" otherwise. The spawner must add the /etc/nebi/config.yaml
 mount only when a real name was substituted.
@@ -20,10 +20,10 @@ sys.modules.setdefault("z2jh", _z2jh)
 from conftest import CONFIG_DIR, FakeConfig, load_config_module  # noqa: E402
 
 
-def _load_spawner_with_secret(tmp_path: Path, c: FakeConfig, secret_name: str):
+def _load_spawner_with_configmap(tmp_path: Path, c: FakeConfig, cm_name: str):
     """Exec 01-spawner.py with the Helm placeholder substituted."""
     source = (CONFIG_DIR / "01-spawner.py").read_text()
-    rendered = source.replace("__NEBI_CONFIG_SECRET__", secret_name)
+    rendered = source.replace("__NEBI_CONFIG_CM__", cm_name)
     path = tmp_path / "01-spawner-rendered.py"
     path.write_text(rendered)
 
@@ -56,21 +56,21 @@ def test_no_mount_when_placeholder_unrendered():
     assert _nebi_mount(c) is None
 
 
-def test_no_mount_when_secret_name_empty(tmp_path):
+def test_no_mount_when_configmap_name_empty(tmp_path):
     """Helm substitutes "" when the deployer customizes nothing."""
     c = FakeConfig()
-    _load_spawner_with_secret(tmp_path, c, "")
+    _load_spawner_with_configmap(tmp_path, c, "")
     assert _nebi_volume(c) is None
     assert _nebi_mount(c) is None
 
 
-def test_mount_added_when_secret_rendered(tmp_path):
+def test_mount_added_when_configmap_rendered(tmp_path):
     c = FakeConfig()
-    _load_spawner_with_secret(tmp_path, c, "my-pack-nebi-config")
+    _load_spawner_with_configmap(tmp_path, c, "my-pack-nebi-config")
 
     volume = _nebi_volume(c)
     assert volume is not None, "nebi-config volume missing"
-    assert volume["secret"]["secretName"] == "my-pack-nebi-config"
+    assert volume["configMap"]["name"] == "my-pack-nebi-config"
 
     mount = _nebi_mount(c)
     assert mount is not None, "nebi-config volume_mount missing"
