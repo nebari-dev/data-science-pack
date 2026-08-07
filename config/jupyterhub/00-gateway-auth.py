@@ -680,7 +680,7 @@ else:
         # issuer-url`` first, then falls back to the chart-derived value
         # baked in by ``00-chart-derived.py`` at Helm render time from
         # ``keycloak.backchannelURL``). Empty string → no split-horizon.
-        _backchannel_issuer = get_chart_config(  # noqa: F821
+        _backchannel_issuer = get_chart_config(
             "keycloak-backchannel-issuer-url", "",
         )
         configure(
