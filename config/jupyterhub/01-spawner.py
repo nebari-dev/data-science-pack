@@ -282,6 +282,17 @@ if nebi_remote_url:
 
 env["NEBI_STORAGE_WORKSPACES_DIR"] = "/var/lib/nebi/workspaces"
 
+# nebi's local-mode netguard only accepts loopback Origin headers by default.
+# Browsers send the hub's public origin on CORS-mode asset requests (the SPA
+# bundle is emitted as <script type="module" crossorigin>), which blanked the
+# Nebi tile (https://github.com/nebari-dev/nebi/issues/489). Allow the hub
+# origin explicitly; the env var reaches nebi because jupyter-server-proxy
+# children inherit the pod environment. Older nebi builds without
+# server.allowed_origins ignore it.
+_hub_external_host = get_chart_config("external-url")
+if _hub_external_host:
+    env["NEBI_SERVER_ALLOWED_ORIGINS"] = f"https://{_hub_external_host}"
+
 c.KubeSpawner.environment = env
 
 
