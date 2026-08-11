@@ -122,6 +122,17 @@ c.KubeSpawner.cmd = [
 # Pod affinity ensures jhub-apps app pods land on the same node as the
 # user's JupyterLab pod so the shared home PVC can be mounted by all of them.
 #
+# The affinity selects on a chart-owned label set via extra_labels below,
+# NOT on kubespawner's hub.jupyter.org/username label: kubespawner escapes
+# that label with a different scheme (label-safe slug, e.g.
+# "tpotts-openteams-com---c9bc22a3") than the {username} expansion used in
+# extra_pod_config templates (DNS escaping, e.g. "tpotts-40openteams-2ecom").
+# For any username needing escaping (emails), label != affinity value, the
+# scheduler's self-match bootstrap never applies, and every spawn deadlocks
+# in Pending ("didn't match pod affinity rules"). Using the identical
+# template string on both sides guarantees they render equal for every
+# username shape.
+#
 # securityContext.fsGroup: 100 — GID 100 (users group) as the pod's fsGroup.
 # Kubernetes adds GID 100 as a supplemental group and chgrps mounted volumes
 # to 100 at pod start. This ensures shared dirs (created by init container as
@@ -137,6 +148,16 @@ c.KubeSpawner.cmd = [
 # extra_pod_config applies pod.spec attributes with a top-level overwrite —
 # any securityContext we set here REPLACES the one fs_gid would produce, so
 # both fields must live in this dict together.
+# Merge with singleuser.extraLabels rather than assign: z2jh's default there
+# is hub.jupyter.org/network-access-hub: "true", which the hub NetworkPolicy
+# requires for singleuser -> hub API traffic. Dropping it leaves the server
+# unable to complete its startup handshake with the hub, so it never binds
+# its port and every spawn dies on the hub's http_timeout.
+c.KubeSpawner.extra_labels = {
+    **get_config("singleuser.extraLabels", {}),
+    "nebari.dev/colocate-user": "{username}",
+}
+
 c.KubeSpawner.extra_pod_config = {
     "affinity": {
         "podAffinity": {
@@ -145,7 +166,7 @@ c.KubeSpawner.extra_pod_config = {
                     "labelSelector": {
                         "matchExpressions": [
                             {
-                                "key": "hub.jupyter.org/username",
+                                "key": "nebari.dev/colocate-user",
                                 "operator": "In",
                                 "values": ["{username}"],
                             }
