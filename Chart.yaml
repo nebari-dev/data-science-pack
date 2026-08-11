@@ -8,5 +8,5 @@ appVersion: "5.4.3"
 
 dependencies:
   - name: jupyterhub
-    version: 4.3.2
+    version: 4.4.0
     repository: https://hub.jupyter.org/helm-chart/

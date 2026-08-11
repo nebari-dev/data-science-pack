@@ -24,9 +24,9 @@ jobs:
           # Pinned versions the hub image runs against — tests exercise
           # the real oauthenticator + jupyterhub contracts, not a stub.
           uv pip install --python .venv-unit/bin/python \
-            jupyterhub==5.1.0 \
-            oauthenticator==16.3.0 \
-            jupyterhub-kubespawner==6.2.0 \
+            jupyterhub==5.5.0 \
+            oauthenticator==17.4.0 \
+            jupyterhub-kubespawner==7.0.0 \
             pytest
 
       - name: pytest tests/unit
