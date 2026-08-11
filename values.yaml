@@ -503,7 +503,7 @@ jupyterhub:
           # The same value sits inside profile_options.image.choices.default
           # so the JupyterLab profile selector keeps showing it too.
           # scripts/bump_image_tags.py syncs all three on every bump.
-          image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-0040db1
+          image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-7a51cdb
           cpu_limit: 1
           cpu_guarantee: 0.5
           mem_limit: "2G"
@@ -513,15 +513,15 @@ jupyterhub:
             display_name: Image
             choices:
               default:
-                display_name: "nebari-data-science-pack-jupyterlab:sha-0040db1"
+                display_name: "nebari-data-science-pack-jupyterlab:sha-7a51cdb"
                 default: true
                 kubespawner_override:
-                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-0040db1
+                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-7a51cdb
       - slug: medium-instance
         display_name: "Medium Instance"
         description: "4 CPU / 8 GB RAM — pandas / scikit-learn workloads on medium datasets."
         kubespawner_override:
-          image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-0040db1
+          image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-7a51cdb
           cpu_limit: 4
           cpu_guarantee: 2
           mem_limit: "8G"
@@ -531,10 +531,10 @@ jupyterhub:
             display_name: Image
             choices:
               default:
-                display_name: "nebari-data-science-pack-jupyterlab:sha-0040db1"
+                display_name: "nebari-data-science-pack-jupyterlab:sha-7a51cdb"
                 default: true
                 kubespawner_override:
-                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-0040db1
+                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-7a51cdb
     # Terminal customization: controls Starship prompt in JupyterLab terminals.
     # When false, falls back to the default bash prompt.
     terminal-customization: true
@@ -596,7 +596,7 @@ jupyterhub:
     # class clears current_user — id_token_hint now reaches KC).
     image:
       name: quay.io/nebari/nebari-data-science-pack-jupyterhub
-      tag: "sha-0040db1"
+      tag: "sha-7a51cdb"
 
     config:
       JupyterHub:
@@ -689,7 +689,7 @@ jupyterhub:
     # keeps the two in sync on every automated bump instead.
     initContainers:
       - name: merge-ca-bundle
-        image: quay.io/nebari/nebari-data-science-pack-jupyterhub:sha-0040db1
+        image: quay.io/nebari/nebari-data-science-pack-jupyterhub:sha-7a51cdb
         imagePullPolicy: IfNotPresent
         # z2jh's pod-level securityContext sets ``runAsNonRoot: true`` but
         # no explicit uid, and the hub image's default ``USER`` is root,
@@ -707,10 +707,7 @@ jupyterhub:
         command:
           - /bin/sh
           - -c
-          - "cp /etc/ssl/certs/ca-certificates.crt /merged/ca-bundle.crt && \
-             if [ -f /org-ca/ca-certificates.crt ]; then \
-               cat /org-ca/ca-certificates.crt >> /merged/ca-bundle.crt; \
-             fi"
+          - "cp /etc/ssl/certs/ca-certificates.crt /merged/ca-bundle.crt && if [ -f /org-ca/ca-certificates.crt ]; then cat /org-ca/ca-certificates.crt >> /merged/ca-bundle.crt; fi"
         volumeMounts:
           - name: org-ca
             mountPath: /org-ca
@@ -759,7 +756,7 @@ jupyterhub:
   singleuser:
     image:
       name: quay.io/nebari/nebari-data-science-pack-jupyterlab
-      tag: "sha-0040db1"
+      tag: "sha-7a51cdb"
     defaultUrl: "/lab"
     extraEnv:
       JUPYTERHUB_SINGLEUSER_APP: "jupyter_server.serverapp.ServerApp"
