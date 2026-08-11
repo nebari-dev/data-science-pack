@@ -148,7 +148,13 @@ c.KubeSpawner.cmd = [
 # extra_pod_config applies pod.spec attributes with a top-level overwrite —
 # any securityContext we set here REPLACES the one fs_gid would produce, so
 # both fields must live in this dict together.
+# Merge with singleuser.extraLabels rather than assign: z2jh's default there
+# is hub.jupyter.org/network-access-hub: "true", which the hub NetworkPolicy
+# requires for singleuser -> hub API traffic. Dropping it leaves the server
+# unable to complete its startup handshake with the hub, so it never binds
+# its port and every spawn dies on the hub's http_timeout.
 c.KubeSpawner.extra_labels = {
+    **get_config("singleuser.extraLabels", {}),
     "nebari.dev/colocate-user": "{username}",
 }
 

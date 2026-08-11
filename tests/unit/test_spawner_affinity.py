@@ -56,6 +56,39 @@ def test_affinity_selects_on_chart_owned_label_not_kubespawner_username():
             )
 
 
+def test_extra_labels_preserve_z2jh_singleuser_extra_labels():
+    """extra_labels must merge with singleuser.extraLabels, not replace them.
+
+    z2jh's default ``singleuser.extraLabels`` carries
+    ``hub.jupyter.org/network-access-hub: "true"``, which the hub
+    NetworkPolicy requires for singleuser -> hub API traffic (port 8081).
+    Assigning ``c.KubeSpawner.extra_labels`` wholesale drops that label; the
+    singleuser server then can't complete its startup handshake with the hub
+    (``check_hub_version`` retries and blocks), never binds its port, and
+    every spawn dies on the hub's ``http_timeout``.
+    """
+    netpol_labels = {"hub.jupyter.org/network-access-hub": "true"}
+    orig = sys.modules["z2jh"].get_config
+    sys.modules["z2jh"].get_config = lambda key, default=None: (
+        dict(netpol_labels) if key == "singleuser.extraLabels" else default
+    )
+    try:
+        c = FakeConfig()
+        load_config_module("01-spawner.py", inject_c=c)
+    finally:
+        sys.modules["z2jh"].get_config = orig
+
+    labels = getattr(c.KubeSpawner, "extra_labels", None)
+    assert labels, "KubeSpawner.extra_labels is not set"
+    assert labels.get("hub.jupyter.org/network-access-hub") == "true", (
+        "extra_labels dropped z2jh's singleuser.extraLabels — the hub "
+        "NetworkPolicy only admits pods labeled "
+        "hub.jupyter.org/network-access-hub=true, so spawned servers can't "
+        "reach the hub API and never come up"
+    )
+    assert "nebari.dev/colocate-user" in labels
+
+
 def test_affinity_label_is_applied_with_identical_template():
     """extra_labels must define the exact key/value the affinity selects on.
 
