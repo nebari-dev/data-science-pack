@@ -147,10 +147,12 @@ c.KubeSpawner.extra_pod_config = {
 #
 # The affinity value is copied from the pod's own hub.jupyter.org/username
 # label instead of templating "{username}" into extra_pod_config: kubespawner
-# computes that label with a different slug truncation than {username}
-# template expansion (kubespawner 7 safe-slug scheme, usernames that need a
-# hash suffix, e.g. emails), and a value that differs from the label makes
-# the pod's required affinity unsatisfiable, so it never schedules.
+# renders that label and the template through different code paths (the label
+# is always the label-safe slug regardless of slug_scheme; the template
+# follows slug_scheme and uses a different truncation), so for usernames that
+# need escaping (emails) a templated value can diverge from the label. A
+# diverged value makes the required affinity unsatisfiable and the pod never
+# schedules. Copying the rendered label removes the possibility entirely.
 def _colocate_user_pods(spawner, pod):
     username_label = (pod.metadata.labels or {}).get("hub.jupyter.org/username")
     if not username_label:
