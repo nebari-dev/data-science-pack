@@ -16,6 +16,7 @@ metadata:
 {{- if $hubHost }}
 {{- $gatewayAuthPy = $gatewayAuthPy | replace "__CHART_OAUTH_CALLBACK_URL__" (printf "https://%s/hub/oauth_callback" $hubHost) | replace "__CHART_OAUTH_EXTERNAL_URL__" (printf "https://%s/" $hubHost) -}}
 {{- end }}
+{{- $nebiConfigCM := include "nebari-data-science-pack.nebi-config" . }}
 data:
   # ---------------------------------------------------------------------------
   # 00-chart-derived.py — Helm-rendered defaults for every `custom.*` URL /
@@ -43,6 +44,10 @@ data:
         "nebi-remote-url": {{ include "nebari-data-science-pack.nebiRemoteURL" . | quote }},
         "nebi-internal-url": {{ include "nebari-data-science-pack.nebiInternalURL" . | quote }},
         "keycloak-token-url": {{ include "nebari-data-science-pack.keycloakTokenURL" . | quote }},
+        # Split-horizon OIDC backchannel URL. Empty when unset — the caller in
+        # 00-gateway-auth.py treats empty as "no split-horizon" and uses the
+        # primary issuer for all four URLs. See KeyCloakConfig.build().
+        "keycloak-backchannel-issuer-url": {{ include "nebari-data-science-pack.keycloakBackchannelIssuerURL" . | quote }},
         "nebi-client-id": {{ include "nebari-data-science-pack.nebiClientID" . | quote }},
         "jupyterhub-client-id": {{ include "nebari-data-science-pack.hubClientID" . | quote }},
         # Mirrors .Values.sharedStorage.enabled so deployers don't have to set
@@ -74,7 +79,7 @@ data:
   00-gateway-auth.py: |
 {{ $gatewayAuthPy | indent 4 }}
   01-spawner.py: |
-{{ .Files.Get "config/jupyterhub/01-spawner.py" | replace "__SINGLEUSER_CONFIG_CM__" (include "nebari-data-science-pack.singleuser-config" .) | indent 4 }}
+{{ .Files.Get "config/jupyterhub/01-spawner.py" | replace "__SINGLEUSER_CONFIG_CM__" (include "nebari-data-science-pack.singleuser-config" .) | replace "__NEBI_CONFIG_CM__" $nebiConfigCM | indent 4 }}
   02-jhub-apps.py: |
 {{ .Files.Get "config/jupyterhub/02-jhub-apps.py" | indent 4 }}
   03-nebi-envs.py: |

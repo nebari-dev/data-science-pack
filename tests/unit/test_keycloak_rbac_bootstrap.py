@@ -438,6 +438,162 @@ def test_hub_client_urls_skipped_when_hub_external_url_empty():
     assert "baseUrl" not in client or client["baseUrl"] is None
 
 
+# ---------------------------------------------------------------------------
+# Hub client-id resolution from the operator-provisioned OIDC Secret
+# ---------------------------------------------------------------------------
+
+import base64
+import json
+
+
+class FakeResponse:
+    def __init__(self, payload: bytes):
+        self._payload = payload
+
+    def read(self) -> bytes:
+        return self._payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class FakeOpener:
+    """Serves a scripted sequence of responses; an Exception entry is
+    raised instead of returned."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.requests = []
+
+    def open(self, req, timeout=None):
+        self.requests.append(req)
+        item = self._responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return FakeResponse(item)
+
+
+def secret_payload(data: dict[str, str]) -> bytes:
+    return json.dumps(
+        {"data": {k: base64.b64encode(v.encode()).decode() for k, v in data.items()}}
+    ).encode()
+
+
+def test_secret_reader_returns_decoded_client_id():
+    opener = FakeOpener([secret_payload({"client-id": "ns-app-client"})])
+    reader = rbac.K8sSecretReader(
+        base_url="https://kube.test", token="sa-token", opener=opener,
+    )
+    value = reader.read_key("data-science", "dsp-oidc-client", "client-id")
+    assert value == "ns-app-client"
+    req = opener.requests[0]
+    assert req.full_url == (
+        "https://kube.test/api/v1/namespaces/data-science/secrets/dsp-oidc-client"
+    )
+    assert req.get_header("Authorization") == "Bearer sa-token"
+
+
+def test_secret_reader_polls_until_operator_creates_the_secret():
+    """On a fresh install the post-install hook can outrun the operator:
+    the NebariApp exists but the OIDC Secret hasn't been written yet.
+    The reader must poll through 404s instead of failing the Job."""
+    opener = FakeOpener(
+        [http_404(), http_404(), secret_payload({"client-id": "late-client"})]
+    )
+    reader = rbac.K8sSecretReader(
+        base_url="https://kube.test", token="t", opener=opener,
+    )
+    value = reader.read_key(
+        "data-science", "dsp-oidc-client", "client-id",
+        retries=5, sleep_seconds=0,
+    )
+    assert value == "late-client"
+    assert len(opener.requests) == 3
+
+
+def test_secret_reader_raises_clear_error_when_secret_never_appears():
+    opener = FakeOpener([http_404(), http_404()])
+    reader = rbac.K8sSecretReader(
+        base_url="https://kube.test", token="t", opener=opener,
+    )
+    try:
+        reader.read_key(
+            "data-science", "dsp-oidc-client", "client-id",
+            retries=2, sleep_seconds=0,
+        )
+    except RuntimeError as e:
+        assert "data-science/dsp-oidc-client" in str(e)
+    else:
+        raise AssertionError("expected RuntimeError")
+
+
+def test_secret_reader_raises_clear_error_when_key_missing():
+    """Secret exists but was provisioned without the expected key
+    (operator version skew). The error must name the key and secret so
+    the failure is diagnosable from the Job log alone."""
+    opener = FakeOpener([secret_payload({"client-secret": "s3cr3t"})])
+    reader = rbac.K8sSecretReader(
+        base_url="https://kube.test", token="t", opener=opener,
+    )
+    try:
+        reader.read_key("data-science", "dsp-oidc-client", "client-id")
+    except RuntimeError as e:
+        assert "client-id" in str(e)
+        assert "data-science/dsp-oidc-client" in str(e)
+        assert "s3cr3t" not in str(e)
+    else:
+        raise AssertionError("expected RuntimeError")
+
+
+def test_resolve_hub_client_id_explicit_value_wins_without_k8s_call():
+    config = make_config()
+    reader = MagicMock()
+    assert rbac.resolve_hub_client_id(config, reader) == HUB_CLIENT_ID
+    reader.read_key.assert_not_called()
+
+
+def test_resolve_hub_client_id_reads_operator_secret_when_not_explicit():
+    config = rbac.BootstrapConfig(
+        kc_host="http://kc.test",
+        admin_password="p",
+        realm=REALM,
+        hub_client_id="",
+        role_name=ROLE_NAME,
+        shared_mount_groups=(),
+        hub_external_url="",
+        hub_client_secret_name="dsp-oidc-client",
+        hub_client_secret_namespace="data-science",
+    )
+    reader = MagicMock()
+    reader.read_key.return_value = "operator-named-client"
+    assert rbac.resolve_hub_client_id(config, reader) == "operator-named-client"
+    reader.read_key.assert_called_once_with(
+        "data-science", "dsp-oidc-client", "client-id",
+    )
+
+
+def test_resolve_hub_client_id_errors_when_nothing_configured():
+    config = rbac.BootstrapConfig(
+        kc_host="http://kc.test",
+        admin_password="p",
+        realm=REALM,
+        hub_client_id="",
+        role_name=ROLE_NAME,
+        shared_mount_groups=(),
+        hub_external_url="",
+    )
+    try:
+        rbac.resolve_hub_client_id(config, MagicMock())
+    except RuntimeError as e:
+        assert "HUB_CLIENT_ID" in str(e)
+        assert "HUB_CLIENT_SECRET_NAME" in str(e)
+    else:
+        raise AssertionError("expected RuntimeError")
+
+
 def test_existing_role_with_wrong_attributes_is_reconciled():
     """Deployer (or an older bootstrap) left the role around with the
     wrong attribute pair. The script must PUT to fix it, not leave the
