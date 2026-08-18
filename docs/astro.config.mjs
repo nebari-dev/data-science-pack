@@ -34,6 +34,12 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Administration',
+          items: [
+            { label: 'User Pod Scheduling', slug: 'user-pod-scheduling' },
+          ],
+        },
+        {
           label: 'Reference',
           items: [
             { label: 'Configuration', slug: 'configuration' },
