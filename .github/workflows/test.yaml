@@ -178,7 +178,7 @@ jobs:
 
       - name: Provision Nebari sandbox (k3d + NIC platform stack)
         id: sandbox
-        uses: nebari-dev/action-nebari-sandbox@dbdb054c16efee3b29e26aee406c12fb9639bfd0  # v2.2.0
+        uses: nebari-dev/action-nebari-sandbox@31615fe41aff675e032adbf50a5c3cb3ab7a2976  # fix/wait-platform-appear-wait (unreleased)
         with:
           profile: platform
 
