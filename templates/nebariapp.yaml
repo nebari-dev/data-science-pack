@@ -7,16 +7,6 @@
     )
     "spec" (mergeOverwrite (dict
       "hostname" (required "Set keycloak.hostname (for auto-derivation) or nebariapp.hostname explicitly." (include "nebari-data-science-pack.hubHostname" .))
-      "service"  (dict
-        "name" "proxy-public"
-        "port" 80
-      )
-      "auth"     (dict
-        "enabled"         true
-        "provider"        "keycloak"
-        "provisionClient" true
-        "redirectURI"     "/oauth2/callback"
-      )
     ) (unset .Values.nebariapp "enabled"))
 ) -}}
 {{- end }}
