@@ -7,6 +7,6 @@
     )
     "spec" (mergeOverwrite (dict
       "hostname" (required "Set keycloak.hostname (for auto-derivation) or nebariapp.hostname explicitly." (include "nebari-data-science-pack.hubHostname" .))
-    ) (unset .Values.nebariapp "enabled"))
+    ) (omit .Values.nebariapp "enabled"))
 ) -}}
 {{- end }}
