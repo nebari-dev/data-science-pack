@@ -317,6 +317,15 @@ _hub_external_host = get_chart_config("external-url")
 if _hub_external_host:
     env["NEBI_SERVER_ALLOWED_ORIGINS"] = f"https://{_hub_external_host}"
 
+# code-server >= 4.106 exits this many seconds after its last browser
+# connection closes. Mirrors the hub idle culler so a lingering code-server
+# child (tab closed, laptop asleep) dies on the same schedule the hub would
+# cull the pod (issue #208). Values <= 60 are rejected by code-server at
+# startup — skip them rather than break every pod's VS Code.
+_cull_timeout = int(get_config("cull.timeout", 0) or 0)
+if get_config("cull.enabled", False) and _cull_timeout > 60:
+    env["CODE_SERVER_IDLE_TIMEOUT_SECONDS"] = str(_cull_timeout)
+
 c.KubeSpawner.environment = env
 
 
