@@ -16,6 +16,7 @@ import json
 import sys
 import zipfile
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 MANIFEST = """<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
@@ -47,12 +48,14 @@ CONTENT_TYPES = """<?xml version="1.0" encoding="utf-8"?>
 def main(src, dest):
     src, dest = Path(src), Path(dest)
     pkg = json.loads((src / "package.json").read_text())
+    # Escape XML special characters for both attributes and element text
+    # For attributes, also escape quotes
     manifest = MANIFEST.format(
-        name=pkg["name"],
-        version=pkg["version"],
-        publisher=pkg["publisher"],
-        display=pkg.get("displayName", pkg["name"]),
-        description=pkg.get("description", ""),
+        name=escape(pkg["name"], {'"': "&quot;"}),
+        version=escape(pkg["version"], {'"': "&quot;"}),
+        publisher=escape(pkg["publisher"], {'"': "&quot;"}),
+        display=escape(pkg.get("displayName", pkg["name"])),
+        description=escape(pkg.get("description", "")),
     )
     dest.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:

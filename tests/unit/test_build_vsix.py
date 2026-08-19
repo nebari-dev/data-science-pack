@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import xml.etree.ElementTree
 import zipfile
 from pathlib import Path
 
@@ -49,3 +50,36 @@ def test_vsix_manifest_identity(tmp_path):
     assert 'Id="nebari-activity-reporter"' in manifest
     assert 'Publisher="nebari"' in manifest
     assert 'Version="0.1.0"' in manifest
+
+
+def test_vsix_manifest_xml_escaping(tmp_path):
+    """Manifest field values with &, <, > and " must be XML-escaped."""
+    src = tmp_path / "ext"
+    src.mkdir()
+    (src / "package.json").write_text(json.dumps({
+        "name": "test-extension",
+        "publisher": "Foo & <Bar> \"baz\"",
+        "version": "0.1.0",
+        "displayName": "Test & <Unsafe> \"Extension\"",
+        "description": "Foo & <Bar> \"baz\"",
+    }))
+    (src / "extension.js").write_text("module.exports = {};\n")
+    dest = tmp_path / "out" / "ext.vsix"
+
+    spec = importlib.util.spec_from_file_location("_build_vsix", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.main(str(src), str(dest))
+
+    with zipfile.ZipFile(dest) as z:
+        manifest = z.read("extension.vsixmanifest").decode()
+
+    # Verify escaped forms are present
+    # Attributes must escape &, <, >, and "
+    assert 'Publisher="Foo &amp; &lt;Bar&gt; &quot;baz&quot;"' in manifest
+    # Element text must escape &, <, > but not "
+    assert '<DisplayName>Test &amp; &lt;Unsafe&gt; "Extension"</DisplayName>' in manifest
+    assert '<Description xml:space="preserve">Foo &amp; &lt;Bar&gt; "baz"</Description>' in manifest
+
+    # Verify manifest is valid XML
+    xml.etree.ElementTree.fromstring(manifest)
