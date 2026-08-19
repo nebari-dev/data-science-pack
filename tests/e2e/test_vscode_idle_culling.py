@@ -5,6 +5,21 @@ plumbing, the extension delivery, and the reporting endpoint — via HTTP
 from inside the pod. Extension *activation* needs a real VS Code browser
 client, which this harness doesn't have; that path is validated by manual
 soak (see the design spec).
+
+These tests curl `127.0.0.1:8888` directly from inside the pod, bypassing
+configurable-http-proxy (CHP) entirely. That means they cannot observe
+CHP-level route activity tracking: the mechanism that keeps the hub-level
+`jupyterhub.cull` culler's last-activity fresh independent of
+`update_last_activity` while a tab stays connected (see the design spec's
+corrected mental model). What they DO verify is the in-pod
+`api_last_activity` signal that `singleuserCuller.server.
+shutdownNoActivityTimeout` actually reads. Also: because the co-installed
+`nebari-activity-reporter` extension never activates without a real VS Code
+client in this harness, it never fires its own contents-API pings during
+these tests, which is exactly why
+`test_vscode_proxy_traffic_does_not_count_as_activity` below can assert a
+stable `last_activity` across repeated proxied requests: nothing else in
+the pod is nudging it forward.
 """
 
 import json

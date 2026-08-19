@@ -61,19 +61,38 @@ def test_idle_timeout_absent_when_60_or_less():
     assert "CODE_SERVER_IDLE_TIMEOUT_SECONDS" not in c.KubeSpawner.environment
 
 
-def test_proxy_activity_env_absent_by_default():
-    """Default (vscodeActivity.enabled=true): the image config's default of
-    update_last_activity=False must apply, so no env var is set."""
+def test_idle_timeout_set_at_boundary_61():
+    """61 is the smallest value code-server accepts; must be set verbatim."""
+    c = FakeConfig()
+    _load_spawner(c, z2jh_values={"cull.enabled": True, "cull.timeout": 61})
+    assert c.KubeSpawner.environment["CODE_SERVER_IDLE_TIMEOUT_SECONDS"] == "61"
+
+
+def test_idle_timeout_ignores_non_numeric_timeout():
+    """cull.timeout is deployer-supplied and may not parse as an int; a bad
+    value must disable the feature rather than raise and take down the
+    whole spawner config file."""
+    c = FakeConfig()
+    _load_spawner(c, z2jh_values={"cull.enabled": True, "cull.timeout": "not-a-number"})
+    assert "CODE_SERVER_IDLE_TIMEOUT_SECONDS" not in c.KubeSpawner.environment
+
+
+def test_proxy_activity_env_set_false_by_default():
+    """Default (vscodeActivity.enabled=true): the chart actively opts the
+    pod into the new interaction-based behavior by setting the env var to
+    "false". The image defaults to the OLD behavior (True) when the var is
+    absent, so this active opt-in is what the chart is responsible for."""
     c = FakeConfig()
     _load_spawner(c, chart_values={"vscode-activity-enabled": True})
-    assert "VSCODE_PROXY_UPDATE_LAST_ACTIVITY" not in c.KubeSpawner.environment
+    assert (
+        c.KubeSpawner.environment["VSCODE_PROXY_UPDATE_LAST_ACTIVITY"] == "false"
+    )
 
 
-def test_proxy_activity_env_set_when_vscode_activity_disabled():
-    """vscodeActivity.enabled=false is the field escape hatch: proxied VS
-    Code traffic counts as activity again (pre-#208 behavior)."""
+def test_proxy_activity_env_absent_when_vscode_activity_disabled():
+    """vscodeActivity.enabled=false is the field escape hatch: the chart
+    sets nothing, so the image's fail-safe default (True, pre-#208
+    behavior, proxied traffic counts as activity again) applies."""
     c = FakeConfig()
     _load_spawner(c, chart_values={"vscode-activity-enabled": False})
-    assert (
-        c.KubeSpawner.environment["VSCODE_PROXY_UPDATE_LAST_ACTIVITY"] == "true"
-    )
+    assert "VSCODE_PROXY_UPDATE_LAST_ACTIVITY" not in c.KubeSpawner.environment

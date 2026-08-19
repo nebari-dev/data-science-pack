@@ -47,9 +47,17 @@ pack now handles VS Code idleness like notebook idleness:
   as `cullBusy: false` for kernels — provided the shell has VS Code shell
   integration (automatic for bash/zsh; exotic shells running long jobs are
   not detected).
-- **Raw traffic does not.** The `/vscode/` proxy route runs with
-  `update_last_activity` disabled, so keepalives from an idle tab no longer
-  defeat `singleuserCuller` or the hub-level `jupyterhub.cull` culler.
+- **Raw traffic no longer defeats the in-pod culler.** The `/vscode/` proxy
+  route runs with `update_last_activity` disabled, so keepalives from an
+  idle tab no longer keep jupyter-server's own activity clock fresh. The
+  hub-level `jupyterhub.cull` culler is **not** fixed by this: proxied
+  websocket traffic is still visible to configurable-http-proxy at the
+  route level, so the hub keeps seeing activity for as long as a tab stays
+  connected, regardless of `update_last_activity`. The setting that
+  actually culls an idle-tab pod is the in-pod
+  `singleuserCuller.server.shutdownNoActivityTimeout` (default `900`
+  seconds / 15 minutes), which jupyter-server evaluates from its own
+  activity clock; set it to `0` to disable this feature.
 - **Disconnected sessions exit promptly.** `CODE_SERVER_IDLE_TIMEOUT_SECONDS`
   is set to `jupyterhub.cull.timeout` (skipped when culling is disabled or
   the timeout is ≤ 60 seconds, which code-server rejects), so a code-server

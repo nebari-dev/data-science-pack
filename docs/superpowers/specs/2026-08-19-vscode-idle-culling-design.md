@@ -101,12 +101,21 @@ package is the unambiguous path. The launcher icon SVG currently ships inside
 that package, so it gets baked into the image instead.
 
 With `update_last_activity: False`, an idle tab's keepalives no longer touch
-`api_last_activity`, and the existing cullers govern VS Code pods exactly as
-they do notebook pods:
+`api_last_activity` inside the pod. This is what makes the in-pod culler
+load-bearing; it is NOT what fixes the hub-level culler:
 
-- in-pod: kernels/terminals cull at 900s idle; the server exits 900s after the
-  last kernel/terminal if no API activity (`singleuserCuller` values).
-- hub: `jupyterhub.cull.timeout: 1800` culls on hub-side staleness.
+- in-pod (load-bearing): `shutdown_no_activity_timeout`
+  (`singleuserCuller.server.shutdownNoActivityTimeout`, default 900s) reads
+  `api_last_activity` directly, so it now goes stale correctly on an idle
+  tab and fires on schedule.
+- hub (`jupyterhub.cull.timeout: 1800`): NOT fixed by this change.
+  configurable-http-proxy (CHP) tracks route-level websocket activity
+  independent of jupyter-server-proxy's `update_last_activity` trait: an
+  open VS Code tab's keepalives still flow through the `/vscode/` route,
+  so CHP keeps the hub's last-activity fresh for as long as the tab is
+  connected. The hub-level culler therefore still will not fire while a
+  tab is open; the in-pod culler above is the mechanism that actually
+  terminates an idle-tab pod.
 
 ### 2. Activity-reporter extension
 
@@ -233,6 +242,11 @@ tabs.
   working VS Code users; dealbreaker.
 - **Rejected as primary fix: `cull.maxAge`** — blunt hard cap that kills
   active users; documented as an optional backstop only.
+- **Escape-hatch env var polarity flipped after final review**:
+  `VSCODE_PROXY_UPDATE_LAST_ACTIVITY` absent/empty now means the OLD
+  behavior (image default); the chart actively sets it to `"false"` to opt
+  pods into the new behavior. This makes chart/image skew fail safe
+  (over-spend, not cull-active-users). User decision, 2026-08-19.
 
 ## Verified upstream facts
 

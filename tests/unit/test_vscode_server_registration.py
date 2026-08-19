@@ -35,14 +35,29 @@ def test_vscode_entry_registered_alongside_nebi(monkeypatch):
     assert "vscode" in servers
 
 
-def test_vscode_does_not_count_proxy_traffic_by_default(monkeypatch):
+def test_vscode_counts_proxy_traffic_by_default_without_chart_plumbing(monkeypatch):
+    """Fail-safe default: with the env var absent (e.g. an image deployed
+    without the chart's opt-in plumbing), the image falls back to the OLD
+    behavior (counting proxied traffic as activity), so chart/image skew
+    over-spends rather than culling active users with no reporter."""
     monkeypatch.delenv("VSCODE_PROXY_UPDATE_LAST_ACTIVITY", raising=False)
+    c = FakeConfig()
+    _load_image_config(c)
+    assert c.ServerProxy.servers["vscode"]["update_last_activity"] is True
+
+
+def test_vscode_chart_optin_disables_activity_counting(monkeypatch):
+    """The chart opts pods into the new behavior by setting the env var to
+    "false" when vscodeActivity.enabled is true."""
+    monkeypatch.setenv("VSCODE_PROXY_UPDATE_LAST_ACTIVITY", "false")
     c = FakeConfig()
     _load_image_config(c)
     assert c.ServerProxy.servers["vscode"]["update_last_activity"] is False
 
 
 def test_vscode_escape_hatch_env_restores_activity_counting(monkeypatch):
+    """An explicit "true" env var (e.g. set manually via extraEnv) restores
+    the old activity-counting behavior regardless of chart plumbing."""
     monkeypatch.setenv("VSCODE_PROXY_UPDATE_LAST_ACTIVITY", "true")
     c = FakeConfig()
     _load_image_config(c)

@@ -109,13 +109,17 @@ def _vscode_command():
     return cmd
 
 
-# Escape hatch: the spawner sets this env var when the deployer disables
-# vscodeActivity in values.yaml, restoring the pre-#208 behavior of counting
-# raw proxied traffic as activity.
-_vscode_count_proxy_traffic = (
-    os.environ.get("VSCODE_PROXY_UPDATE_LAST_ACTIVITY", "").lower()
-    in ("1", "true", "yes")
-)
+# Fail-safe default: absent/empty means the OLD behavior (count proxied
+# traffic as activity) applies. The chart actively opts pods into the new
+# interaction-based behavior by setting this env var to "false" when
+# vscodeActivity.enabled is true (config/jupyterhub/01-spawner.py). This
+# polarity means chart/image skew (e.g. a newer image tag paired with an
+# older chart release that doesn't yet set the env var) degrades to the
+# safe failure mode (pods over-spend on proxied traffic staying "active")
+# rather than the dangerous one (culling active VS Code users who have no
+# activity-reporter extension installed to keep them alive).
+_value = os.environ.get("VSCODE_PROXY_UPDATE_LAST_ACTIVITY", "").strip().lower()
+_vscode_count_proxy_traffic = _value not in ("0", "false", "no")
 
 c.ServerProxy.servers["vscode"] = {
     "command": _vscode_command(),
