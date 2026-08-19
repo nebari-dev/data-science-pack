@@ -1020,6 +1020,19 @@ async def _setup_nss_wrapper(spawner, username, groups):
         + " > /tmp/group",
     ]
 
+    # Install the bundled VS Code activity-reporter extension (issue #208)
+    # into the user's PVC-backed extensions dir. Runs every spawn:
+    # idempotent, and --force re-installs on image upgrades (new vsix
+    # version). Wrapped in { ... || true; } so an install failure neither
+    # CrashLoops the pod nor (via `&&`/`||` left-associativity) masks a
+    # failure of the preceding nss-wrapper commands. Silent breakage is
+    # covered by the e2e extension-installed test.
+    nss_cmds.append(
+        "{ code-server --install-extension "
+        "/opt/code-server-extensions/nebari-activity-reporter.vsix "
+        "--force || true; }"
+    )
+
     # Group membership changes between spawns (gain, lose, swap) are a
     # normal operational scenario. The home PVC persists, so the shape
     # `~/shared` took on the LAST spawn is still there at the start of
