@@ -5,7 +5,7 @@
       "namespace" .Release.Namespace
       "labels"    (include "nebari-data-science-pack.labels" . | fromYaml)
     )
-    "spec" (mergeOverwrite (dict
+    "spec" (merge (dict
       "hostname" (required "Set keycloak.hostname (for auto-derivation) or nebariapp.hostname explicitly." (include "nebari-data-science-pack.hubHostname" .))
     ) (omit .Values.nebariapp "enabled"))
 ) -}}
