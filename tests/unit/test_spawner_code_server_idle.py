@@ -59,3 +59,21 @@ def test_idle_timeout_absent_when_60_or_less():
     c = FakeConfig()
     _load_spawner(c, z2jh_values={"cull.enabled": True, "cull.timeout": 60})
     assert "CODE_SERVER_IDLE_TIMEOUT_SECONDS" not in c.KubeSpawner.environment
+
+
+def test_proxy_activity_env_absent_by_default():
+    """Default (vscodeActivity.enabled=true): the image config's default of
+    update_last_activity=False must apply, so no env var is set."""
+    c = FakeConfig()
+    _load_spawner(c, chart_values={"vscode-activity-enabled": True})
+    assert "VSCODE_PROXY_UPDATE_LAST_ACTIVITY" not in c.KubeSpawner.environment
+
+
+def test_proxy_activity_env_set_when_vscode_activity_disabled():
+    """vscodeActivity.enabled=false is the field escape hatch: proxied VS
+    Code traffic counts as activity again (pre-#208 behavior)."""
+    c = FakeConfig()
+    _load_spawner(c, chart_values={"vscode-activity-enabled": False})
+    assert (
+        c.KubeSpawner.environment["VSCODE_PROXY_UPDATE_LAST_ACTIVITY"] == "true"
+    )

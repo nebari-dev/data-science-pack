@@ -326,6 +326,14 @@ _cull_timeout = int(get_config("cull.timeout", 0) or 0)
 if get_config("cull.enabled", False) and _cull_timeout > 60:
     env["CODE_SERVER_IDLE_TIMEOUT_SECONDS"] = str(_cull_timeout)
 
+# Escape hatch for the interaction-based VS Code idle culling (issue #208):
+# vscodeActivity.enabled=false reverts the vscode proxy route to counting
+# raw proxied traffic as jupyter activity. The image's
+# jupyter_server_config.py reads this env var when building
+# c.ServerProxy.servers["vscode"].
+if not get_chart_config("vscode-activity-enabled", True):
+    env["VSCODE_PROXY_UPDATE_LAST_ACTIVITY"] = "true"
+
 c.KubeSpawner.environment = env
 
 
