@@ -148,3 +148,11 @@ def test_get_chart_config_explicit_override_wins(rendered_chart_derived):
     )
     got = ns["get_chart_config"]("external-url")
     assert got == "explicit.example.com"
+
+
+def test_vscode_activity_enabled_defaults_true(rendered_chart_derived):
+    """`vscodeActivity.enabled` must reach the spawner via _CHART_DERIVED so
+    the update_last_activity escape hatch (issue #208) is wireable without
+    a jupyterhub.custom.* override."""
+    ns = _exec_chart_derived(rendered_chart_derived, z2jh_values={})
+    assert ns["get_chart_config"]("vscode-activity-enabled") is True

@@ -54,6 +54,9 @@ data:
         # both. Deployer override via jupyterhub.custom.shared-storage-enabled
         # still wins via z2jh.
         "shared-storage-enabled": {{ ternary "True" "False" .Values.sharedStorage.enabled }},
+        # Mirrors .Values.vscodeActivity.enabled — drives the vscode proxy
+        # route's update_last_activity escape hatch in 01-spawner.py.
+        "vscode-activity-enabled": {{ ternary "True" "False" .Values.vscodeActivity.enabled }},
     }
 
 

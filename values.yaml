@@ -179,6 +179,16 @@ singleuserCuller:
   server:
     shutdownNoActivityTimeout: 900  # 15 min — seconds after last kernel/terminal gone before server self-terminates
 
+# VS Code (code-server) idle-culling behavior. When enabled (default), VS
+# Code browser traffic does NOT count as jupyter activity — the bundled
+# nebari-activity-reporter extension reports real user interaction (typing,
+# scrolling, terminal use) instead, so idle VS Code tabs cull on the normal
+# schedule (https://github.com/nebari-dev/data-science-pack/issues/208).
+# Set enabled: false to revert to counting raw proxied traffic (the
+# pre-#208 behavior, which keeps pods alive while any tab is open).
+vscodeActivity:
+  enabled: true
+
 # Shared storage — per-group directories mounted at /shared/<group> in user pods.
 # Requires an RWX StorageClass on the cluster.
 #
