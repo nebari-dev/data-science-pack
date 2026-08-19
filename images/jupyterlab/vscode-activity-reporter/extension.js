@@ -19,13 +19,15 @@ let busyExecutions = 0; // in-flight terminal shell executions
 let output;
 
 function pingUrl() {
-  const base = process.env.JUPYTERHUB_SERVICE_URL;
+  let base = process.env.JUPYTERHUB_SERVICE_URL;
   if (!base) {
     return null; // not running under JupyterHub — nothing to report to
   }
   try {
+    // Normalize IPv6 any-host (::) to bracketed form before URL parsing
+    base = base.replace("://:", "://[::]");
     const url = new URL(base);
-    if (url.hostname === "0.0.0.0" || url.hostname === "::") {
+    if (url.hostname === "0.0.0.0" || url.hostname === "[::]") {
       url.hostname = "127.0.0.1";
     }
     url.pathname = url.pathname.replace(/\/?$/, "/") + "api/contents/";
@@ -43,20 +45,24 @@ function ping(reason) {
   if (!url || !token) {
     return;
   }
-  const req = http.get(
-    url,
-    { headers: { Authorization: `token ${token}` } },
-    (res) => {
-      res.resume(); // drain — only the request itself matters
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        output.appendLine(`activity ping (${reason}): HTTP ${res.statusCode}`);
-      }
-    },
-  );
-  req.on("error", (e) => {
-    // Never throw out of an event handler; next interaction retries.
+  try {
+    const req = http.get(
+      url,
+      { headers: { Authorization: `token ${token}` } },
+      (res) => {
+        res.resume(); // drain — only the request itself matters
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          output.appendLine(`activity ping (${reason}): HTTP ${res.statusCode}`);
+        }
+      },
+    );
+    req.on("error", (e) => {
+      // Never throw out of an event handler; next interaction retries.
+      output.appendLine(`activity ping (${reason}) failed: ${e.message}`);
+    });
+  } catch (e) {
     output.appendLine(`activity ping (${reason}) failed: ${e.message}`);
-  });
+  }
 }
 
 function recordActivity(reason) {
