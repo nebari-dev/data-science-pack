@@ -2,6 +2,32 @@
 
 **Issue:** https://github.com/nebari-dev/data-science-pack/issues/208
 
+> **Pre-implementation corrections** (found while writing the plan; the
+> behavior below is unchanged, three mechanisms moved):
+>
+> 1. **Registration lives in the image, not the chart ConfigMap.** The image
+>    already owns `c.ServerProxy.servers` as a dict *assignment* in
+>    `images/nebi/jupyter_server_config.py` (the nebi tile), and Jupyter
+>    loads `/etc/jupyter` (chart CM) *before* `/usr/local/etc/jupyter`
+>    (image), so a CM-side entry would be clobbered. The vscode entry is
+>    added next to nebi's in the image file; the `vscodeActivity.enabled`
+>    escape hatch reaches it via a spawner-set pod env var
+>    (`VSCODE_PROXY_UPDATE_LAST_ACTIVITY`), the same pattern nebi uses for
+>    `NEBI_REMOTE_URL`.
+> 2. **No `@vscode/vsce`.** The build environment has no node/npm toolchain;
+>    a `.vsix` is a zip with a static manifest, so a ~50-line stdlib Python
+>    script (`images/scripts/build-vsix.py`) packages it at image build.
+>    postStart still installs via `code-server --install-extension`
+>    (non-fatal, `{ ... || true; }`).
+> 3. **E2E is kind + HTTP, not playwright.** The existing harness has no
+>    browser. Adapted e2e: proxied `/vscode/` traffic does NOT advance
+>    `last_activity`; a contents-API ping DOES; the extension is installed
+>    in the pod; `CODE_SERVER_IDLE_TIMEOUT_SECONDS` is set. Extension
+>    *activation* under a real VS Code client is covered by the manual soak
+>    only.
+> 4. The code-server 4.104.3 → 4.133.0 bump needs no hash change:
+>    `install.sh` is byte-identical between the two tags (verified).
+
 ## Problem
 
 A user pod running VS Code (code-server, proxied by jupyter-server-proxy) is
