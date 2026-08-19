@@ -25,12 +25,36 @@ the pod is nudging it forward.
 import json
 import time
 
+import pytest
+
 # JUPYTERHUB_SERVICE_PREFIX ends with "/" — concatenate with ${VAR} (no
 # added slash): the proxy route regex does not tolerate "//vscode/".
 CURL_STATUS = (
     'curl -sf -H "Authorization: token $JUPYTERHUB_API_TOKEN" '
     '"http://127.0.0.1:8888${JUPYTERHUB_SERVICE_PREFIX}api/status"'
 )
+
+
+def _wait_for_server(user, timeout_s=180):
+    """Block until the singleuser jupyter server answers on :8888.
+
+    `spawn_user` waits for the POD Ready condition, but singleuser pods
+    have no readiness probe on the jupyter port, so `kubectl exec` can win
+    the race against `jupyterhub-singleuser` binding :8888 (first observed
+    as curl rc=7 in CI). Poll the status endpoint until it answers; every
+    other exec in these tests can then assume the server is up.
+    """
+    deadline = time.time() + timeout_s
+    rc, out = 1, "<never ran>"
+    while time.time() < deadline:
+        rc, out = user.exec("bash", "-c", CURL_STATUS)
+        if rc == 0:
+            return
+        time.sleep(3)
+    pytest.fail(
+        f"singleuser server never answered /api/status within {timeout_s}s "
+        f"(last rc={rc}: {out})"
+    )
 
 
 def _last_activity(user):
@@ -63,6 +87,7 @@ def test_vscode_proxy_traffic_does_not_count_as_activity(spawn_user):
     """The core #208 behavior: requests through /vscode/ (which is exactly
     what an open tab's keepalives are) must NOT advance last_activity."""
     u = spawn_user("alice-data")
+    _wait_for_server(u)
     # First hit starts code-server via jupyter-server-proxy (timeout 300 in
     # the server entry; jsp blocks the request until the backend is up).
     rc, out = u.exec(
@@ -91,6 +116,7 @@ def test_contents_api_ping_counts_as_activity(spawn_user):
     """The extension's reporting mechanism: an authenticated contents-API
     request must advance last_activity (ISO8601 compares lexicographically)."""
     u = spawn_user("alice-data")
+    _wait_for_server(u)
     before = _last_activity(u)
     time.sleep(1.1)  # ensure a strictly later timestamp is observable
     rc, out = u.exec(
