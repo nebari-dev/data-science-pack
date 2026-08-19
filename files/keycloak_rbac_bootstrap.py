@@ -44,10 +44,12 @@ https://www.keycloak.org/docs-api/latest/rest-api/index.html
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import json
 import logging
 import os
+import ssl
 import sys
 import time
 import urllib.error
@@ -73,6 +75,8 @@ class BootstrapConfig:
     role_name: str
     shared_mount_groups: tuple[str, ...]
     hub_external_url: str
+    hub_client_secret_name: str = ""
+    hub_client_secret_namespace: str = ""
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "BootstrapConfig":
@@ -82,10 +86,100 @@ class BootstrapConfig:
             kc_host=env["KC_HOST"],
             admin_password=env["KC_ADMIN_PASSWORD"],
             realm=env["REALM"],
-            hub_client_id=env["HUB_CLIENT_ID"],
+            hub_client_id=env.get("HUB_CLIENT_ID", ""),
             role_name=env["ROLE_NAME"],
             shared_mount_groups=tuple(g for g in raw_groups.split(",") if g),
             hub_external_url=env.get("HUB_EXTERNAL_URL", "").rstrip("/"),
+            hub_client_secret_name=env.get("HUB_CLIENT_SECRET_NAME", ""),
+            hub_client_secret_namespace=env.get(
+                "HUB_CLIENT_SECRET_NAMESPACE", ""
+            ),
+        )
+
+
+class K8sSecretReader:
+    """Reads keys out of a Kubernetes Secret via the API server.
+
+    Used to fetch the hub OIDC client-id from the Secret the
+    nebari-operator provisions next to the NebariApp, so the bootstrap
+    never has to guess the operator's client-naming convention.
+    Standard library only, mirroring :py:class:`KCAdmin`.
+    """
+
+    SERVICEACCOUNT_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        token: str,
+        opener: Any = None,
+        request_timeout: int = 30,
+    ):
+        self._base_url = base_url.rstrip("/")
+        self._token = token
+        self._opener = opener or urllib.request.build_opener()
+        self._timeout = request_timeout
+
+    @classmethod
+    def in_cluster(cls) -> "K8sSecretReader":
+        """Build a reader from the pod's mounted ServiceAccount
+        credentials and the standard in-cluster API endpoint."""
+        host = os.environ["KUBERNETES_SERVICE_HOST"]
+        port = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
+        if ":" in host:  # bare IPv6 address
+            host = f"[{host}]"
+        with open(f"{cls.SERVICEACCOUNT_DIR}/token") as f:
+            token = f.read().strip()
+        context = ssl.create_default_context(
+            cafile=f"{cls.SERVICEACCOUNT_DIR}/ca.crt"
+        )
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=context)
+        )
+        return cls(
+            base_url=f"https://{host}:{port}", token=token, opener=opener,
+        )
+
+    def read_key(
+        self,
+        namespace: str,
+        name: str,
+        key: str,
+        *,
+        retries: int = 60,
+        sleep_seconds: float = 5.0,
+    ) -> str:
+        """The operator writes the Secret asynchronously after the
+        NebariApp is created, so a fresh install's post-install hook can
+        race it: poll through 404s instead of failing the Job."""
+        url = f"{self._base_url}/api/v1/namespaces/{namespace}/secrets/{name}"
+        req = urllib.request.Request(
+            url, headers={"Authorization": f"Bearer {self._token}"},
+        )
+        for attempt in range(retries):
+            try:
+                with self._opener.open(req, timeout=self._timeout) as resp:
+                    secret = json.loads(resp.read())
+                data = secret.get("data") or {}
+                if key not in data:
+                    raise RuntimeError(
+                        f"secret {namespace}/{name} has no {key!r} key; "
+                        f"found keys: {sorted(data)}"
+                    )
+                return base64.b64decode(data[key]).decode()
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise
+                if attempt < retries - 1:
+                    log.info(
+                        "secret %s/%s not there yet (operator still "
+                        "provisioning?); retrying", namespace, name,
+                    )
+                    time.sleep(sleep_seconds)
+        raise RuntimeError(
+            f"secret {namespace}/{name} never appeared; is the "
+            "nebari-operator running and reconciling the NebariApp?"
         )
 
 
@@ -471,6 +565,33 @@ class KCAdmin:
         )
 
 
+def resolve_hub_client_id(
+    config: BootstrapConfig, secret_reader: K8sSecretReader
+) -> str:
+    """The clientId the nebari-operator gave the hub OIDC client.
+
+    An explicit ``HUB_CLIENT_ID`` (chart value) always wins. Otherwise
+    read the id out of the operator-provisioned OIDC client Secret,
+    the same source of truth the hub itself mounts at ``/etc/oauth``,
+    so the bootstrap never depends on the operator's client-naming
+    convention.
+    """
+    if config.hub_client_id:
+        return config.hub_client_id
+    if not (
+        config.hub_client_secret_name and config.hub_client_secret_namespace
+    ):
+        raise RuntimeError(
+            "no hub client id available: set HUB_CLIENT_ID or both "
+            "HUB_CLIENT_SECRET_NAME and HUB_CLIENT_SECRET_NAMESPACE"
+        )
+    return secret_reader.read_key(
+        config.hub_client_secret_namespace,
+        config.hub_client_secret_name,
+        "client-id",
+    )
+
+
 def run(config: BootstrapConfig, kc: KCAdmin) -> None:
     log.info("==> 1. group-membership mapper on 'groups' scope")
     kc.ensure_groups_mapper(config.realm)
@@ -512,6 +633,12 @@ def main() -> int:
     except KeyError as missing:
         log.error("missing required env var: %s", missing)
         return 2
+    secret_reader = (
+        None if config.hub_client_id else K8sSecretReader.in_cluster()
+    )
+    hub_client_id = resolve_hub_client_id(config, secret_reader)
+    log.info("hub OIDC clientId: %s", hub_client_id)
+    config = dataclasses.replace(config, hub_client_id=hub_client_id)
     kc = KCAdmin(config.kc_host, config.admin_password)
     run(config, kc)
     return 0

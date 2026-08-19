@@ -46,6 +46,24 @@ def _bump_tag_leaves(data, new_tag: str) -> bool:
     return changed
 
 
+def _bump_hub_init_containers(data, new_tag: str) -> bool:
+    """Keep the merge-ca-bundle init container on the same image as hub.image.
+
+    It must read the hub image's own system CA store, so its tag has to
+    track hub.image.tag exactly.
+    """
+    hub = data.get("jupyterhub", {}).get("hub", {})
+    hub_image = hub.get("image", {})
+    full_ref = f"{hub_image.get('name')}:{new_tag}"
+
+    changed = False
+    for container in hub.get("initContainers", []):
+        if container.get("name") == "merge-ca-bundle" and container.get("image") != full_ref:
+            container["image"] = full_ref
+            changed = True
+    return changed
+
+
 def _bump_profile_list(data, new_tag: str) -> bool:
     """Walk profile_list and rewrite every jupyterlab image ref to ``new_tag``."""
     full_ref = f"{JUPYTERLAB_IMAGE}:{new_tag}"
@@ -92,7 +110,11 @@ def bump(values_path: Path, short_sha: str) -> bool:
     yaml.indent(mapping=2, sequence=4, offset=2)
 
     data = yaml.load(values_path)
-    changed = _bump_tag_leaves(data, new_tag) | _bump_profile_list(data, new_tag)
+    changed = (
+        _bump_tag_leaves(data, new_tag)
+        | _bump_hub_init_containers(data, new_tag)
+        | _bump_profile_list(data, new_tag)
+    )
     if changed:
         yaml.dump(data, values_path)
     return changed

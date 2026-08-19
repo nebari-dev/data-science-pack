@@ -24,9 +24,9 @@ jobs:
           # Pinned versions the hub image runs against — tests exercise
           # the real oauthenticator + jupyterhub contracts, not a stub.
           uv pip install --python .venv-unit/bin/python \
-            jupyterhub==5.1.0 \
-            oauthenticator==16.3.0 \
-            jupyterhub-kubespawner==6.2.0 \
+            jupyterhub==5.5.0 \
+            oauthenticator==17.4.0 \
+            jupyterhub-kubespawner==7.0.0 \
             pytest
 
       - name: pytest tests/unit
@@ -117,9 +117,10 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
 
       - name: Install kind
-        run: |
-          curl -fsSLo /tmp/kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
-          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc  # v1.14.0
+        with:
+          version: v0.27.0
+          install_only: true
 
       - name: Install Helm
         run: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
@@ -177,7 +178,7 @@ jobs:
 
       - name: Provision Nebari sandbox (k3d + NIC platform stack)
         id: sandbox
-        uses: nebari-dev/action-nebari-sandbox@68b3a446c8ce70e1e100540b97ec532ff2e97dd4  # v1.0.2
+        uses: nebari-dev/action-nebari-sandbox@dbdb054c16efee3b29e26aee406c12fb9639bfd0  # v2.2.0
         with:
           profile: platform
 

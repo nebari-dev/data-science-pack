@@ -50,6 +50,17 @@ Singleuser config ConfigMap name
 {{- end }}
 
 {{/*
+Nebi config ConfigMap name (admin-provisioned registries). Returns "" when
+the deployer customizes neither nebi.registries nor nebi.seedDefaultRegistry,
+so consumers can use emptiness as the single enable/disable signal.
+*/}}
+{{- define "nebari-data-science-pack.nebi-config" -}}
+{{- if or .Values.nebi.registries (not .Values.nebi.seedDefaultRegistry) -}}
+{{- printf "%s-nebi-config" (include "nebari-data-science-pack.name" .) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Selector labels
 */}}
 {{- define "nebari-data-science-pack.selectorLabels" -}}
@@ -176,6 +187,35 @@ Nebari deployment ships with.
 {{- printf "https://%s/realms/%s/protocol/openid-connect/token" .Values.keycloak.hostname $realm -}}
 {{- else -}}
 {{- printf "http://%s/realms/%s/protocol/openid-connect/token" (.Values.keycloak.serviceHost | default "keycloak-keycloakx-http.keycloak.svc.cluster.local:8080") $realm -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Backchannel issuer URL for split-horizon OIDC. When non-empty, the hub uses
+this URL as the base for ``token_url`` and ``userdata_url`` while the browser
+continues to use the primary (``issuer``) URL for authorize + end_session.
+Needed on private-VPC clusters where in-cluster CoreDNS cannot resolve the
+external Keycloak hostname.
+
+Order of precedence:
+  1. .Values.jupyterhub.custom.keycloak-backchannel-issuer-url (explicit
+     full issuer URL, e.g. http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari)
+  2. .Values.keycloak.backchannelURL + /realms/<realm> (base URL only,
+     realm suffix added by the helper)
+  3. Empty string — no split-horizon (the caller falls back to the primary
+     issuer for all four URLs)
+
+Emits WITHOUT a trailing ``/protocol/openid-connect`` — that suffix is
+appended by the Python side in ``KeyCloakConfig.build()`` so the tokens
+URL and userinfo URL sit next to each other under one base.
+*/}}
+{{- define "nebari-data-science-pack.keycloakBackchannelIssuerURL" -}}
+{{- $explicit := index .Values.jupyterhub.custom "keycloak-backchannel-issuer-url" | default "" -}}
+{{- $realm := .Values.keycloak.realm | default "nebari" -}}
+{{- if $explicit -}}
+{{- $explicit -}}
+{{- else if .Values.keycloak.backchannelURL -}}
+{{- printf "%s/realms/%s" .Values.keycloak.backchannelURL $realm -}}
 {{- end -}}
 {{- end -}}
 

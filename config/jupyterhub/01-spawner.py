@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import string
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -12,7 +13,6 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import escapism
-import string
 from kubernetes_asyncio.client.rest import ApiException
 from kubespawner.objects import make_pvc
 from z2jh import get_config
@@ -35,6 +35,9 @@ log = logging.getLogger(__name__)
 c.KubeSpawner.storage_pvc_ensure = True
 c.KubeSpawner.storage_capacity = get_config("custom.storage-capacity", "20Gi")
 c.KubeSpawner.storage_access_modes = ["ReadWriteOnce"]
+# KubeSpawner 7 defaults to slug_scheme="safe". Keep the old escaped slug
+# behavior until PVC names and affinity labels are intentionally migrated.
+c.KubeSpawner.slug_scheme = "escape"
 # Without this override, KubeSpawner's default template is
 # `claim-{username}--{servername}`, so for jhub-apps named servers it ensures
 # a per-server PVC — while the `volumes` block below mounts the per-user
@@ -70,6 +73,29 @@ c.KubeSpawner.volume_mounts = [
     },
 ]
 
+# ---------------------------------------------------------------------------
+# Admin-provisioned nebi config (OCI registries, default-registry seed flag).
+# Helm renders the deployer's `nebi.registries` / `nebi.seedDefaultRegistry`
+# values into a ConfigMap and substitutes its name below; the placeholder
+# stays literal (and is skipped) when the deployer customizes neither value.
+# nebi searches /etc/nebi/config.yaml at boot, so mounting is all it takes.
+# ---------------------------------------------------------------------------
+_NEBI_CONFIG_CM = "__NEBI_CONFIG_CM__"
+if _NEBI_CONFIG_CM and not _NEBI_CONFIG_CM.startswith("__"):
+    c.KubeSpawner.volumes.append(
+        {
+            "name": "nebi-config",
+            "configMap": {"name": _NEBI_CONFIG_CM},
+        }
+    )
+    c.KubeSpawner.volume_mounts.append(
+        {
+            "name": "nebi-config",
+            "mountPath": "/etc/nebi/config.yaml",
+            "subPath": "config.yaml",
+        }
+    )
+
 c.KubeSpawner.notebook_dir = "/home/jovyan"
 c.KubeSpawner.working_dir = "/home/jovyan"
 
@@ -96,6 +122,17 @@ c.KubeSpawner.cmd = [
 # Pod affinity ensures jhub-apps app pods land on the same node as the
 # user's JupyterLab pod so the shared home PVC can be mounted by all of them.
 #
+# The affinity selects on a chart-owned label set via extra_labels below,
+# NOT on kubespawner's hub.jupyter.org/username label: kubespawner escapes
+# that label with a different scheme (label-safe slug, e.g.
+# "tpotts-openteams-com---c9bc22a3") than the {username} expansion used in
+# extra_pod_config templates (DNS escaping, e.g. "tpotts-40openteams-2ecom").
+# For any username needing escaping (emails), label != affinity value, the
+# scheduler's self-match bootstrap never applies, and every spawn deadlocks
+# in Pending ("didn't match pod affinity rules"). Using the identical
+# template string on both sides guarantees they render equal for every
+# username shape.
+#
 # securityContext.fsGroup: 100 — GID 100 (users group) as the pod's fsGroup.
 # Kubernetes adds GID 100 as a supplemental group and chgrps mounted volumes
 # to 100 at pod start. This ensures shared dirs (created by init container as
@@ -111,6 +148,16 @@ c.KubeSpawner.cmd = [
 # extra_pod_config applies pod.spec attributes with a top-level overwrite —
 # any securityContext we set here REPLACES the one fs_gid would produce, so
 # both fields must live in this dict together.
+# Merge with singleuser.extraLabels rather than assign: z2jh's default there
+# is hub.jupyter.org/network-access-hub: "true", which the hub NetworkPolicy
+# requires for singleuser -> hub API traffic. Dropping it leaves the server
+# unable to complete its startup handshake with the hub, so it never binds
+# its port and every spawn dies on the hub's http_timeout.
+c.KubeSpawner.extra_labels = {
+    **get_config("singleuser.extraLabels", {}),
+    "nebari.dev/colocate-user": "{username}",
+}
+
 c.KubeSpawner.extra_pod_config = {
     "affinity": {
         "podAffinity": {
@@ -119,7 +166,7 @@ c.KubeSpawner.extra_pod_config = {
                     "labelSelector": {
                         "matchExpressions": [
                             {
-                                "key": "hub.jupyter.org/username",
+                                "key": "nebari.dev/colocate-user",
                                 "operator": "In",
                                 "values": ["{username}"],
                             }
@@ -223,9 +270,11 @@ def _setup_trust_bundle(spawner):
             "command": [
                 "/bin/sh",
                 "-c",
-                "cp /etc/ssl/certs/ca-certificates.crt /merged/ca-bundle.crt && "
-                f"if [ -f /org-ca/{_trust_bundle_key} ]; then "
-                f"cat /org-ca/{_trust_bundle_key} >> /merged/ca-bundle.crt; fi",
+                (
+                    "cp /etc/ssl/certs/ca-certificates.crt /merged/ca-bundle.crt && "
+                    f"if [ -f /org-ca/{_trust_bundle_key} ]; then "
+                    f"cat /org-ca/{_trust_bundle_key} >> /merged/ca-bundle.crt; fi"
+                ),
             ],
             "volumeMounts": [
                 {"name": "org-ca", "mountPath": "/org-ca", "readOnly": True},
@@ -256,6 +305,17 @@ if nebi_remote_url:
     env["NEBI_REMOTE_URL"] = nebi_remote_url
 
 env["NEBI_STORAGE_WORKSPACES_DIR"] = "/var/lib/nebi/workspaces"
+
+# nebi's local-mode netguard only accepts loopback Origin headers by default.
+# Browsers send the hub's public origin on CORS-mode asset requests (the SPA
+# bundle is emitted as <script type="module" crossorigin>), which blanked the
+# Nebi tile (https://github.com/nebari-dev/nebi/issues/489). Allow the hub
+# origin explicitly; the env var reaches nebi because jupyter-server-proxy
+# children inherit the pod environment. Older nebi builds without
+# server.allowed_origins ignore it.
+_hub_external_host = get_chart_config("external-url")
+if _hub_external_host:
+    env["NEBI_SERVER_ALLOWED_ORIGINS"] = f"https://{_hub_external_host}"
 
 c.KubeSpawner.environment = env
 
@@ -415,7 +475,7 @@ def _extract_error_body(exc):
     if hasattr(exc, "read"):
         try:
             return exc.read().decode("utf-8", errors="replace")
-        except Exception:
+        except (AttributeError, OSError):
             pass
     return ""
 
@@ -434,7 +494,7 @@ def _decode_jwt_claims(token):
         # Add padding
         payload += "=" * (4 - len(payload) % 4)
         return json.loads(base64.urlsafe_b64decode(payload))
-    except Exception:
+    except (ValueError, TypeError):
         return {}
 
 
@@ -493,9 +553,9 @@ def _sync_refresh_access_token(refresh_token, keycloak_url, hub_client_id, hub_c
             return token
     except Exception as exc:
         resp_body = _extract_error_body(exc)
-        log.error(
-            "token-exchange step 1 FAILED: %s response=%s (url=%s, client_id=%s)",
-            exc, resp_body, keycloak_url, hub_client_id,
+        log.exception(
+            "token-exchange step 1 FAILED: response=%s (url=%s, client_id=%s)",
+            resp_body, keycloak_url, hub_client_id,
         )
         return ""
 
@@ -539,9 +599,9 @@ def _sync_exchange_access_token_for_nebi_id_token(
             return token
     except Exception as exc:
         resp_body = _extract_error_body(exc)
-        log.error(
-            "token-exchange step 2 FAILED: %s response=%s (url=%s, audience=%s, client_id=%s)",
-            exc, resp_body, keycloak_url, nebi_client_id, hub_client_id,
+        log.exception(
+            "token-exchange step 2 FAILED: response=%s (url=%s, audience=%s, client_id=%s)",
+            resp_body, keycloak_url, nebi_client_id, hub_client_id,
         )
         return ""
 
@@ -579,9 +639,9 @@ def _sync_exchange_nebi_id_token_for_jwt(nebi_id_token, nebi_internal_url):
             return token
     except Exception as exc:
         resp_body = _extract_error_body(exc)
-        log.error(
-            "token-exchange step 3 FAILED: %s response=%s (url=%s)",
-            exc, resp_body, session_url,
+        log.exception(
+            "token-exchange step 3 FAILED: response=%s (url=%s)",
+            resp_body, session_url,
         )
         return ""
 
@@ -753,11 +813,13 @@ async def _nebi_pre_spawn_hook(spawner):
                     # Pull workspace files into the ephemeral dir, then
                     # pre-install the pixi environment so jhub-app-proxy's
                     # `pixi run` doesn't hit the ready-check timeout.
-                    f"mkdir -p {ws_dir} && "
-                    f"nebi pull {workspace_name} -o {ws_dir} --force && "
-                    f"pixi install --manifest-path {ws_dir}/pixi.toml && "
-                    f"chmod -R a+rw {nebi_env_dir}/nebi.db* || "
-                    f"echo 'WARNING: nebi pull or pixi install failed for {workspace_name}'",
+                    (
+                        f"mkdir -p {ws_dir} && "
+                        f"nebi pull {workspace_name} -o {ws_dir} --force && "
+                        f"pixi install --manifest-path {ws_dir}/pixi.toml && "
+                        f"chmod -R a+rw {nebi_env_dir}/nebi.db* || "
+                        f"echo 'WARNING: nebi pull or pixi install failed for {workspace_name}'"
+                    ),
                 ],
                 "env": nebi_pull_env,
                 "volumeMounts": nebi_pull_mounts,
