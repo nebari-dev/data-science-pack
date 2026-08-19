@@ -430,7 +430,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/xyzservices-2025.1.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zict-3.0.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
-      - pypi: git+https://github.com/betatim/vscode-binder.git#3e69a137988539f24381e07dd373a1a372098ff4
       - pypi: https://files.pythonhosted.org/packages/02/11/9cae49425dbb3e89a7bb3a4d2e974711ad86baa6cc1f47c9bb4e009adced/jupyterlab_jhub_apps-0.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/04/1e/b832de447dee8b582cac175871d2f6c3d5077cc56d5575cadba1fd1cccfa/linkify_it_py-2.0.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/06/ad/5ba858ffc307ed2b51693d87642f9e9dd6013579840981ac364c6e24c38c/backports_zstd-1.1.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
@@ -909,7 +908,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/xyzservices-2025.1.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zict-3.0.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
-      - pypi: git+https://github.com/betatim/vscode-binder.git#3e69a137988539f24381e07dd373a1a372098ff4
       - pypi: https://files.pythonhosted.org/packages/02/11/9cae49425dbb3e89a7bb3a4d2e974711ad86baa6cc1f47c9bb4e009adced/jupyterlab_jhub_apps-0.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/02/57/7163ed06a2d9bf1f34d89dcc7c5881119beeed287022c997b0a706edcfbe/dulwich-0.22.8-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/04/1e/b832de447dee8b582cac175871d2f6c3d5077cc56d5575cadba1fd1cccfa/linkify_it_py-2.0.3-py3-none-any.whl
@@ -9107,10 +9105,6 @@ packages:
   - pkg:pypi/zipp?source=hash-mapping
   size: 21809
   timestamp: 1732827613585
-- pypi: git+https://github.com/betatim/vscode-binder.git#3e69a137988539f24381e07dd373a1a372098ff4
-  name: jupyter-vscode-proxy
-  version: 0.7.post4+g3e69a1379
-  requires_python: '>=3.8'
 - pypi: https://files.pythonhosted.org/packages/02/11/9cae49425dbb3e89a7bb3a4d2e974711ad86baa6cc1f47c9bb4e009adced/jupyterlab_jhub_apps-0.3.1-py3-none-any.whl
   name: jupyterlab-jhub-apps
   version: 0.3.1

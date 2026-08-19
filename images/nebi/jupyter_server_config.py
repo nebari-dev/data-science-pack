@@ -80,3 +80,51 @@ c.ServerProxy.servers = {
         },
     }
 }
+
+# jupyter-server-proxy configuration for VS Code (code-server).
+# Registered here instead of via the jupyter-vscode-proxy package so the
+# entry can set update_last_activity=False: with it True (the packaged
+# default), the VS Code browser client's websocket keepalives count as
+# jupyter API activity and neither the in-pod shutdown_no_activity_timeout
+# nor the hub idle culler ever fires while a tab is open
+# (https://github.com/nebari-dev/data-science-pack/issues/208). Real user
+# interaction is reported instead by the bundled nebari-activity-reporter
+# extension (see images/jupyterlab/vscode-activity-reporter/).
+VSCODE_ICON_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "icons",
+    "code-server.svg",
+)
+
+
+def _vscode_command():
+    # Mirrors the command jupyter-vscode-proxy generated (minus unix-socket
+    # support, which nothing here used). {port} is templated by
+    # jupyter-server-proxy at launch.
+    cmd = ["code-server", "--auth", "none", "--disable-telemetry", "--port={port}"]
+    extensions_dir = os.environ.get("CODE_EXTENSIONSDIR")
+    if extensions_dir:
+        cmd += ["--extensions-dir", extensions_dir]
+    cmd.append(os.environ.get("CODE_WORKINGDIR", "."))
+    return cmd
+
+
+# Escape hatch: the spawner sets this env var when the deployer disables
+# vscodeActivity in values.yaml, restoring the pre-#208 behavior of counting
+# raw proxied traffic as activity.
+_vscode_count_proxy_traffic = (
+    os.environ.get("VSCODE_PROXY_UPDATE_LAST_ACTIVITY", "").lower()
+    in ("1", "true", "yes")
+)
+
+c.ServerProxy.servers["vscode"] = {
+    "command": _vscode_command(),
+    "timeout": 300,
+    "new_browser_tab": True,
+    "update_last_activity": _vscode_count_proxy_traffic,
+    "launcher_entry": {
+        "title": "VS Code",
+        "enabled": True,
+        "icon_path": VSCODE_ICON_PATH,
+    },
+}
