@@ -160,6 +160,39 @@ To release a new version:
 
 **Note:** Enable GitHub Pages on the `gh-pages` branch in repo settings after the first release.
 
+## Documentation
+
+The docs site lives in [`docs/`](docs/) and is built with [Astro](https://astro.build) +
+[Starlight](https://starlight.astro.build) using the shared `@nebari/starlight` theme. It
+deploys to [packs.nebari.dev/data-science-pack/](https://packs.nebari.dev/data-science-pack/)
+on every merge to `main`; pull requests that touch `docs/` get a preview URL posted as a
+comment.
+
+Administrator guides:
+
+- [Admin setup](https://packs.nebari.dev/data-science-pack/admin-setup/) - cluster
+  prerequisites, the one required value, and what the chart creates.
+- [Values reference](https://packs.nebari.dev/data-science-pack/values-reference/) -
+  field-by-field detail for every value.
+- [Server profiles](https://packs.nebari.dev/data-science-pack/server-profiles/) - sizing
+  JupyterLab servers and gating profiles by group.
+- [Nebi integration](https://packs.nebari.dev/data-science-pack/nebi-integration/) - images,
+  OIDC clients, token exchange, registries.
+- [MLflow integration](https://packs.nebari.dev/data-science-pack/mlflow-integration/) -
+  letting notebooks log experiments to MLflow.
+
+```bash
+cd docs
+npm ci
+npm run dev     # dev server with hot reload at http://localhost:4321
+npm run build   # static build into docs/dist/
+npm test        # unit tests
+```
+
+Pages live in `docs/src/content/docs/` - each `.md` or `.mdx` file becomes a page, and the
+sidebar is configured in `docs/astro.config.mjs`. See [`docs/README.md`](docs/README.md) for
+details.
+
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE) for details.
