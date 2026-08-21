@@ -548,6 +548,14 @@ jupyterhub:
     # Workspace storage — per-user RWO PVC for nebi workspaces.
     # KubeSpawner creates these dynamically in the pre_spawn_hook.
     # Leave empty to use the cluster default StorageClass.
+    #
+    # These are the cluster-wide defaults. An individual profile can override
+    # them with `workspace_storage_class` / `workspace_storage_capacity` (see
+    # `custom.profiles` above) — the workspace PVC is created directly against
+    # the Kubernetes API rather than by KubeSpawner, so unlike the home PVC it
+    # cannot be steered from `kubespawner_override`. A profile that overrides
+    # the StorageClass gets its own PVC, named with the profile slug appended,
+    # because it is a different volume on a different backend.
     workspace-storage-class: ""
     # Pixi environments run 2–5 Gi each, so size accordingly.
     workspace-storage-capacity: "20Gi"

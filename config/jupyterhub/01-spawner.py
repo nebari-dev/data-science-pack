@@ -333,6 +333,16 @@ c.KubeSpawner.environment = env
 # Keys used only for group gating; KubeSpawner must never see them.
 _PROFILE_GATING_KEYS = ("access", "groups", "users")
 
+# Keys consumed by the workspace-PVC pre-spawn hook rather than by KubeSpawner.
+# The workspace PVC is created by _ensure_workspace_pvc() through the
+# Kubernetes API, not by KubeSpawner, so it cannot be steered from
+# ``kubespawner_override`` the way the home PVC can. These keys give a profile
+# the same per-profile control over the second volume.
+_PROFILE_STORAGE_KEYS = ("workspace_storage_class", "workspace_storage_capacity")
+
+# Everything stripped from a profile before KubeSpawner sees it.
+_PROFILE_INTERNAL_KEYS = _PROFILE_GATING_KEYS + _PROFILE_STORAGE_KEYS
+
 
 def _get_profile_groups(auth_state):
     """Resolve the user's full Keycloak group list for profile gating.
@@ -416,7 +426,7 @@ def _filter_profiles(profiles, groups, username, keycloak_profile_slugs=()):
                 access,
             )
             continue
-        clean = {k: v for k, v in profile.items() if k not in _PROFILE_GATING_KEYS}
+        clean = {k: v for k, v in profile.items() if k not in _PROFILE_INTERNAL_KEYS}
         visible.append(clean)
     return visible
 
@@ -1072,21 +1082,62 @@ async def _setup_nss_wrapper(spawner, username, groups):
 # Workspace PVC helper
 # ---------------------------------------------------------------------------
 
+def _profile_workspace_storage(spawner):
+    """Per-profile workspace storage overrides for the selected profile.
+
+    Returns ``(profile_slug, storage_class, storage_capacity)``, with any
+    element ``None`` when the profile does not override it. Matching is on the
+    profile's explicit ``slug`` only: when ``slug`` is omitted KubeSpawner
+    slugifies ``display_name`` itself, and reproducing that here would couple
+    us to its slug scheme.
+    """
+    slug = (getattr(spawner, "user_options", None) or {}).get("profile")
+    if not slug:
+        return None, None, None
+    for profile in _profiles:
+        if profile.get("slug") == slug:
+            return (
+                slug,
+                profile.get("workspace_storage_class") or None,
+                profile.get("workspace_storage_capacity") or None,
+            )
+    return slug, None, None
+
+
 async def _ensure_workspace_pvc(spawner):
     """Create a per-user RWO PVC for nebi workspaces if it doesn't exist.
 
     KubeSpawner only manages one PVC natively (the home directory).  We
     create the second PVC here via the Kubernetes API, mirroring the same
     retry logic KubeSpawner uses internally.
+
+    A profile may override the StorageClass via ``workspace_storage_class``.
+    When it does, the PVC name is suffixed with the profile slug: the volume
+    is a different volume on a different backend, so reusing the unsuffixed
+    name would silently bind the user to whichever StorageClass happened to
+    create it first. Profiles that do not override it keep the original
+    unsuffixed name, so existing users are unaffected.
     """
     username = spawner.user.name
     safe_chars = set(string.ascii_lowercase + string.digits)
     slug = escapism.escape(username, safe=safe_chars, escape_char='-').lower()
-    pvc_name = f"nebi-workspaces-{slug}"
     namespace = spawner.namespace
 
-    storage_class = get_config("custom.workspace-storage-class", "") or None
-    storage_capacity = get_config("custom.workspace-storage-capacity", "20Gi")
+    profile_slug, profile_class, profile_capacity = _profile_workspace_storage(spawner)
+
+    if profile_class:
+        profile_suffix = escapism.escape(
+            profile_slug, safe=safe_chars, escape_char='-'
+        ).lower()
+        pvc_name = f"nebi-workspaces-{slug}-{profile_suffix}"
+        storage_class = profile_class
+    else:
+        pvc_name = f"nebi-workspaces-{slug}"
+        storage_class = get_config("custom.workspace-storage-class", "") or None
+
+    storage_capacity = profile_capacity or get_config(
+        "custom.workspace-storage-capacity", "20Gi"
+    )
 
     pvc = make_pvc(
         name=pvc_name,
