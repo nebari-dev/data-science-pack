@@ -118,13 +118,9 @@ External hub hostname. Order of precedence:
 Empty when neither is available.
 */}}
 {{- define "nebari-data-science-pack.hubHostname" -}}
-{{- if .Values.nebariapp.hostname -}}
-{{- .Values.nebariapp.hostname -}}
-{{- else -}}
 {{- $base := include "nebari-data-science-pack.baseDomain" . -}}
 {{- if $base -}}
 {{- printf "%s.%s" (.Values.subdomains.hub | default "hub") $base -}}
-{{- end -}}
 {{- end -}}
 {{- end -}}
 
