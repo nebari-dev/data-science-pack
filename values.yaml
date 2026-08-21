@@ -559,6 +559,12 @@ jupyterhub:
     workspace-storage-class: ""
     # Pixi environments run 2–5 Gi each, so size accordingly.
     workspace-storage-capacity: "20Gi"
+    # RWO suits a node-local backend, but an RWX home paired with an RWO
+    # workspace still pins all of a user's pods to one node — which is the
+    # thing an RWX shape exists to release. Override per profile with
+    # `workspace_storage_access_modes`.
+    workspace-storage-access-modes:
+      - ReadWriteOnce
     # Role-gated shared-mount RBAC configuration
     # is delivered via the hub Deployment's env vars (KC_REALM_API_URL
     # + KC_SHARED_MOUNT_ROLE), NOT via this `custom` block. Reasons:

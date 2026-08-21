@@ -338,7 +338,11 @@ _PROFILE_GATING_KEYS = ("access", "groups", "users")
 # Kubernetes API, not by KubeSpawner, so it cannot be steered from
 # ``kubespawner_override`` the way the home PVC can. These keys give a profile
 # the same per-profile control over the second volume.
-_PROFILE_STORAGE_KEYS = ("workspace_storage_class", "workspace_storage_capacity")
+_PROFILE_STORAGE_KEYS = (
+    "workspace_storage_class",
+    "workspace_storage_capacity",
+    "workspace_storage_access_modes",
+)
 
 # Everything stripped from a profile before KubeSpawner sees it.
 _PROFILE_INTERNAL_KEYS = _PROFILE_GATING_KEYS + _PROFILE_STORAGE_KEYS
@@ -1085,23 +1089,24 @@ async def _setup_nss_wrapper(spawner, username, groups):
 def _profile_workspace_storage(spawner):
     """Per-profile workspace storage overrides for the selected profile.
 
-    Returns ``(profile_slug, storage_class, storage_capacity)``, with any
-    element ``None`` when the profile does not override it. Matching is on the
-    profile's explicit ``slug`` only: when ``slug`` is omitted KubeSpawner
-    slugifies ``display_name`` itself, and reproducing that here would couple
-    us to its slug scheme.
+    Returns ``(profile_slug, storage_class, storage_capacity, access_modes)``,
+    with any element ``None`` when the profile does not override it. Matching
+    is on the profile's explicit ``slug`` only: when ``slug`` is omitted
+    KubeSpawner slugifies ``display_name`` itself, and reproducing that here
+    would couple us to its slug scheme.
     """
     slug = (getattr(spawner, "user_options", None) or {}).get("profile")
     if not slug:
-        return None, None, None
+        return None, None, None, None
     for profile in _profiles:
         if profile.get("slug") == slug:
             return (
                 slug,
                 profile.get("workspace_storage_class") or None,
                 profile.get("workspace_storage_capacity") or None,
+                profile.get("workspace_storage_access_modes") or None,
             )
-    return slug, None, None
+    return slug, None, None, None
 
 
 async def _ensure_workspace_pvc(spawner):
@@ -1123,7 +1128,12 @@ async def _ensure_workspace_pvc(spawner):
     slug = escapism.escape(username, safe=safe_chars, escape_char='-').lower()
     namespace = spawner.namespace
 
-    profile_slug, profile_class, profile_capacity = _profile_workspace_storage(spawner)
+    (
+        profile_slug,
+        profile_class,
+        profile_capacity,
+        profile_access_modes,
+    ) = _profile_workspace_storage(spawner)
 
     if profile_class:
         profile_suffix = escapism.escape(
@@ -1138,11 +1148,17 @@ async def _ensure_workspace_pvc(spawner):
     storage_capacity = profile_capacity or get_config(
         "custom.workspace-storage-capacity", "20Gi"
     )
+    # RWO is right for a node-local backend, but an RWX home without an RWX
+    # workspace still pins every one of a user's pods to one node, which is
+    # the whole thing an RWX shape is meant to release.
+    access_modes = profile_access_modes or get_config(
+        "custom.workspace-storage-access-modes", ["ReadWriteOnce"]
+    )
 
     pvc = make_pvc(
         name=pvc_name,
         storage_class=storage_class,
-        access_modes=["ReadWriteOnce"],
+        access_modes=access_modes,
         selector=None,
         storage=storage_capacity,
         labels={

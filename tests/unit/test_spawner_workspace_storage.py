@@ -57,6 +57,11 @@ def _create(mod, spawner):
     )
 
 
+def _access_modes(mod, spawner):
+    asyncio.run(mod._ensure_workspace_pvc(spawner))
+    return spawner.api.created[-1].spec.access_modes
+
+
 def test_profile_without_override_keeps_the_original_pvc_name():
     """Existing users must not be migrated onto a new volume by this change."""
     mod, _ = _load()
@@ -134,8 +139,32 @@ def test_storage_keys_are_stripped_before_kubespawner_sees_the_profile():
         "display_name": "EFS",
         "workspace_storage_class": "efs-sc",
         "workspace_storage_capacity": "100Gi",
+        "workspace_storage_access_modes": ["ReadWriteMany"],
     }]
 
     visible = mod._filter_profiles(profiles, groups=[], username="alice")
 
     assert visible == [{"slug": "efs", "display_name": "EFS"}]
+
+
+def test_workspace_defaults_to_rwo():
+    mod, _ = _load()
+    mod._profiles = [{"slug": "small"}]
+
+    assert _access_modes(mod, _FakeSpawner("alice", profile="small")) == [
+        "ReadWriteOnce"
+    ]
+
+
+def test_profile_can_override_access_modes():
+    """An RWX home with an RWO workspace still pins the user to one node."""
+    mod, _ = _load()
+    mod._profiles = [{
+        "slug": "efs",
+        "workspace_storage_class": "efs-sc",
+        "workspace_storage_access_modes": ["ReadWriteMany"],
+    }]
+
+    assert _access_modes(mod, _FakeSpawner("alice", profile="efs")) == [
+        "ReadWriteMany"
+    ]
