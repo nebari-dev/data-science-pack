@@ -1,48 +1,17 @@
-{{- define "nebari-app.internal.deepDefaultJson" -}}
-{{- $default := .default -}}
-{{- $value := .value -}}
-{{- $result := "" -}}
-{{- if and (kindIs "map" $value) (kindIs "map" $default) -}}
-  {{- $result = dict -}}
-  {{- range $k := concat ($value | keys) ($default | keys) | uniq -}}
-    {{- $vhk := hasKey $value $k -}}
-    {{- $dhk := hasKey $default $k -}}
-    {{- $r := "" -}}
-    {{- if and $vhk (not $dhk) -}}
-      {{- $r = get $value $k -}}
-    {{- else if and (not $vhk) $dhk -}}
-      {{- $r = get $default $k -}}
-    {{- else -}}
-      {{- $r = (include "nebari-app.internal.deepDefaultJson" (dict "default" (get $default $k) "value" (get $value $k)) | fromJson).result -}}
-    {{- end -}}
-    {{- $_ := set $result $k $r -}}
-  {{- end -}}
-{{- else if and (not (eq $value nil)) (ne (kindOf $value) (kindOf $default)) -}}
-  {{- fail "mismatching types" -}}
-{{- else if or (kindIs "bool" $value) (kindIs "int" $value) (kindIs "float" $value) -}}
-  {{- $result = $value -}}
-{{- else -}}
-  {{- $result = default $default $value -}}
+{{- if .Values.nebariapp.enabled -}}
+{{- $spec := omit .Values.nebariapp "enabled" -}}
+{{- if (not $spec.hostname) -}}
+  {{- /* we cannot put this into the values directly, because nebariapp.hostname is used in multiple places in this chart */ -}}
+  {{- $defaultHostname := required "Set keycloak.hostname (for auto-derivation) or nebariapp.hostname explicitly." (include "nebari-data-science-pack.hubHostname" .) -}}
+  {{- $_ := set $spec "hostname" $defaultHostname -}}
 {{- end -}}
-{{- dict "result" $result | toJson -}}
-{{- end -}}
-
-{{- define "nebari-app.deepDefaultJson" -}}
-{{- (include "nebari-app.internal.deepDefaultJson" . | fromJson).result | toJson  -}}
-{{- end -}}
-
-{{- if .Values.nebariapp.enabled }}
 {{- include "nebari-app.nebariApp" (dict
     "metadata" (dict
       "name"      (include "nebari-data-science-pack.fullname" .)
       "namespace" .Release.Namespace
       "labels"    (include "nebari-data-science-pack.labels" . | fromYaml)
     )
-    "spec" (include "nebari-app.deepDefaultJson" (dict
-      "default" (dict
-                  "hostname" (required "Set keycloak.hostname (for auto-derivation) or nebariapp.hostname explicitly." (include "nebari-data-science-pack.hubHostname" .))
-                )
-      "value" (omit .Values.nebariapp "enabled")
-    ) | fromJson)
+    "spec" $spec
+    "ctx"  .
 ) -}}
 {{- end }}
