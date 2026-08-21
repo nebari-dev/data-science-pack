@@ -59,10 +59,16 @@ pack now handles VS Code idleness like notebook idleness:
   seconds / 15 minutes), which jupyter-server evaluates from its own
   activity clock; set it to `0` to disable this feature.
 - **Disconnected sessions exit promptly.** `CODE_SERVER_IDLE_TIMEOUT_SECONDS`
-  is set to `jupyterhub.cull.timeout` (skipped when culling is disabled or
-  the timeout is ≤ 60 seconds, which code-server rejects), so a code-server
-  process whose last browser connection has closed exits on the culler's
-  schedule instead of lingering.
+  is set to `singleuserCuller.server.shutdownNoActivityTimeout` (skipped
+  when the value is ≤ 60 seconds, which code-server rejects — including
+  `0`, i.e. in-pod culling disabled), so a code-server process whose last
+  browser connection has closed exits on the same schedule that culls idle
+  pods instead of lingering.
+- **Delivery failure fails safe.** The proxy-activity opt-out only takes
+  effect when the reporter extension is actually present in the extensions
+  directory. If the per-spawn install fails, proxied traffic counts as
+  activity again — the pod over-spends rather than culling an active user
+  who has no keep-alive channel.
 
 To revert to the previous behavior (any open tab keeps the pod alive), set:
 

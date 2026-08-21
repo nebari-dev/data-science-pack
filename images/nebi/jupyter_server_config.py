@@ -1,3 +1,4 @@
+import glob
 import mimetypes
 import os
 import shutil
@@ -85,11 +86,14 @@ c.ServerProxy.servers = {
 # Registered here instead of via the jupyter-vscode-proxy package so the
 # entry can set update_last_activity=False: with it True (the packaged
 # default), the VS Code browser client's websocket keepalives count as
-# jupyter API activity and neither the in-pod shutdown_no_activity_timeout
-# nor the hub idle culler ever fires while a tab is open
-# (https://github.com/nebari-dev/data-science-pack/issues/208). Real user
-# interaction is reported instead by the bundled nebari-activity-reporter
-# extension (see images/jupyterlab/vscode-activity-reporter/).
+# jupyter API activity, and the in-pod shutdown_no_activity_timeout — the
+# mechanism that actually culls idle-tab pods — never fires while a tab is
+# open (https://github.com/nebari-dev/data-science-pack/issues/208). (The
+# hub-level idle culler is defeated separately and regardless of this
+# setting: configurable-http-proxy counts websocket data as route
+# activity.) Real user interaction is reported instead by the bundled
+# nebari-activity-reporter extension (see
+# images/jupyterlab/vscode-activity-reporter/).
 VSCODE_ICON_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "icons",
@@ -109,6 +113,26 @@ def _vscode_command():
     return cmd
 
 
+def _vscode_reporter_installed():
+    # Shared fate with the keep-alive channel: the chart env var (set
+    # reliably by the spawner) and the reporter vsix install (per-pod
+    # postStart under `|| true`) live in separate failure domains, so a
+    # pod can otherwise land with proxy activity disabled AND no reporter
+    # — and cull an actively-working user at shutdown_no_activity_timeout.
+    # Gate on the installed artifact so a failed install degrades to
+    # over-spending (proxied traffic counts as activity again) instead.
+    # Caveat: postStart runs concurrently with the container entrypoint,
+    # so on a user's first-ever spawn the install may not have finished
+    # when this file is evaluated; that session over-spends, and the
+    # PVC-backed extensions dir makes every later spawn see the artifact.
+    ext_dir = os.environ.get("CODE_EXTENSIONSDIR") or os.path.expanduser(
+        "~/.local/share/code-server/extensions"
+    )
+    return bool(
+        glob.glob(os.path.join(ext_dir, "nebari.nebari-activity-reporter-*"))
+    )
+
+
 # Fail-safe default: absent/empty means the OLD behavior (count proxied
 # traffic as activity) applies. The chart actively opts pods into the new
 # interaction-based behavior by setting this env var to "false" when
@@ -117,9 +141,12 @@ def _vscode_command():
 # older chart release that doesn't yet set the env var) degrades to the
 # safe failure mode (pods over-spend on proxied traffic staying "active")
 # rather than the dangerous one (culling active VS Code users who have no
-# activity-reporter extension installed to keep them alive).
+# activity-reporter extension installed to keep them alive). The same
+# polarity covers per-pod install failure via _vscode_reporter_installed().
 _value = os.environ.get("VSCODE_PROXY_UPDATE_LAST_ACTIVITY", "").strip().lower()
-_vscode_count_proxy_traffic = _value not in ("0", "false", "no")
+_vscode_count_proxy_traffic = (
+    _value not in ("0", "false", "no") or not _vscode_reporter_installed()
+)
 
 c.ServerProxy.servers["vscode"] = {
     "command": _vscode_command(),

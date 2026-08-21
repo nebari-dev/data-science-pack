@@ -318,20 +318,26 @@ if _hub_external_host:
     env["NEBI_SERVER_ALLOWED_ORIGINS"] = f"https://{_hub_external_host}"
 
 # code-server >= 4.106 exits this many seconds after its last browser
-# connection closes. Mirrors the hub idle culler so a lingering code-server
-# child (tab closed, laptop asleep) dies on the same schedule the hub would
-# cull the pod (issue #208). Values <= 60 are rejected by code-server at
-# startup, so skip them rather than break every pod's VS Code. cull.timeout
-# is deployer-supplied and may not parse as an int (bad YAML, a stray
-# string); guard the conversion so a bad value just disables this feature
-# instead of raising and taking down the whole spawner config file.
-if get_config("cull.enabled", False):
-    try:
-        _cull_timeout = int(get_config("cull.timeout", 0) or 0)
-    except (TypeError, ValueError):
-        _cull_timeout = 0
-    if _cull_timeout > 60:
-        env["CODE_SERVER_IDLE_TIMEOUT_SECONDS"] = str(_cull_timeout)
+# connection closes. Keyed to singleuserCuller.server.shutdownNoActivityTimeout
+# (via _CHART_DERIVED), NOT the hub-level cull.timeout: the hub culler never
+# fires while a tab is connected (CHP counts websocket data as route
+# activity), so the in-pod timeout is the schedule idle pods actually cull
+# on, and a lingering code-server child (tab closed, laptop asleep) should
+# die on that same clock (issue #208). Values <= 60 are rejected by
+# code-server at startup, so skip them rather than break every pod's VS
+# Code; 0 (in-pod culling disabled) lands there too, coherently disabling
+# this timer. The value is deployer-supplied and may not parse as an int
+# (bad YAML, a stray string); guard the conversion so a bad value just
+# disables this feature instead of raising and taking down the whole
+# spawner config file.
+try:
+    _vscode_idle_timeout = int(
+        get_chart_config("shutdown-no-activity-timeout", 0) or 0
+    )
+except (TypeError, ValueError):
+    _vscode_idle_timeout = 0
+if _vscode_idle_timeout > 60:
+    env["CODE_SERVER_IDLE_TIMEOUT_SECONDS"] = str(_vscode_idle_timeout)
 
 # Escape hatch for the interaction-based VS Code idle culling (issue #208).
 # The image defaults to the OLD behavior (counting raw proxied traffic as

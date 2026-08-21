@@ -63,12 +63,15 @@ def _last_activity(user):
     return json.loads(out)["last_activity"]
 
 
-def test_code_server_idle_timeout_env_matches_cull_timeout(spawn_user):
-    """Chart default cull.timeout=1800 must reach the pod env verbatim."""
+def test_code_server_idle_timeout_env_matches_inpod_culler(spawn_user):
+    """Chart default singleuserCuller.server.shutdownNoActivityTimeout=900
+    must reach the pod env verbatim — the code-server exit timer mirrors
+    the in-pod culler (the schedule idle pods actually cull on), not the
+    hub-level cull.timeout."""
     u = spawn_user("alice-data")
     rc, out = u.exec("printenv", "CODE_SERVER_IDLE_TIMEOUT_SECONDS")
     assert rc == 0, "CODE_SERVER_IDLE_TIMEOUT_SECONDS not set on the pod"
-    assert out.strip() == "1800"
+    assert out.strip() == "900"
 
 
 def test_activity_reporter_extension_installed(spawn_user):

@@ -57,6 +57,10 @@ data:
         # Mirrors .Values.vscodeActivity.enabled — drives the vscode proxy
         # route's update_last_activity escape hatch in 01-spawner.py.
         "vscode-activity-enabled": {{ ternary "True" "False" .Values.vscodeActivity.enabled }},
+        # Drives CODE_SERVER_IDLE_TIMEOUT_SECONDS in 01-spawner.py: the
+        # code-server exit timer mirrors the in-pod culler's schedule, the
+        # one that actually culls idle pods (issue #208).
+        "shutdown-no-activity-timeout": {{ .Values.singleuserCuller.server.shutdownNoActivityTimeout | quote }},
     }
 
 

@@ -1,10 +1,13 @@
 """CODE_SERVER_IDLE_TIMEOUT_SECONDS wiring in `01-spawner.py`.
 
 code-server >= 4.106 exits N seconds after its last browser connection
-closes when this env var is set. It must mirror the hub idle culler's
-`cull.timeout` (issue #208) — and must be ABSENT when culling is disabled
-or the timeout is <= 60, because code-server refuses to start for values
-<= 60 and that would take down every user pod's VS Code.
+closes when this env var is set. It must mirror the in-pod culler's
+`singleuserCuller.server.shutdownNoActivityTimeout` (issue #208) — the
+schedule idle pods actually cull on, since the hub-level culler never
+fires while a tab is connected (CHP counts websocket data as route
+activity). It must be ABSENT when the value is <= 60, because code-server
+refuses to start for values <= 60 and that would take down every user
+pod's VS Code; 0 (in-pod culling disabled) lands there too.
 """
 
 from __future__ import annotations
@@ -42,38 +45,55 @@ def _load_spawner(c: FakeConfig, z2jh_values: dict | None = None,
         z2jh.get_config = orig
 
 
-def test_idle_timeout_matches_cull_timeout():
+def test_idle_timeout_matches_shutdown_no_activity_timeout():
+    """_CHART_DERIVED renders the value as a quoted string — it must parse
+    and reach the env verbatim."""
     c = FakeConfig()
-    _load_spawner(c, z2jh_values={"cull.enabled": True, "cull.timeout": 1800})
-    assert c.KubeSpawner.environment["CODE_SERVER_IDLE_TIMEOUT_SECONDS"] == "1800"
+    _load_spawner(c, chart_values={"shutdown-no-activity-timeout": "900"})
+    assert c.KubeSpawner.environment["CODE_SERVER_IDLE_TIMEOUT_SECONDS"] == "900"
 
 
-def test_idle_timeout_absent_when_culling_disabled():
+def test_idle_timeout_absent_when_inpod_culling_disabled():
+    """shutdownNoActivityTimeout: 0 disables in-pod culling — there is no
+    schedule to mirror, so the code-server timer must be off too."""
     c = FakeConfig()
-    _load_spawner(c, z2jh_values={"cull.enabled": False, "cull.timeout": 1800})
+    _load_spawner(c, chart_values={"shutdown-no-activity-timeout": "0"})
     assert "CODE_SERVER_IDLE_TIMEOUT_SECONDS" not in c.KubeSpawner.environment
+
+
+def test_idle_timeout_independent_of_hub_culler():
+    """Regression for the review-flagged coupling: disabling the hub-level
+    `cull` (which CHP defeats anyway) must NOT turn off the code-server
+    timer — it keys off the in-pod culler alone."""
+    c = FakeConfig()
+    _load_spawner(
+        c,
+        z2jh_values={"cull.enabled": False, "cull.timeout": 1800},
+        chart_values={"shutdown-no-activity-timeout": "900"},
+    )
+    assert c.KubeSpawner.environment["CODE_SERVER_IDLE_TIMEOUT_SECONDS"] == "900"
 
 
 def test_idle_timeout_absent_when_60_or_less():
     """code-server errors out at startup for values <= 60 — never set them."""
     c = FakeConfig()
-    _load_spawner(c, z2jh_values={"cull.enabled": True, "cull.timeout": 60})
+    _load_spawner(c, chart_values={"shutdown-no-activity-timeout": "60"})
     assert "CODE_SERVER_IDLE_TIMEOUT_SECONDS" not in c.KubeSpawner.environment
 
 
 def test_idle_timeout_set_at_boundary_61():
     """61 is the smallest value code-server accepts; must be set verbatim."""
     c = FakeConfig()
-    _load_spawner(c, z2jh_values={"cull.enabled": True, "cull.timeout": 61})
+    _load_spawner(c, chart_values={"shutdown-no-activity-timeout": "61"})
     assert c.KubeSpawner.environment["CODE_SERVER_IDLE_TIMEOUT_SECONDS"] == "61"
 
 
-def test_idle_timeout_ignores_non_numeric_timeout():
-    """cull.timeout is deployer-supplied and may not parse as an int; a bad
+def test_idle_timeout_ignores_non_numeric_value():
+    """The value is deployer-supplied and may not parse as an int; a bad
     value must disable the feature rather than raise and take down the
     whole spawner config file."""
     c = FakeConfig()
-    _load_spawner(c, z2jh_values={"cull.enabled": True, "cull.timeout": "not-a-number"})
+    _load_spawner(c, chart_values={"shutdown-no-activity-timeout": "not-a-number"})
     assert "CODE_SERVER_IDLE_TIMEOUT_SECONDS" not in c.KubeSpawner.environment
 
 

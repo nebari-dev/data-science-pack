@@ -25,6 +25,18 @@ def _load_image_config(c: FakeConfig):
     return module
 
 
+def _install_reporter(monkeypatch, tmp_path, installed=True):
+    """Point CODE_EXTENSIONSDIR at a temp extensions dir, optionally
+    containing the artifact the postStart vsix install would leave behind
+    (code-server unpacks to <publisher>.<name>-<version>/)."""
+    ext_dir = tmp_path / "extensions"
+    ext_dir.mkdir(exist_ok=True)
+    if installed:
+        (ext_dir / "nebari.nebari-activity-reporter-0.1.0").mkdir()
+    monkeypatch.setenv("CODE_EXTENSIONSDIR", str(ext_dir))
+    return ext_dir
+
+
 def test_vscode_entry_registered_alongside_nebi(monkeypatch):
     monkeypatch.delenv("VSCODE_PROXY_UPDATE_LAST_ACTIVITY", raising=False)
     monkeypatch.delenv("CODE_EXTENSIONSDIR", raising=False)
@@ -46,19 +58,50 @@ def test_vscode_counts_proxy_traffic_by_default_without_chart_plumbing(monkeypat
     assert c.ServerProxy.servers["vscode"]["update_last_activity"] is True
 
 
-def test_vscode_chart_optin_disables_activity_counting(monkeypatch):
+def test_vscode_chart_optin_disables_activity_counting(monkeypatch, tmp_path):
     """The chart opts pods into the new behavior by setting the env var to
-    "false" when vscodeActivity.enabled is true."""
+    "false" when vscodeActivity.enabled is true — effective only with the
+    reporter artifact present (shared fate)."""
     monkeypatch.setenv("VSCODE_PROXY_UPDATE_LAST_ACTIVITY", "false")
+    _install_reporter(monkeypatch, tmp_path, installed=True)
     c = FakeConfig()
     _load_image_config(c)
     assert c.ServerProxy.servers["vscode"]["update_last_activity"] is False
 
 
-def test_vscode_escape_hatch_env_restores_activity_counting(monkeypatch):
+def test_vscode_optin_ineffective_without_reporter_artifact(monkeypatch, tmp_path):
+    """Shared fate: the chart env var and the postStart vsix install live in
+    separate failure domains. If the install failed (no artifact in the
+    extensions dir), disabling proxy activity would cull actively-working
+    users with no keep-alive channel — so the opt-in must NOT take effect
+    and the pod degrades to over-spending instead."""
+    monkeypatch.setenv("VSCODE_PROXY_UPDATE_LAST_ACTIVITY", "false")
+    _install_reporter(monkeypatch, tmp_path, installed=False)
+    c = FakeConfig()
+    _load_image_config(c)
+    assert c.ServerProxy.servers["vscode"]["update_last_activity"] is True
+
+
+def test_vscode_reporter_check_uses_default_extensions_dir(monkeypatch, tmp_path):
+    """With CODE_EXTENSIONSDIR unset, the shared-fate check must look in
+    code-server's default extensions dir (~/.local/share/code-server/
+    extensions) — the same place the postStart install writes to."""
+    monkeypatch.setenv("VSCODE_PROXY_UPDATE_LAST_ACTIVITY", "false")
+    monkeypatch.delenv("CODE_EXTENSIONSDIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    default_dir = tmp_path / ".local/share/code-server/extensions"
+    (default_dir / "nebari.nebari-activity-reporter-0.1.0").mkdir(parents=True)
+    c = FakeConfig()
+    _load_image_config(c)
+    assert c.ServerProxy.servers["vscode"]["update_last_activity"] is False
+
+
+def test_vscode_escape_hatch_env_restores_activity_counting(monkeypatch, tmp_path):
     """An explicit "true" env var (e.g. set manually via extraEnv) restores
-    the old activity-counting behavior regardless of chart plumbing."""
+    the old activity-counting behavior regardless of chart plumbing —
+    even with the reporter installed."""
     monkeypatch.setenv("VSCODE_PROXY_UPDATE_LAST_ACTIVITY", "true")
+    _install_reporter(monkeypatch, tmp_path, installed=True)
     c = FakeConfig()
     _load_image_config(c)
     assert c.ServerProxy.servers["vscode"]["update_last_activity"] is True
