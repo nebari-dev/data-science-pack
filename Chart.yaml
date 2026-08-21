@@ -11,5 +11,5 @@ dependencies:
     version: 4.4.0
     repository: https://hub.jupyter.org/helm-chart/
   - name: nebari-app
-    repository: oci://quay.io/nebari/charts
-    version: "0.1.0"
+    repository: oci://quay.io/reiemp/charts
+    version: "0.1.1"

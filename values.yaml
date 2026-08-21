@@ -72,7 +72,8 @@ nebariapp:
   # External JupyterHub FQDN.
   # If empty, derived from keycloak.hostname as `<subdomains.hub>.<base-domain>`.
   # e.g. keycloak.hostname=keycloak.example.com → hub.example.com
-  hostname: ""
+  hostname: '{{ required "Set keycloak.hostname (for auto-derivation) or nebariapp.hostname explicitly." (include "nebari-data-science-pack.hubHostname" .) }}'
+  # hostname: '{{ include "nebari-data-science-pack.hubHostname" . }}'
   service:
     # JupyterHub proxy service (created by jupyterhub subchart)
     name: proxy-public
