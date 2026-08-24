@@ -176,11 +176,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
 
-      - name: Provision Nebari sandbox (k3d + NIC platform stack)
+      - name: Provision Nebari sandbox (kind + NIC platform stack)
         id: sandbox
-        uses: nebari-dev/action-nebari-sandbox@dbdb054c16efee3b29e26aee406c12fb9639bfd0  # v2.2.0
-        with:
-          profile: platform
+        uses: nebari-dev/action-nebari-sandbox@9ac369ebf87ac2ae217504dcbf824c77f70e429a  # v3.0.0
 
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
