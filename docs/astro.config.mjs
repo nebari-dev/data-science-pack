@@ -34,9 +34,19 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Administration',
+          items: [
+            { label: 'Admin setup', slug: 'admin-setup' },
+            { label: 'Server profiles', slug: 'server-profiles' },
+            { label: 'Nebi integration', slug: 'nebi-integration' },
+            { label: 'MLflow integration', slug: 'mlflow-integration' },
+          ],
+        },
+        {
           label: 'Reference',
           items: [
             { label: 'Configuration', slug: 'configuration' },
+            { label: 'Values reference', slug: 'values-reference' },
             { label: 'NebariApp Integration', slug: 'nebariapp-integration' },
           ],
         },

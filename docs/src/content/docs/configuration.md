@@ -24,7 +24,21 @@ Every derived value can still be overridden explicitly. Values under
 
 For the full set of fields and their defaults, read
 [`values.yaml`](https://github.com/nebari-dev/data-science-pack/blob/main/values.yaml)
-directly — it is heavily commented and is the source of truth.
+directly — it is heavily commented and is the source of truth. The
+[Values reference](/values-reference/) covers the same ground field by field, including the
+derivation rules and the defaults worth knowing about before you override them.
+
+## Detailed guides
+
+- [Admin setup](/admin-setup/) — cluster prerequisites, the derivation model, and what the
+  chart creates.
+- [Values reference](/values-reference/) — every field in every section.
+- [Server profiles](/server-profiles/) — `jupyterhub.custom.profiles`, image choices, and
+  per-group gating.
+- [Nebi integration](/nebi-integration/) — the `nebi.*` values and the token exchange behind
+  them.
+- [MLflow integration](/mlflow-integration/) — `jupyterhub.singleuser.extraEnv` plus an
+  egress rule.
 
 ## Local development
 
