@@ -148,3 +148,25 @@ def test_get_chart_config_explicit_override_wins(rendered_chart_derived):
     )
     got = ns["get_chart_config"]("external-url")
     assert got == "explicit.example.com"
+
+
+def test_gpu_image_derived_from_singleuser_image(rendered_chart_derived):
+    """The chart derives the GPU jupyterlab image from singleuser.image
+    (same sha tag, `-gpu` repo suffix) so `gpu: true` profiles track pack
+    updates without hardcoded SHAs (issue #230)."""
+    ns = _exec_chart_derived(rendered_chart_derived, z2jh_values={})
+    got = ns["get_chart_config"]("gpu-image")
+    assert re.fullmatch(
+        r"quay\.io/nebari/nebari-data-science-pack-jupyterlab-gpu:sha-[0-9a-f]{7}", got
+    ), (
+        f"get_chart_config('gpu-image') returned {got!r}; expected the "
+        "singleuser image name with a -gpu suffix and the same tag."
+    )
+
+
+def test_gpu_image_explicit_override_wins(rendered_chart_derived):
+    ns = _exec_chart_derived(
+        rendered_chart_derived,
+        z2jh_values={"custom.gpu-image": "example.com/lab-gpu:v1"},
+    )
+    assert ns["get_chart_config"]("gpu-image") == "example.com/lab-gpu:v1"

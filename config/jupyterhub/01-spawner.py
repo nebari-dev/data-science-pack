@@ -442,7 +442,34 @@ async def _render_profile_list(spawner):
     return visible
 
 
-_profiles = get_config("custom.profiles", [])
+def _resolve_gpu_profiles(profiles, gpu_image):
+    """Inject the chart-derived GPU image into ``gpu: true`` profiles.
+
+    Both jupyterlab images are built from the same commit with the same
+    ``sha-<short>`` tag, so the chart derives the GPU ref from
+    ``singleuser.image`` (override via ``custom.gpu-image``). Marking a
+    profile ``gpu: true`` keeps its image current across pack updates
+    without hardcoding a SHA in the deployer overlay (issue #230).
+
+    An explicit ``kubespawner_override.image`` always wins. The ``gpu`` key
+    is stripped either way — KubeSpawner must never see it. Returns new
+    dicts; the input list is left untouched.
+    """
+    resolved = []
+    for profile in profiles:
+        if profile.get("gpu"):
+            profile = {k: v for k, v in profile.items() if k != "gpu"}
+            override = dict(profile.get("kubespawner_override") or {})
+            if gpu_image and not override.get("image"):
+                override["image"] = gpu_image
+            profile["kubespawner_override"] = override
+        resolved.append(profile)
+    return resolved
+
+
+_profiles = _resolve_gpu_profiles(
+    get_config("custom.profiles", []), get_chart_config("gpu-image")
+)
 if _profiles:
     c.KubeSpawner.profile_list = _render_profile_list
     log.info(

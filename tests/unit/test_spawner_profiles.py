@@ -268,6 +268,97 @@ def test_render_profile_list_hides_restricted_profile_from_outsider():
     assert [p["slug"] for p in visible] == ["small"]
 
 
+GPU_IMAGE = "quay.io/nebari/nebari-data-science-pack-jupyterlab-gpu:sha-5dfee5e"
+
+
+def test_gpu_profile_gets_derived_image_injected():
+    """A ``gpu: true`` profile with no explicit image gets the chart-derived
+    GPU image, so deployers stop hardcoding SHAs (issue #230)."""
+    mod, _ = _load()
+
+    profiles = [{"slug": "gpu", "gpu": True, "kubespawner_override": {"cpu_limit": 4}}]
+    resolved = mod._resolve_gpu_profiles(profiles, GPU_IMAGE)
+
+    assert resolved[0]["kubespawner_override"]["image"] == GPU_IMAGE
+    assert resolved[0]["kubespawner_override"]["cpu_limit"] == 4
+
+
+def test_gpu_profile_explicit_image_wins():
+    mod, _ = _load()
+
+    profiles = [{"slug": "gpu", "gpu": True, "kubespawner_override": {"image": "custom:1"}}]
+    resolved = mod._resolve_gpu_profiles(profiles, GPU_IMAGE)
+
+    assert resolved[0]["kubespawner_override"]["image"] == "custom:1"
+
+
+def test_gpu_key_is_stripped_before_kubespawner():
+    mod, _ = _load()
+
+    profiles = [
+        {"slug": "gpu", "gpu": True},
+        {"slug": "gpu2", "gpu": True, "kubespawner_override": {"image": "custom:1"}},
+    ]
+    resolved = mod._resolve_gpu_profiles(profiles, GPU_IMAGE)
+
+    assert all("gpu" not in p for p in resolved)
+    # A profile without kubespawner_override still gets the image injected.
+    assert resolved[0]["kubespawner_override"]["image"] == GPU_IMAGE
+
+
+def test_non_gpu_profile_is_untouched():
+    mod, _ = _load()
+
+    profiles = [{"slug": "small", "kubespawner_override": {"cpu_limit": 1}}]
+    resolved = mod._resolve_gpu_profiles(profiles, GPU_IMAGE)
+
+    assert resolved == profiles
+
+
+def test_gpu_profile_without_derived_image_falls_back_to_default():
+    """When the chart cannot derive a GPU image (singleuser.image unset),
+    the gpu key is still stripped and no image is injected."""
+    mod, _ = _load()
+
+    profiles = [{"slug": "gpu", "gpu": True, "kubespawner_override": {"cpu_limit": 4}}]
+    resolved = mod._resolve_gpu_profiles(profiles, "")
+
+    assert "gpu" not in resolved[0]
+    assert "image" not in resolved[0]["kubespawner_override"]
+
+
+def test_gpu_resolution_does_not_mutate_input_profiles():
+    mod, _ = _load()
+
+    profiles = [{"slug": "gpu", "gpu": True, "kubespawner_override": {"cpu_limit": 4}}]
+    mod._resolve_gpu_profiles(profiles, GPU_IMAGE)
+
+    assert profiles == [{"slug": "gpu", "gpu": True, "kubespawner_override": {"cpu_limit": 4}}]
+
+
+def test_gpu_image_injected_at_load_time():
+    """Module load resolves gpu profiles from custom.profiles + custom.gpu-image,
+    so both the spawner and jhub-apps see the injected image."""
+    z2jh = sys.modules["z2jh"]
+    prior = z2jh.get_config
+
+    def fake_get_config(key, default=None):
+        if key == "custom.profiles":
+            return [{"slug": "gpu", "gpu": True}]
+        if key == "custom.gpu-image":
+            return GPU_IMAGE
+        return default
+
+    z2jh.get_config = fake_get_config
+    try:
+        mod, _ = _load()
+        assert mod._profiles == [
+            {"slug": "gpu", "kubespawner_override": {"image": GPU_IMAGE}}
+        ]
+    finally:
+        z2jh.get_config = prior
+
+
 def test_profile_list_is_the_filtering_callable_when_profiles_configured():
     """When profiles exist, KubeSpawner.profile_list is wired to the per-user
     callable, not the raw static list."""

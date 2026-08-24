@@ -150,6 +150,37 @@ kubectl -n data-science logs deploy/hub | grep -i "profiles:\|groups"
 
 ## GPU profiles
 
+### The GPU image, without hardcoding a SHA
+
+Mark a profile `gpu: true` and the chart injects the matching GPU JupyterLab image
+(`nebari-data-science-pack-jupyterlab-gpu`) at the chart's current tag:
+
+```yaml
+      - slug: gpu-instance
+        display_name: "G4 GPU Instance"
+        gpu: true
+        access: yaml
+        groups:
+          - gpu-access
+        kubespawner_override:
+          # no image needed — the -gpu image is injected automatically
+          node_selector:
+            node.kubernetes.io/instance-type: g4dn.xlarge
+          extra_resource_limits:
+            nvidia.com/gpu: 1
+```
+
+Both JupyterLab images are built from the same commit and share the same `sha-` tag, so
+the derived ref (`<singleuser.image.name>-gpu:<singleuser.image.tag>`) is always valid and
+GPU profiles now track pack updates exactly like CPU profiles — no more stale SHAs in the
+overlay ([issue #230](https://github.com/nebari-dev/data-science-pack/issues/230)).
+
+An explicit `kubespawner_override.image` always wins over the injection, and
+`jupyterhub.custom.gpu-image` overrides which image gets injected chart-wide. Like the
+gating keys, `gpu` is stripped before the profile reaches KubeSpawner.
+
+### Scheduling onto GPU nodes
+
 A GPU profile requests the resource through `extra_resource_limits`, but scheduling onto a
 tainted GPU node group also needs a toleration — whether you must add it yourself depends on
 whether the cluster runs the `ExtendedResourceToleration` admission controller (EKS and GKE

@@ -162,6 +162,19 @@ In-cluster Nebi URL. Order of precedence:
 Nebi image reference (repository:tag). Empty when nebi.image.tag is not
 pinned — Python init-container code path stays a no-op.
 */}}
+{{/*
+GPU JupyterLab image (full ref). Derived from jupyterhub.singleuser.image —
+the -gpu variant is built from the same commit as the CPU image, so it always
+shares the same sha tag. Empty when name/tag unset (plain kind deploys).
+Deployer override lives in jupyterhub.custom.gpu-image.
+*/}}
+{{- define "nebari-data-science-pack.gpuJupyterlabImage" -}}
+{{- $img := ((.Values.jupyterhub).singleuser).image | default dict -}}
+{{- if and $img.name $img.tag -}}
+{{- printf "%s-gpu:%s" $img.name $img.tag -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "nebari-data-science-pack.nebiImage" -}}
 {{- $repo := .Values.nebi.image.repository | default "quay.io/nebari/nebi" -}}
 {{- $tag := .Values.nebi.image.tag | default "" -}}

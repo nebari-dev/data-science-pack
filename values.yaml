@@ -390,6 +390,12 @@ jupyterhub:
     # If empty, derived as `<nebi.image.repository>:<nebi.image.tag>`.
     nebi-image: ""
     nebi-image-pull-policy: "IfNotPresent"
+    # GPU JupyterLab image (full ref) injected into profiles marked ``gpu: true``
+    # (see the profiles docs below). If empty, derived as
+    # ``<singleuser.image.name>-gpu:<singleuser.image.tag>`` — the GPU variant is
+    # built from the same commit as the CPU image, so the tags always match and
+    # GPU profiles track pack updates automatically.
+    gpu-image: ""
     # jhub-app-proxy version installed at app-spawn time. Must be >= v0.2.3 for
     # apps to run inside a Nebi (pixi) environment; older versions only support
     # conda activation and fall back to the base env (missing packages).
@@ -486,9 +492,14 @@ jupyterhub:
     #     access: yaml
     #     groups:
     #       - gpu-access
+    #     gpu: true          # inject the -gpu jupyterlab image automatically
     #     kubespawner_override:
     #       extra_resource_limits:
     #         nvidia.com/gpu: 1
+    # Profiles marked ``gpu: true`` get ``kubespawner_override.image`` set to
+    # the chart's GPU jupyterlab image (see ``gpu-image`` above) unless an
+    # explicit image is given, so deployers never hardcode a -gpu SHA. The
+    # ``gpu`` key is stripped before the profile reaches KubeSpawner.
     # NOTE: when bumping singleuser.image.tag below, also bump the
     # ``image: ...`` lines inside each profile_options.image.choices.default
     # entry so the profile selector shows the right tag. (z2jh values.yaml
