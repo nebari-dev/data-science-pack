@@ -72,6 +72,31 @@ make down
 
 See `values.yaml` for all configuration options. The chart wraps the [JupyterHub Helm chart](https://z2jh.jupyter.org/) - all `jupyterhub.*` values are passed through.
 
+### Nebi Registries
+
+Admins can provision OCI registries for every user's nebi instance via
+`nebi.registries`. Only public (unauthenticated) registries are supported;
+entries carry no credentials:
+
+```yaml
+nebi:
+  registries:
+    - name: acme-registry
+      url: registry.acme.com
+      namespace: acme-envs
+      default: true
+```
+
+Each entry follows nebi's own `registries.entries` schema (`name`, `url`,
+`namespace`, `default`) and is rendered into a ConfigMap mounted into user
+pods, so entries are locked in the UI rather than editable per-user.
+
+Set `nebi.seedDefaultRegistry: false` to remove the built-in
+`quay.io/nebari_environments` registry that nebi seeds by default.
+
+Both settings only take effect for user servers started after the hub pod
+restarts, since the mount wiring lives in the hub ConfigMap.
+
 ## Shared Storage
 
 Per-group shared directories (`/shared/<group>` in every user pod) need a
@@ -134,6 +159,39 @@ To release a new version:
    - Publishes the chart to GitHub Pages
 
 **Note:** Enable GitHub Pages on the `gh-pages` branch in repo settings after the first release.
+
+## Documentation
+
+The docs site lives in [`docs/`](docs/) and is built with [Astro](https://astro.build) +
+[Starlight](https://starlight.astro.build) using the shared `@nebari/starlight` theme. It
+deploys to [packs.nebari.dev/data-science-pack/](https://packs.nebari.dev/data-science-pack/)
+on every merge to `main`; pull requests that touch `docs/` get a preview URL posted as a
+comment.
+
+Administrator guides:
+
+- [Admin setup](https://packs.nebari.dev/data-science-pack/admin-setup/) - cluster
+  prerequisites, the one required value, and what the chart creates.
+- [Values reference](https://packs.nebari.dev/data-science-pack/values-reference/) -
+  field-by-field detail for every value.
+- [Server profiles](https://packs.nebari.dev/data-science-pack/server-profiles/) - sizing
+  JupyterLab servers and gating profiles by group.
+- [Nebi integration](https://packs.nebari.dev/data-science-pack/nebi-integration/) - images,
+  OIDC clients, token exchange, registries.
+- [MLflow integration](https://packs.nebari.dev/data-science-pack/mlflow-integration/) -
+  letting notebooks log experiments to MLflow.
+
+```bash
+cd docs
+npm ci
+npm run dev     # dev server with hot reload at http://localhost:4321
+npm run build   # static build into docs/dist/
+npm test        # unit tests
+```
+
+Pages live in `docs/src/content/docs/` - each `.md` or `.mdx` file becomes a page, and the
+sidebar is configured in `docs/astro.config.mjs`. See [`docs/README.md`](docs/README.md) for
+details.
 
 ## License
 

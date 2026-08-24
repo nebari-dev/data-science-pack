@@ -20,6 +20,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 from urllib.parse import urlencode
 
 from oauthenticator.generic import GenericOAuthenticator
@@ -47,7 +48,7 @@ class KCRealmAdmin:
     Construction is pure; only the public method does I/O.
     """
 
-    REQUIRED_ATTRS = {
+    REQUIRED_ATTRS: ClassVar[dict[str, str]] = {
         "component": "shared-directory",
         "scopes": "write:shared-mount",
     }
@@ -206,14 +207,39 @@ class KeyCloakConfig:
     post_logout_redirect_uri: str
 
     @classmethod
-    def build(cls, *, issuer: str, post_logout_redirect_uri: str) -> "KeyCloakConfig":
-        """Derive every KC endpoint URL from the realm issuer."""
+    def build(
+        cls,
+        *,
+        issuer: str,
+        post_logout_redirect_uri: str,
+        backchannel_issuer: str = "",
+    ) -> "KeyCloakConfig":
+        """Derive every KC endpoint URL from the realm issuer.
+
+        When ``backchannel_issuer`` is a non-empty string, ``token_url`` and
+        ``userdata_url`` are derived from it instead of ``issuer``, while
+        ``authorize_url`` and ``end_session_url`` keep using ``issuer``.
+        This split-horizon shape is needed on private-VPC clusters where
+        the external Keycloak hostname baked into ``issuer`` is not
+        resolvable from inside the cluster — the browser reaches the
+        external URL for the authorize + logout redirects, but the hub
+        talks to Keycloak via an in-cluster URL for the token + userinfo
+        legs. The ``iss`` claim in issued tokens still matches ``issuer``
+        (Keycloak's ``KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`` reconciles
+        which URL a token comes back on with which one embeds in ``iss``),
+        so downstream validators unchanged.
+
+        When empty (default), all four URLs use ``issuer`` — behaviour is
+        byte-identical to the prior single-issuer signature. Existing
+        callers do not need to change.
+        """
         base = f"{issuer}/protocol/openid-connect"
+        bc_base = f"{(backchannel_issuer or issuer)}/protocol/openid-connect"
         return cls(
             issuer=issuer,
             authorize_url=f"{base}/auth",
-            token_url=f"{base}/token",
-            userdata_url=f"{base}/userinfo",
+            token_url=f"{bc_base}/token",
+            userdata_url=f"{bc_base}/userinfo",
             end_session_url=f"{base}/logout",
             post_logout_redirect_uri=post_logout_redirect_uri,
         )
@@ -348,7 +374,7 @@ class KeyCloakOAuthenticator(GenericOAuthenticator):
             if e.response is not None and e.response.body:
                 try:
                     err_kind = json.loads(e.response.body).get("error", "")
-                except Exception:
+                except (ValueError, AttributeError):
                     pass
             if e.code == 400 and err_kind == "invalid_grant":
                 self.log.warning(
@@ -412,7 +438,15 @@ class KeyCloakOAuthenticator(GenericOAuthenticator):
                 old_profiles = auth_state.get("allowed_jupyterlab_profiles")
                 if old_profiles is not None:
                     new_state["allowed_jupyterlab_profiles"] = old_profiles
-        return {"auth_state": new_state}
+        auth_model = {"auth_state": new_state}
+        if self.manage_groups:
+            # With manage_groups enabled, JupyterHub treats a refresh
+            # auth_model whose "groups" is absent/None as an error at
+            # spawn time (refresh_pre_spawn), failing the spawn with 500.
+            # Re-derive groups from the preserved oauth_user claims the
+            # same way update_auth_model does at login.
+            auth_model["groups"] = sorted(await self.get_user_groups(new_state))
+        return auth_model
 
     async def update_auth_model(self, auth_model):
         """Stamp auth_state with the subset of KC groups that hold the
@@ -502,6 +536,7 @@ def configure(
     realm_api_url: str = "",
     shared_mount_role_name: str = "allow-group-directory-creation-role",
     jupyterlab_profiles_role_name: str = "jupyterlab-profiles",
+    backchannel_issuer: str = "",
 ):
     """Wire KeyCloakOAuthenticator onto JupyterHub's `c` config object.
 
@@ -513,9 +548,19 @@ def configure(
     KC client role whose ``profiles`` attribute lists the slugs a holder may
     select for ``access: keycloak`` profiles. Both default to the classic
     nebari names.
+
+    ``backchannel_issuer`` enables split-horizon OIDC: when non-empty, the
+    hub uses this URL for the ``token_url`` and ``userdata_url`` legs while
+    the browser continues to use ``issuer`` for ``authorize_url`` and
+    ``end_session_url``. Needed on private-VPC clusters where in-cluster
+    CoreDNS cannot resolve the external Keycloak hostname. Empty (default)
+    means "no split-horizon" and all four URLs use ``issuer`` — behaviour
+    unchanged from the single-issuer signature.
     """
     kc_config = KeyCloakConfig.build(
-        issuer=issuer, post_logout_redirect_uri=external_url,
+        issuer=issuer,
+        backchannel_issuer=backchannel_issuer,
+        post_logout_redirect_uri=external_url,
     )
     c.JupyterHub.authenticator_class = KeyCloakOAuthenticator
     c.KeyCloakOAuthenticator.client_id = client_id
@@ -534,8 +579,12 @@ def configure(
     # scope param entirely; KC then issues a token without `openid` and
     # /userinfo returns 403 at token_to_user.
     c.KeyCloakOAuthenticator.scope = ["openid", "profile", "email", "groups"]
-    c.KeyCloakOAuthenticator.claim_groups_key = "groups"
-    c.KeyCloakOAuthenticator.admin_groups = set(admin_groups or ["admin"])
+    # OAuthenticator 17 requires managed groups for admin_groups.
+    # The Keycloak groups mapper is reconciled to emit full paths; keep
+    # those paths here so /admin is not conflated with /team/admin.
+    c.KeyCloakOAuthenticator.manage_groups = True
+    c.KeyCloakOAuthenticator.auth_state_groups_key = "oauth_user.groups"
+    c.KeyCloakOAuthenticator.admin_groups = set(admin_groups or ["/admin"])
     # Persist tokens so refresh_user can use the stored refresh_token.
     c.KeyCloakOAuthenticator.enable_auth_state = True
     c.KeyCloakOAuthenticator.refresh_pre_spawn = True
@@ -614,7 +663,7 @@ def _resolve_oauth_urls() -> tuple[str, str] | None:
 # Without (2), the chart's default authenticator (dummy) stays in place,
 # so plain `kind` deploys come up without needing the operator Secret.
 try:
-    c  # type: ignore[used-before-def]
+    _ = c  # type: ignore[used-before-def]
 except NameError:
     pass
 else:
@@ -633,14 +682,24 @@ else:
             os.environ.get("KC_REALM_API_URL")
             or _derive_realm_api_url(_issuer)
         )
+        # Split-horizon OIDC: if set, ``token_url`` and ``userdata_url``
+        # use this URL instead of ``issuer``. Sourced from the chart via
+        # ``get_chart_config`` (which reads ``custom.keycloak-backchannel-
+        # issuer-url`` first, then falls back to the chart-derived value
+        # baked in by ``00-chart-derived.py`` at Helm render time from
+        # ``keycloak.backchannelURL``). Empty string → no split-horizon.
+        _backchannel_issuer = get_chart_config(
+            "keycloak-backchannel-issuer-url", "",
+        )
         configure(
-            c,  # noqa: F821
+            c,
             issuer=_issuer,
             client_id=_read_secret_file(_secret_dir, "client-id"),
             client_secret=_read_secret_file(_secret_dir, "client-secret"),
             callback_url=_callback_url,
             external_url=_external_url,
             realm_api_url=_realm_api_url,
+            backchannel_issuer=_backchannel_issuer,
             shared_mount_role_name=os.environ.get(
                 "KC_SHARED_MOUNT_ROLE",
                 "allow-group-directory-creation-role",
