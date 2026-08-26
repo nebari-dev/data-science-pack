@@ -395,6 +395,11 @@ jupyterhub:
     # ``<singleuser.image.name>-gpu:<singleuser.image.tag>`` — the GPU variant is
     # built from the same commit as the CPU image, so the tags always match and
     # GPU profiles track pack updates automatically.
+    # If you mirror ``singleuser.image.name`` into a private/airgapped registry,
+    # mirror the ``-gpu`` image too or set this explicitly — the derived ref is
+    # not validated at install time, so a missing mirror only shows up as
+    # ImagePullBackOff on the first GPU spawn. The ``-gpu`` image is linux/amd64
+    # only (the CPU image is multi-arch).
     gpu-image: ""
     # jhub-app-proxy version installed at app-spawn time. Must be >= v0.2.3 for
     # apps to run inside a Nebi (pixi) environment; older versions only support
@@ -499,7 +504,16 @@ jupyterhub:
     # Profiles marked ``gpu: true`` get ``kubespawner_override.image`` set to
     # the chart's GPU jupyterlab image (see ``gpu-image`` above) unless an
     # explicit image is given, so deployers never hardcode a -gpu SHA. The
-    # ``gpu`` key is stripped before the profile reaches KubeSpawner.
+    # ``gpu`` key is stripped (whatever its value) before the profile reaches
+    # KubeSpawner. Two caveats:
+    #   * an explicit ``kubespawner_override.image`` is never touched — and
+    #     scripts/bump_image_tags.py only rewrites the CPU image, so a pinned
+    #     -gpu ref stays frozen across releases (the exact problem gpu: true
+    #     exists to avoid). Prefer the flag over pinning.
+    #   * do not combine ``gpu: true`` with ``profile_options.image`` — the
+    #     selected choice's image replaces the injected one at spawn time
+    #     (KubeSpawner applies choice overrides after profile overrides). The
+    #     hub logs a warning if you do.
     # NOTE: when bumping singleuser.image.tag below, also bump the
     # ``image: ...`` lines inside each profile_options.image.choices.default
     # entry so the profile selector shows the right tag. (z2jh values.yaml

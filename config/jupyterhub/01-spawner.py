@@ -330,7 +330,12 @@ c.KubeSpawner.environment = env
 # ``kubespawner_override`` accepts any valid KubeSpawner trait so deployers
 # can add node_selector, image, extra_resource_limits (GPU), etc. without
 # code changes. Empty list = no profile selector (single-instance mode).
-# Keys used only for group gating; KubeSpawner must never see them.
+# Keys used only for group gating; KubeSpawner must never see them. They are
+# stripped per user in _filter_profiles because gating is a per-user decision.
+# The ``gpu`` marker is the other chart-only key — it is stripped once at load
+# in _resolve_gpu_profiles because its effect (image injection) is the same for
+# every user and jhub-apps reads the resolved list too. A future custom key
+# belongs in whichever of the two matches how it is evaluated.
 _PROFILE_GATING_KEYS = ("access", "groups", "users")
 
 
@@ -452,30 +457,64 @@ def _resolve_gpu_profiles(profiles, gpu_image):
     without hardcoding a SHA in the deployer overlay (issue #230).
 
     An explicit ``kubespawner_override.image`` always wins. The ``gpu`` key
-    is stripped either way — KubeSpawner must never see it. Returns new
-    dicts; the input list is left untouched.
+    is stripped whatever its value — KubeSpawner must never see it. Returns
+    new dicts; the input list is left untouched.
+
+    Two cases only warn, because raising here would break hub startup (and
+    therefore login) for every user:
+      * ``gpu_image`` is empty — the chart could not derive a ref
+        (``singleuser.image.name``/``tag`` empty) and ``custom.gpu-image``
+        is unset. The profile falls back to the CPU default image.
+      * the profile declares ``profile_options.image`` — KubeSpawner applies
+        the selected choice's ``kubespawner_override`` AFTER the profile-level
+        one and replaces rather than merges, so the choice's image silently
+        wins over the injected one at spawn time (while jhub-apps still
+        displays the injected one).
     """
     resolved = []
     for profile in profiles:
-        if profile.get("gpu"):
-            profile = {k: v for k, v in profile.items() if k != "gpu"}
-            override = dict(profile.get("kubespawner_override") or {})
-            if gpu_image and not override.get("image"):
+        if "gpu" not in profile:
+            resolved.append(profile)
+            continue
+        name = profile.get("slug") or profile.get("display_name")
+        is_gpu = bool(profile["gpu"])
+        profile = {k: v for k, v in profile.items() if k != "gpu"}
+        if not is_gpu:
+            resolved.append(profile)
+            continue
+        override = dict(profile.get("kubespawner_override") or {})
+        if not override.get("image"):
+            if gpu_image:
                 override["image"] = gpu_image
-            profile["kubespawner_override"] = override
+                log.info("profiles: %r is gpu: true — injected image %s", name, gpu_image)
+            else:
+                log.warning(
+                    "profiles: %r is marked gpu: true but no GPU image could be "
+                    "derived (singleuser.image.name/tag empty?) and custom.gpu-image "
+                    "is unset — the profile will spawn the CPU default image",
+                    name,
+                )
+        if "image" in (profile.get("profile_options") or {}):
+            log.warning(
+                "profiles: %r is marked gpu: true but declares profile_options.image; "
+                "the selected choice's image overrides the injected GPU image at spawn "
+                "time — drop the option or point its choices at the GPU image",
+                name,
+            )
+        profile["kubespawner_override"] = override
         resolved.append(profile)
     return resolved
 
 
-_profiles = _resolve_gpu_profiles(
-    get_config("custom.profiles", []), get_chart_config("gpu-image")
-)
+_gpu_image = get_chart_config("gpu-image")
+_profiles = _resolve_gpu_profiles(get_config("custom.profiles", []), _gpu_image)
 if _profiles:
     c.KubeSpawner.profile_list = _render_profile_list
     log.info(
-        "profiles: loaded %d profile(s): %s",
+        "profiles: loaded %d profile(s): %s (gpu-image=%s)",
         len(_profiles),
         [p.get("slug") or p.get("display_name") for p in _profiles],
+        _gpu_image or "<none>",
     )
 else:
     log.info("profiles: none configured — single-instance mode")

@@ -162,24 +162,31 @@ In-cluster Nebi URL. Order of precedence:
 Nebi image reference (repository:tag). Empty when nebi.image.tag is not
 pinned — Python init-container code path stays a no-op.
 */}}
-{{/*
-GPU JupyterLab image (full ref). Derived from jupyterhub.singleuser.image —
-the -gpu variant is built from the same commit as the CPU image, so it always
-shares the same sha tag. Empty when name/tag unset (plain kind deploys).
-Deployer override lives in jupyterhub.custom.gpu-image.
-*/}}
-{{- define "nebari-data-science-pack.gpuJupyterlabImage" -}}
-{{- $img := ((.Values.jupyterhub).singleuser).image | default dict -}}
-{{- if and $img.name $img.tag -}}
-{{- printf "%s-gpu:%s" $img.name $img.tag -}}
-{{- end -}}
-{{- end -}}
-
 {{- define "nebari-data-science-pack.nebiImage" -}}
 {{- $repo := .Values.nebi.image.repository | default "quay.io/nebari/nebi" -}}
 {{- $tag := .Values.nebi.image.tag | default "" -}}
 {{- if $tag -}}
 {{- printf "%s:%s" $repo $tag -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+GPU JupyterLab image (full ref), injected by 01-spawner.py into profiles
+marked ``gpu: true``. Order of precedence at spawn time:
+  1. profile's own kubespawner_override.image (explicit, never touched)
+  2. .Values.jupyterhub.custom.gpu-image (deployer override, read at runtime
+     by get_chart_config — NOT consulted here)
+  3. <jupyterhub.singleuser.image.name>-gpu:<jupyterhub.singleuser.image.tag>
+     (this helper; the -gpu variant is built from the same commit as the CPU
+     image, so it always shares the same sha tag)
+  4. "" — name or tag empty (schema-valid in z2jh, e.g. a plain kind deploy);
+     the spawner then warns and leaves the profile on the CPU default image.
+     The guard matters: without it an empty name renders "-gpu:<tag>".
+*/}}
+{{- define "nebari-data-science-pack.gpuJupyterlabImage" -}}
+{{- $img := ((.Values.jupyterhub).singleuser).image | default dict -}}
+{{- if and $img.name $img.tag -}}
+{{- printf "%s-gpu:%s" $img.name $img.tag -}}
 {{- end -}}
 {{- end -}}
 

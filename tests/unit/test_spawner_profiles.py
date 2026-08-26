@@ -279,20 +279,28 @@ def test_gpu_profile_gets_derived_image_injected():
     profiles = [{"slug": "gpu", "gpu": True, "kubespawner_override": {"cpu_limit": 4}}]
     resolved = mod._resolve_gpu_profiles(profiles, GPU_IMAGE)
 
-    assert resolved[0]["kubespawner_override"]["image"] == GPU_IMAGE
-    assert resolved[0]["kubespawner_override"]["cpu_limit"] == 4
+    override = resolved[0]["kubespawner_override"]
+    assert override["image"] == GPU_IMAGE, (
+        f"expected the derived GPU image to be injected, got {override!r}"
+    )
+    assert override["cpu_limit"] == 4, "other kubespawner_override keys must survive"
 
 
 def test_gpu_profile_explicit_image_wins():
+    """An explicit ``kubespawner_override.image`` is never replaced — the
+    deployer opted out of derivation for that profile."""
     mod, _ = _load()
 
     profiles = [{"slug": "gpu", "gpu": True, "kubespawner_override": {"image": "custom:1"}}]
     resolved = mod._resolve_gpu_profiles(profiles, GPU_IMAGE)
 
-    assert resolved[0]["kubespawner_override"]["image"] == "custom:1"
+    got = resolved[0]["kubespawner_override"]["image"]
+    assert got == "custom:1", f"explicit image was overwritten with {got!r}"
 
 
 def test_gpu_key_is_stripped_before_kubespawner():
+    """The ``gpu`` marker is chart-only: KubeSpawner must never see it, and a
+    profile with no ``kubespawner_override`` at all still gets the image."""
     mod, _ = _load()
 
     profiles = [
@@ -301,44 +309,119 @@ def test_gpu_key_is_stripped_before_kubespawner():
     ]
     resolved = mod._resolve_gpu_profiles(profiles, GPU_IMAGE)
 
-    assert all("gpu" not in p for p in resolved)
-    # A profile without kubespawner_override still gets the image injected.
-    assert resolved[0]["kubespawner_override"]["image"] == GPU_IMAGE
+    assert all("gpu" not in p for p in resolved), f"gpu key leaked: {resolved!r}"
+    assert resolved[0]["kubespawner_override"]["image"] == GPU_IMAGE, (
+        "a gpu profile without kubespawner_override should still get the image"
+    )
+
+
+def test_gpu_false_is_also_stripped():
+    """``gpu: false`` is a valid way to write "not a GPU profile"; the key is
+    stripped regardless of value, as the docs promise, and nothing is injected."""
+    mod, _ = _load()
+
+    profiles = [{"slug": "cpu", "gpu": False, "kubespawner_override": {"cpu_limit": 1}}]
+    resolved = mod._resolve_gpu_profiles(profiles, GPU_IMAGE)
+
+    assert resolved == [{"slug": "cpu", "kubespawner_override": {"cpu_limit": 1}}], (
+        f"gpu: false must be stripped without injecting an image, got {resolved!r}"
+    )
 
 
 def test_non_gpu_profile_is_untouched():
+    """Profiles without the ``gpu`` key pass through byte-for-byte."""
     mod, _ = _load()
 
     profiles = [{"slug": "small", "kubespawner_override": {"cpu_limit": 1}}]
     resolved = mod._resolve_gpu_profiles(profiles, GPU_IMAGE)
 
-    assert resolved == profiles
+    assert resolved == profiles, f"non-gpu profile was modified: {resolved!r}"
 
 
-def test_gpu_profile_without_derived_image_falls_back_to_default():
-    """When the chart cannot derive a GPU image (singleuser.image unset),
-    the gpu key is still stripped and no image is injected."""
+def test_gpu_profile_without_derived_image_falls_back_to_default(caplog):
+    """When the chart cannot derive a GPU image (singleuser.image.name unset
+    or empty — schema-valid in z2jh), the gpu key is still stripped, no image
+    is injected, and the hub warns: this silently lands the CPU image on a GPU
+    node, but raising would break hub startup and therefore login."""
     mod, _ = _load()
 
     profiles = [{"slug": "gpu", "gpu": True, "kubespawner_override": {"cpu_limit": 4}}]
-    resolved = mod._resolve_gpu_profiles(profiles, "")
+    with caplog.at_level("WARNING"):
+        resolved = mod._resolve_gpu_profiles(profiles, "")
 
-    assert "gpu" not in resolved[0]
-    assert "image" not in resolved[0]["kubespawner_override"]
+    assert "gpu" not in resolved[0], "gpu key must be stripped even without an image"
+    assert "image" not in resolved[0]["kubespawner_override"], (
+        "no image should be injected when the derived ref is empty"
+    )
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("gpu" in w and "gpu-image" in w for w in warnings), (
+        f"expected a warning naming the profile and custom.gpu-image, got {warnings!r}"
+    )
+
+
+def test_gpu_profile_with_image_choices_warns(caplog):
+    """KubeSpawner applies ``profile_options.image.choices.*.kubespawner_override``
+    AFTER the profile-level override and replaces rather than merges, so an
+    image choice silently defeats the injection. The hub must say so."""
+    mod, _ = _load()
+
+    profiles = [
+        {
+            "slug": "gpu",
+            "gpu": True,
+            "profile_options": {
+                "image": {
+                    "display_name": "Image",
+                    "choices": {
+                        "default": {
+                            "display_name": "cpu-lab:sha-1",
+                            "default": True,
+                            "kubespawner_override": {"image": "cpu-lab:sha-1"},
+                        }
+                    },
+                }
+            },
+        }
+    ]
+    with caplog.at_level("WARNING"):
+        mod._resolve_gpu_profiles(profiles, GPU_IMAGE)
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("profile_options" in w and "gpu" in w for w in warnings), (
+        f"expected a warning that profile_options.image overrides the GPU image, got {warnings!r}"
+    )
+
+
+def test_gpu_profile_without_image_choices_does_not_warn(caplog):
+    """The choices warning is specific: a plain gpu profile (or one with
+    non-image profile_options) stays quiet."""
+    mod, _ = _load()
+
+    profiles = [
+        {"slug": "gpu", "gpu": True},
+        {"slug": "gpu2", "gpu": True, "profile_options": {"size": {"choices": {}}}},
+    ]
+    with caplog.at_level("WARNING"):
+        mod._resolve_gpu_profiles(profiles, GPU_IMAGE)
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings == [], f"unexpected warnings: {warnings!r}"
 
 
 def test_gpu_resolution_does_not_mutate_input_profiles():
+    """Resolution returns new dicts; the z2jh-provided list is left intact."""
     mod, _ = _load()
 
     profiles = [{"slug": "gpu", "gpu": True, "kubespawner_override": {"cpu_limit": 4}}]
     mod._resolve_gpu_profiles(profiles, GPU_IMAGE)
 
-    assert profiles == [{"slug": "gpu", "gpu": True, "kubespawner_override": {"cpu_limit": 4}}]
+    assert profiles == [{"slug": "gpu", "gpu": True, "kubespawner_override": {"cpu_limit": 4}}], (
+        f"input profiles were mutated: {profiles!r}"
+    )
 
 
-def test_gpu_image_injected_at_load_time():
-    """Module load resolves gpu profiles from custom.profiles + custom.gpu-image,
-    so both the spawner and jhub-apps see the injected image."""
+def _load_with_gpu_profile():
+    """Load 01-spawner.py with one ``gpu: true`` profile and a derived image."""
     z2jh = sys.modules["z2jh"]
     prior = z2jh.get_config
 
@@ -351,12 +434,31 @@ def test_gpu_image_injected_at_load_time():
 
     z2jh.get_config = fake_get_config
     try:
-        mod, _ = _load()
-        assert mod._profiles == [
-            {"slug": "gpu", "kubespawner_override": {"image": GPU_IMAGE}}
-        ]
+        return _load()
     finally:
         z2jh.get_config = prior
+
+
+def test_gpu_image_injected_at_load_time():
+    """Module load resolves gpu profiles from custom.profiles + custom.gpu-image,
+    so both the spawner and jhub-apps see the injected image."""
+    mod, _ = _load_with_gpu_profile()
+
+    assert mod._profiles == [{"slug": "gpu", "kubespawner_override": {"image": GPU_IMAGE}}], (
+        f"load-time resolution did not inject the GPU image: {mod._profiles!r}"
+    )
+
+
+def test_load_log_names_the_injected_gpu_image(caplog):
+    """``kubectl logs deploy/hub`` must be able to answer which image a GPU
+    profile got — the load-time info line carries the derived ref."""
+    with caplog.at_level("INFO"):
+        _load_with_gpu_profile()
+
+    infos = [r.getMessage() for r in caplog.records if r.levelname == "INFO"]
+    assert any(GPU_IMAGE in m and "gpu" in m for m in infos), (
+        f"expected an info line naming the injected GPU image, got {infos!r}"
+    )
 
 
 def test_profile_list_is_the_filtering_callable_when_profiles_configured():

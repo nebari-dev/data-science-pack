@@ -54,6 +54,37 @@ A new per-profile boolean `gpu: true` in `jupyterhub.custom.profiles`:
    Resolution happens once at module load, before `_render_profile_list`
    filtering, so jhub-apps' server-types endpoint sees the same image.
 
+### Why a boolean `gpu: true` rather than `image-variant: gpu`
+
+* It matches how deployers already think about the profile (the issue asks
+  to "specify a JupyterLab profile as a GPU node"), and reads naturally
+  next to `extra_resource_limits: {nvidia.com/gpu: 1}`.
+* `-gpu` is the only published runtime variant. `-base` is a build stage,
+  not something a profile could select, so today there is exactly one axis.
+* It is not a one-way door. If a `-rocm` or ARM-specific runtime image
+  ships later, `image-variant: <name>` can be added with the same
+  load-time mechanism and `gpu: true` becomes sugar for
+  `image-variant: gpu` (one line in `_resolve_gpu_profiles`, no
+  deprecation cycle, both keys keep working).
+
+### Rejected alternatives
+
+* **`image-variant: gpu` string key now.** Same code today, but generalises
+  a namespace (`<name>-<variant>:<tag>` plus a per-variant override map)
+  for variants that do not exist. YAGNI; see above for the upgrade path.
+* **Injecting into `profile_options.image.choices` too.** Choices always
+  carry an explicit image (that is their purpose), so injecting there
+  would overwrite explicit deployer values and contradict "explicit wins".
+  Instead the hub warns when a `gpu: true` profile declares
+  `profile_options.image`, and the docs say not to combine them.
+* **Templating the profile list in Helm.** Profiles are deployer-authored
+  values consumed by the z2jh subchart via `custom.profiles`; this chart's
+  templates never see the merged list, and z2jh values cannot reference
+  each other.
+* **Raising on an empty derived image.** Would break hub startup, and
+  therefore login, for every user. A warning plus fallback to the CPU
+  default image is the right level.
+
 ### Automatic tag currency
 
 `scripts/bump_image_tags.py` already bumps `jupyterhub.singleuser.image.tag`
@@ -63,8 +94,12 @@ every release; the derived GPU ref follows with zero script changes.
 
 * Auto-injecting `extra_resource_limits` / tolerations — cluster-specific,
   already documented.
-* `profile_options.image.choices` for GPU profiles — deployer-defined
-  profiles rarely carry them; explicit choices keep winning if present.
+* Rewriting `profile_options.image.choices` for GPU profiles — explicit
+  choices keep winning at spawn time; the hub warns when a `gpu: true`
+  profile declares that option (see Rejected alternatives).
+* Teaching `scripts/bump_image_tags.py` to bump explicitly pinned `-gpu`
+  refs, and recording the build invariant (both jupyterlab images from one
+  `build-images.yaml` run) — follow-ups.
 
 ## Testing
 
