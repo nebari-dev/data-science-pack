@@ -17,12 +17,12 @@ image ref: `<singleuser.image.name>-gpu:<singleuser.image.tag>`.
 
 ## Design
 
-A new per-profile boolean `gpu: true` in `jupyterhub.custom.profiles`:
+A new per-profile key `image-variant: <name>` in `jupyterhub.custom.profiles`:
 
 ```yaml
 - slug: gpu
   display_name: "GPU Access"
-  gpu: true
+  image-variant: gpu
   access: yaml
   groups: [gpu-access]
   kubespawner_override:
@@ -33,54 +33,54 @@ A new per-profile boolean `gpu: true` in `jupyterhub.custom.profiles`:
 
 ### Components
 
-1. **Helm helper** `nebari-data-science-pack.gpuJupyterlabImage`
-   (`templates/_helpers.tpl`): renders
-   `<.Values.jupyterhub.singleuser.image.name>-gpu:<tag>`; empty when
-   name/tag unset.
-
-2. **Chart-derived config** (`templates/hub-config.yaml`): add
-   `"gpu-image"` to `_CHART_DERIVED`, following the existing `nebi-image`
-   pattern. Deployers can override via `jupyterhub.custom.gpu-image`
-   (documented as `""` placeholder in `values.yaml`).
-
-3. **Spawner config** (`config/jupyterhub/01-spawner.py`): at load,
-   `_resolve_gpu_profiles(profiles, gpu_image)` walks `custom.profiles`:
-   * `gpu: true` and no `kubespawner_override.image` → inject `gpu_image`
-   * `gpu: true` with explicit image → leave the image alone (explicit wins)
-   * the `gpu` key is always stripped so KubeSpawner never sees it
-   * `gpu_image` empty → strip key, inject nothing (falls back to the
-     z2jh singleuser default image, today's behavior)
+1. **Spawner config** (`config/jupyterhub/01-spawner.py`): at load,
+   `_resolve_image_variants(profiles, base_name, base_tag, overrides)`
+   walks `custom.profiles`, reading `singleuser.image.name`/`.tag` and
+   `custom.image-variants` from z2jh. For each `image-variant: <name>`:
+   * no `kubespawner_override.image` → inject, in order of precedence,
+     `custom.image-variants.<name>` if set, else
+     `<base_name>-<name>:<base_tag>`; if neither can be produced
+     (`singleuser.image.name`/`tag` empty, schema-valid in z2jh) warn and
+     fall back to the CPU default image
+   * explicit image → leave it alone (explicit wins)
+   * the key is always stripped so KubeSpawner never sees it
+   * `profile_options.image` present → warn (see Rejected alternatives)
 
    Resolution happens once at module load, before `_render_profile_list`
    filtering, so jhub-apps' server-types endpoint sees the same image.
 
-### Why a boolean `gpu: true` rather than `image-variant: gpu`
+2. **Override map** `jupyterhub.custom.image-variants: {}` in `values.yaml`
+   — full refs per variant, for mirrored registries or a variant published
+   elsewhere. Read directly via z2jh `get_config` (it is a mapping, so the
+   `get_chart_config` empty-string convention does not apply).
 
-* It matches how deployers already think about the profile (the issue asks
-  to "specify a JupyterLab profile as a GPU node"), and reads naturally
-  next to `extra_resource_limits: {nvidia.com/gpu: 1}`.
-* `-gpu` is the only published runtime variant. `-base` is a build stage,
-  not something a profile could select, so today there is exactly one axis.
-* It is not a one-way door. If a `-rocm` or ARM-specific runtime image
-  ships later, `image-variant: <name>` can be added with the same
-  load-time mechanism and `gpu: true` becomes sugar for
-  `image-variant: gpu` (one line in `_resolve_gpu_profiles`, no
-  deprecation cycle, both keys keep working).
+No Helm-side change: the derivation needs the variant name, which only the
+profile knows, so it lives in Python where both inputs are available.
+
+### Why `image-variant: <name>` rather than a boolean `gpu: true`
+
+* The image naming already has a variant axis (`-gpu`), and a `-rocm` or
+  arm64 runtime image is plausible. A boolean would have to coexist with a
+  string key forever once it shipped in `values.yaml`.
+* Same amount of code today; the derivation string is the only place the
+  variant name appears.
+* Cost: `image-variant: gpu` reads slightly less naturally than `gpu: true`
+  in an overlay. Mitigated by the example in `values.yaml` and the docs.
 
 ### Rejected alternatives
 
-* **`image-variant: gpu` string key now.** Same code today, but generalises
-  a namespace (`<name>-<variant>:<tag>` plus a per-variant override map)
-  for variants that do not exist. YAGNI; see above for the upgrade path.
+* **Boolean `gpu: true`.** The first draft of this PR. Rejected in review
+  for the reason above: it is an API surface we cannot drop without a
+  deprecation cycle, and the string key costs nothing extra.
+* **Deriving in Helm (`_CHART_DERIVED["gpu-image"]`).** Also the first
+  draft. Works for one hardcoded variant but cannot be generic — Helm does
+  not see the profile list the z2jh subchart consumes, so it cannot know
+  which variant names are in use.
 * **Injecting into `profile_options.image.choices` too.** Choices always
   carry an explicit image (that is their purpose), so injecting there
   would overwrite explicit deployer values and contradict "explicit wins".
-  Instead the hub warns when a `gpu: true` profile declares
+  Instead the hub warns when a variant profile declares
   `profile_options.image`, and the docs say not to combine them.
-* **Templating the profile list in Helm.** Profiles are deployer-authored
-  values consumed by the z2jh subchart via `custom.profiles`; this chart's
-  templates never see the merged list, and z2jh values cannot reference
-  each other.
 * **Raising on an empty derived image.** Would break hub startup, and
   therefore login, for every user. A warning plus fallback to the CPU
   default image is the right level.
@@ -95,20 +95,22 @@ every release; the derived GPU ref follows with zero script changes.
 * Auto-injecting `extra_resource_limits` / tolerations — cluster-specific,
   already documented.
 * Rewriting `profile_options.image.choices` for GPU profiles — explicit
-  choices keep winning at spawn time; the hub warns when a `gpu: true`
-  profile declares that option (see Rejected alternatives).
+  choices keep winning at spawn time; the hub warns when a variant profile
+  declares that option (see Rejected alternatives).
 * Teaching `scripts/bump_image_tags.py` to bump explicitly pinned `-gpu`
   refs, and recording the build invariant (both jupyterlab images from one
   `build-images.yaml` run) — follow-ups.
 
 ## Testing
 
-* Unit (`tests/unit/test_spawner_profiles.py`): injection, explicit-image
-  precedence, key stripping, empty-gpu-image fallback, load-time wiring.
-* Chart (`tests/unit/test_chart_derived.py`): rendered `_CHART_DERIVED`
-  contains the derived `gpu-image` ref from the default values.
+* Unit (`tests/unit/test_spawner_profiles.py`): derivation, generic
+  variant names, override map, explicit-image precedence, key stripping
+  (including empty variant), empty-base fallback + warning,
+  `profile_options.image` warning (+ negative), input non-mutation,
+  load-time wiring from z2jh keys, load-time log naming the injected ref.
 
 ## Docs
 
-* `docs/src/content/docs/server-profiles.md` GPU section: document `gpu: true`.
-* `values.yaml` comments for `gpu-image` + profile example.
+* `docs/src/content/docs/server-profiles.md` GPU section: document `image-variant`.
+* `docs/src/content/docs/values-reference.md`: `image-variants` row.
+* `values.yaml` comments for `image-variants` + profile example.

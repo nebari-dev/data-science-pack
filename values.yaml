@@ -390,17 +390,20 @@ jupyterhub:
     # If empty, derived as `<nebi.image.repository>:<nebi.image.tag>`.
     nebi-image: ""
     nebi-image-pull-policy: "IfNotPresent"
-    # GPU JupyterLab image (full ref) injected into profiles marked ``gpu: true``
-    # (see the profiles docs below). If empty, derived as
-    # ``<singleuser.image.name>-gpu:<singleuser.image.tag>`` — the GPU variant is
-    # built from the same commit as the CPU image, so the tags always match and
-    # GPU profiles track pack updates automatically.
+    # Per-variant image overrides (full refs) for profiles marked
+    # ``image-variant: <name>`` (see the profiles docs below). By default a
+    # variant resolves to ``<singleuser.image.name>-<name>:<singleuser.image.tag>``
+    # — every variant is built from the same commit as the CPU image, so the tags
+    # always match and variant profiles track pack updates automatically. ``gpu``
+    # is the only variant published today (linux/amd64 only; the CPU image is
+    # multi-arch).
     # If you mirror ``singleuser.image.name`` into a private/airgapped registry,
-    # mirror the ``-gpu`` image too or set this explicitly — the derived ref is
-    # not validated at install time, so a missing mirror only shows up as
-    # ImagePullBackOff on the first GPU spawn. The ``-gpu`` image is linux/amd64
-    # only (the CPU image is multi-arch).
-    gpu-image: ""
+    # mirror the ``-gpu`` image too or map it here — the derived ref is not
+    # validated at install time, so a missing mirror only shows up as
+    # ImagePullBackOff on the first GPU spawn.
+    #   image-variants:
+    #     gpu: 123456789012.dkr.ecr.us-east-1.amazonaws.com/lab-gpu:sha-abc1234
+    image-variants: {}
     # jhub-app-proxy version installed at app-spawn time. Must be >= v0.2.3 for
     # apps to run inside a Nebi (pixi) environment; older versions only support
     # conda activation and fall back to the base env (missing packages).
@@ -497,20 +500,20 @@ jupyterhub:
     #     access: yaml
     #     groups:
     #       - gpu-access
-    #     gpu: true          # inject the -gpu jupyterlab image automatically
+    #     image-variant: gpu   # inject the -gpu jupyterlab image automatically
     #     kubespawner_override:
     #       extra_resource_limits:
     #         nvidia.com/gpu: 1
-    # Profiles marked ``gpu: true`` get ``kubespawner_override.image`` set to
-    # the chart's GPU jupyterlab image (see ``gpu-image`` above) unless an
-    # explicit image is given, so deployers never hardcode a -gpu SHA. The
-    # ``gpu`` key is stripped (whatever its value) before the profile reaches
-    # KubeSpawner. Two caveats:
+    # Profiles marked ``image-variant: <name>`` get ``kubespawner_override.image``
+    # set to ``<singleuser.image.name>-<name>:<singleuser.image.tag>`` (or the
+    # ``image-variants`` override above) unless an explicit image is given, so
+    # deployers never hardcode a -gpu SHA. The ``image-variant`` key is stripped
+    # (whatever its value) before the profile reaches KubeSpawner. Two caveats:
     #   * an explicit ``kubespawner_override.image`` is never touched — and
     #     scripts/bump_image_tags.py only rewrites the CPU image, so a pinned
-    #     -gpu ref stays frozen across releases (the exact problem gpu: true
-    #     exists to avoid). Prefer the flag over pinning.
-    #   * do not combine ``gpu: true`` with ``profile_options.image`` — the
+    #     -gpu ref stays frozen across releases (the exact problem image-variant
+    #     exists to avoid). Prefer the key over pinning.
+    #   * do not combine ``image-variant`` with ``profile_options.image`` — the
     #     selected choice's image replaces the injected one at spawn time
     #     (KubeSpawner applies choice overrides after profile overrides). The
     #     hub logs a warning if you do.

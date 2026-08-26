@@ -332,9 +332,9 @@ c.KubeSpawner.environment = env
 # code changes. Empty list = no profile selector (single-instance mode).
 # Keys used only for group gating; KubeSpawner must never see them. They are
 # stripped per user in _filter_profiles because gating is a per-user decision.
-# The ``gpu`` marker is the other chart-only key — it is stripped once at load
-# in _resolve_gpu_profiles because its effect (image injection) is the same for
-# every user and jhub-apps reads the resolved list too. A future custom key
+# ``image-variant`` is the other chart-only key — it is stripped once at load
+# in _resolve_image_variants because its effect (image injection) is the same
+# for every user and jhub-apps reads the resolved list too. A future custom key
 # belongs in whichever of the two matches how it is evaluated.
 _PROFILE_GATING_KEYS = ("access", "groups", "users")
 
@@ -447,74 +447,84 @@ async def _render_profile_list(spawner):
     return visible
 
 
-def _resolve_gpu_profiles(profiles, gpu_image):
-    """Inject the chart-derived GPU image into ``gpu: true`` profiles.
+def _resolve_image_variants(profiles, base_name, base_tag, overrides):
+    """Inject a variant of the singleuser image into ``image-variant`` profiles.
 
-    Both jupyterlab images are built from the same commit with the same
-    ``sha-<short>`` tag, so the chart derives the GPU ref from
-    ``singleuser.image`` (override via ``custom.gpu-image``). Marking a
-    profile ``gpu: true`` keeps its image current across pack updates
-    without hardcoding a SHA in the deployer overlay (issue #230).
+    Every jupyterlab image variant (today only ``gpu``) is built from the same
+    commit as the CPU image and shares its ``sha-<short>`` tag, so a profile
+    marked ``image-variant: gpu`` resolves to
+    ``<singleuser.image.name>-gpu:<singleuser.image.tag>`` and stays current
+    across pack updates without a hardcoded SHA in the overlay (issue #230).
 
-    An explicit ``kubespawner_override.image`` always wins. The ``gpu`` key
-    is stripped whatever its value — KubeSpawner must never see it. Returns
-    new dicts; the input list is left untouched.
+    Order of precedence for the injected image:
+      1. the profile's own ``kubespawner_override.image`` — never touched
+      2. ``custom.image-variants.<variant>`` — deployer override, full ref
+         (mirrored registries, a variant published elsewhere)
+      3. ``<base_name>-<variant>:<base_tag>`` — derived
+      4. nothing — ``base_name``/``base_tag`` empty (schema-valid in z2jh);
+         the profile falls back to the CPU default image and the hub warns.
+
+    The ``image-variant`` key is stripped whatever its value — KubeSpawner
+    must never see it. Returns new dicts; the input list is left untouched.
 
     Two cases only warn, because raising here would break hub startup (and
-    therefore login) for every user:
-      * ``gpu_image`` is empty — the chart could not derive a ref
-        (``singleuser.image.name``/``tag`` empty) and ``custom.gpu-image``
-        is unset. The profile falls back to the CPU default image.
-      * the profile declares ``profile_options.image`` — KubeSpawner applies
-        the selected choice's ``kubespawner_override`` AFTER the profile-level
-        one and replaces rather than merges, so the choice's image silently
-        wins over the injected one at spawn time (while jhub-apps still
-        displays the injected one).
+    therefore login) for every user: the empty-ref fallback above, and a
+    profile that also declares ``profile_options.image`` — KubeSpawner applies
+    the selected choice's ``kubespawner_override`` AFTER the profile-level one
+    and replaces rather than merges, so the choice's image silently wins over
+    the injected one at spawn time (while jhub-apps still displays the
+    injected one).
     """
     resolved = []
     for profile in profiles:
-        if "gpu" not in profile:
+        if "image-variant" not in profile:
             resolved.append(profile)
             continue
         name = profile.get("slug") or profile.get("display_name")
-        is_gpu = bool(profile["gpu"])
-        profile = {k: v for k, v in profile.items() if k != "gpu"}
-        if not is_gpu:
+        variant = profile["image-variant"]
+        profile = {k: v for k, v in profile.items() if k != "image-variant"}
+        if not variant:
             resolved.append(profile)
             continue
         override = dict(profile.get("kubespawner_override") or {})
         if not override.get("image"):
-            if gpu_image:
-                override["image"] = gpu_image
-                log.info("profiles: %r is gpu: true — injected image %s", name, gpu_image)
+            image = (overrides or {}).get(variant)
+            if not image and base_name and base_tag:
+                image = f"{base_name}-{variant}:{base_tag}"
+            if image:
+                override["image"] = image
+                log.info("profiles: %r image-variant %r — injected image %s", name, variant, image)
             else:
                 log.warning(
-                    "profiles: %r is marked gpu: true but no GPU image could be "
-                    "derived (singleuser.image.name/tag empty?) and custom.gpu-image "
-                    "is unset — the profile will spawn the CPU default image",
-                    name,
+                    "profiles: %r has image-variant %r but no image could be derived "
+                    "(singleuser.image.name/tag empty?) and custom.image-variants.%s is "
+                    "unset — the profile will spawn the CPU default image",
+                    name, variant, variant,
                 )
         if "image" in (profile.get("profile_options") or {}):
             log.warning(
-                "profiles: %r is marked gpu: true but declares profile_options.image; "
-                "the selected choice's image overrides the injected GPU image at spawn "
-                "time — drop the option or point its choices at the GPU image",
-                name,
+                "profiles: %r has image-variant %r but declares profile_options.image; "
+                "the selected choice's image overrides the injected one at spawn time — "
+                "drop the option or point its choices at the variant image",
+                name, variant,
             )
         profile["kubespawner_override"] = override
         resolved.append(profile)
     return resolved
 
 
-_gpu_image = get_chart_config("gpu-image")
-_profiles = _resolve_gpu_profiles(get_config("custom.profiles", []), _gpu_image)
+_profiles = _resolve_image_variants(
+    get_config("custom.profiles", []),
+    get_config("singleuser.image.name", ""),
+    get_config("singleuser.image.tag", ""),
+    get_config("custom.image-variants", {}) or {},
+)
 if _profiles:
     c.KubeSpawner.profile_list = _render_profile_list
     log.info(
-        "profiles: loaded %d profile(s): %s (gpu-image=%s)",
+        "profiles: loaded %d profile(s): %s",
         len(_profiles),
         [p.get("slug") or p.get("display_name") for p in _profiles],
-        _gpu_image or "<none>",
     )
 else:
     log.info("profiles: none configured — single-instance mode")

@@ -190,7 +190,7 @@ always win.
 | `external-url` | `""` *(derived)* | Hub bind hostname. |
 | `nebi-image` | `""` *(derived)* | `repository:tag` copied into user pods. |
 | `nebi-image-pull-policy` | `IfNotPresent` | — |
-| `gpu-image` | `""` *(derived)* | GPU JupyterLab image injected into `gpu: true` profiles. Derived as `<singleuser.image.name>-gpu:<tag>` — see [Server profiles](/server-profiles/#gpu-profiles). |
+| `image-variants` | `{}` | Per-variant image overrides for `image-variant: <name>` profiles. Default derivation is `<singleuser.image.name>-<name>:<tag>` — see [Server profiles](/server-profiles/#gpu-profiles). |
 | `jhub-app-proxy-version` | `v0.2.3` | Installed at app-spawn time. Must be ≥ v0.2.3 for apps to run inside a Nebi (pixi) environment; older versions only activate conda and fall back to the base env. |
 | `nebi-remote-url` | `""` *(derived)* | Browser-facing Nebi URL. |
 | `nebi-internal-url` | `""` *(derived)* | In-cluster Nebi URL. |

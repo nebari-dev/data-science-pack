@@ -41,10 +41,6 @@ data:
     _CHART_DERIVED = {
         "external-url": {{ $hubHost | quote }},
         "nebi-image": {{ include "nebari-data-science-pack.nebiImage" . | quote }},
-        # GPU jupyterlab image injected into ``gpu: true`` profiles by
-        # 01-spawner.py. Tracks singleuser.image so GPU profiles stay on
-        # the chart's tag across pack updates.
-        "gpu-image": {{ include "nebari-data-science-pack.gpuJupyterlabImage" . | quote }},
         "nebi-remote-url": {{ include "nebari-data-science-pack.nebiRemoteURL" . | quote }},
         "nebi-internal-url": {{ include "nebari-data-science-pack.nebiInternalURL" . | quote }},
         "keycloak-token-url": {{ include "nebari-data-science-pack.keycloakTokenURL" . | quote }},
