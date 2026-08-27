@@ -70,7 +70,7 @@ That means the Nebi version is a deploy-time decision:
 nebi:
   image:
     repository: quay.io/nebari/nebi
-    tag: "sha-bd25921"
+    tag: "sha-5ca877a"
     pullPolicy: IfNotPresent
 ```
 

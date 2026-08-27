@@ -142,7 +142,7 @@ Admin guide: [Nebi integration](/nebi-integration/).
 | Field | Default | What it does |
 |---|---|---|
 | `nebi.image.repository` | `quay.io/nebari/nebi` | Binary copied into user pods by an init container. |
-| `nebi.image.tag` | `sha-bd25921` | Pinned per chart release. Empty disables the init container. |
+| `nebi.image.tag` | `sha-5ca877a` | Pinned per chart release. Empty disables the init container. |
 | `nebi.image.pullPolicy` | `IfNotPresent` | — |
 | `nebi.remoteURL` | `""` *(derived)* | Browser-facing Nebi URL, used for the OIDC redirect. |
 | `nebi.internalURL` | `""` *(derived)* | In-cluster URL for the token-exchange path. |
