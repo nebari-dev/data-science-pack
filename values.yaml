@@ -252,8 +252,8 @@ nebi:
     # Pinned manually per chart release (scripts/bump_image_tags.py only
     # handles the jupyterlab images); deployers can override to test a PR
     # build or roll forward. Leave non-empty so the init container is wired
-    # by default. sha-bd25921 == the nebi v0.14 tag commit.
-    tag: "sha-bd25921"
+    # by default. sha-5ca877a == the nebi v0.15 tag commit.
+    tag: "sha-5ca877a"
     pullPolicy: IfNotPresent
   # External Nebi FQDN (browser-side, used for OIDC redirect).
   # If empty, derived from keycloak.hostname as
