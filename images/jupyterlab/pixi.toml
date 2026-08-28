@@ -78,6 +78,8 @@ jupyterlab_nvdashboard = "==0.12.0"
 # argo-jupyter-scheduler = "==2024.6.1"  # disabled until service is configured
 jhub-apps = "==2026.8.1"
 jupyterlab-nebari-mode = "==0.3.0"
+# >=1.1.1 listens for nebi:job-completed to refresh kernels; the sender is the
+# nebi binary pinned at values.yaml nebi.image.tag, which must be >= v0.15.
 jupyterlab-launchpad = "==1.1.1"
 jupyterlab-gallery = "==0.6.3"
 jupyterlab-jhub-apps = "==0.3.1"
