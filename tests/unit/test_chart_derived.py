@@ -148,3 +148,4 @@ def test_get_chart_config_explicit_override_wins(rendered_chart_derived):
     )
     got = ns["get_chart_config"]("external-url")
     assert got == "explicit.example.com"
+

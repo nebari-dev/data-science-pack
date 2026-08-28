@@ -268,6 +268,235 @@ def test_render_profile_list_hides_restricted_profile_from_outsider():
     assert [p["slug"] for p in visible] == ["small"]
 
 
+BASE_NAME = "quay.io/nebari/nebari-data-science-pack-jupyterlab"
+BASE_TAG = "sha-5dfee5e"
+GPU_IMAGE = f"{BASE_NAME}-gpu:{BASE_TAG}"
+
+
+def _resolve(mod, profiles, base_name=BASE_NAME, base_tag=BASE_TAG, overrides=None):
+    return mod._resolve_image_variants(profiles, base_name, base_tag, overrides or {})
+
+
+def test_variant_profile_gets_derived_image_injected():
+    """An ``image-variant: gpu`` profile with no explicit image gets
+    ``<singleuser.image.name>-gpu:<singleuser.image.tag>``, so deployers stop
+    hardcoding SHAs (issue #230)."""
+    mod, _ = _load()
+
+    profiles = [{"slug": "gpu", "image-variant": "gpu", "kubespawner_override": {"cpu_limit": 4}}]
+    resolved = _resolve(mod, profiles)
+
+    override = resolved[0]["kubespawner_override"]
+    assert override["image"] == GPU_IMAGE, (
+        f"expected the derived variant image to be injected, got {override!r}"
+    )
+    assert override["cpu_limit"] == 4, "other kubespawner_override keys must survive"
+
+
+def test_variant_name_is_generic():
+    """The derivation is ``<name>-<variant>:<tag>`` for any variant string —
+    a future -rocm or arm64 build needs no code change."""
+    mod, _ = _load()
+
+    resolved = _resolve(mod, [{"slug": "amd", "image-variant": "rocm"}])
+
+    got = resolved[0]["kubespawner_override"]["image"]
+    assert got == f"{BASE_NAME}-rocm:{BASE_TAG}", f"unexpected derived ref {got!r}"
+
+
+def test_variant_override_map_wins_over_derivation():
+    """``custom.image-variants.<variant>`` replaces the derived ref chart-wide —
+    the escape hatch for mirrored registries."""
+    mod, _ = _load()
+
+    resolved = _resolve(
+        mod,
+        [{"slug": "gpu", "image-variant": "gpu"}],
+        overrides={"gpu": "mirror.example.com/lab-gpu:v1"},
+    )
+
+    got = resolved[0]["kubespawner_override"]["image"]
+    assert got == "mirror.example.com/lab-gpu:v1", f"override map ignored, got {got!r}"
+
+
+def test_variant_profile_explicit_image_wins():
+    """An explicit ``kubespawner_override.image`` is never replaced — the
+    deployer opted out of derivation for that profile."""
+    mod, _ = _load()
+
+    profiles = [{"slug": "gpu", "image-variant": "gpu", "kubespawner_override": {"image": "custom:1"}}]
+    resolved = _resolve(mod, profiles, overrides={"gpu": "override:1"})
+
+    got = resolved[0]["kubespawner_override"]["image"]
+    assert got == "custom:1", f"explicit image was overwritten with {got!r}"
+
+
+def test_variant_key_is_stripped_before_kubespawner():
+    """The ``image-variant`` marker is chart-only: KubeSpawner must never see
+    it, and a profile with no ``kubespawner_override`` still gets the image."""
+    mod, _ = _load()
+
+    profiles = [
+        {"slug": "gpu", "image-variant": "gpu"},
+        {"slug": "gpu2", "image-variant": "gpu", "kubespawner_override": {"image": "custom:1"}},
+        {"slug": "cpu", "image-variant": ""},
+    ]
+    resolved = _resolve(mod, profiles)
+
+    assert all("image-variant" not in p for p in resolved), f"key leaked: {resolved!r}"
+    assert resolved[0]["kubespawner_override"]["image"] == GPU_IMAGE, (
+        "a variant profile without kubespawner_override should still get the image"
+    )
+    assert resolved[2] == {"slug": "cpu"}, (
+        f"an empty variant must be stripped without injecting, got {resolved[2]!r}"
+    )
+
+
+def test_non_variant_profile_is_untouched():
+    """Profiles without the ``image-variant`` key pass through byte-for-byte."""
+    mod, _ = _load()
+
+    profiles = [{"slug": "small", "kubespawner_override": {"cpu_limit": 1}}]
+    resolved = _resolve(mod, profiles)
+
+    assert resolved == profiles, f"plain profile was modified: {resolved!r}"
+
+
+def test_variant_without_base_image_falls_back_to_default(caplog):
+    """When ``singleuser.image.name``/``tag`` is empty (schema-valid in z2jh)
+    and no override is set, the key is still stripped, no image is injected,
+    and the hub warns: this silently lands the CPU image on a GPU node, but
+    raising would break hub startup and therefore login."""
+    mod, _ = _load()
+
+    profiles = [{"slug": "gpu", "image-variant": "gpu", "kubespawner_override": {"cpu_limit": 4}}]
+    with caplog.at_level("WARNING"):
+        resolved = _resolve(mod, profiles, base_name="", base_tag=BASE_TAG)
+
+    assert "image-variant" not in resolved[0], "key must be stripped even without an image"
+    assert "image" not in resolved[0]["kubespawner_override"], (
+        "no image should be injected when the ref cannot be derived"
+    )
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("gpu" in w and "image-variants" in w for w in warnings), (
+        f"expected a warning naming the profile and custom.image-variants, got {warnings!r}"
+    )
+
+
+def test_variant_profile_with_image_choices_warns(caplog):
+    """KubeSpawner applies ``profile_options.image.choices.*.kubespawner_override``
+    AFTER the profile-level override and replaces rather than merges, so an
+    image choice silently defeats the injection. The hub must say so."""
+    mod, _ = _load()
+
+    profiles = [
+        {
+            "slug": "gpu",
+            "image-variant": "gpu",
+            "profile_options": {
+                "image": {
+                    "display_name": "Image",
+                    "choices": {
+                        "default": {
+                            "display_name": "cpu-lab:sha-1",
+                            "default": True,
+                            "kubespawner_override": {"image": "cpu-lab:sha-1"},
+                        }
+                    },
+                }
+            },
+        }
+    ]
+    with caplog.at_level("WARNING"):
+        _resolve(mod, profiles)
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("profile_options" in w and "gpu" in w for w in warnings), (
+        f"expected a warning that profile_options.image overrides the variant image, got {warnings!r}"
+    )
+
+
+def test_variant_profile_without_image_choices_does_not_warn(caplog):
+    """The choices warning is specific: a plain variant profile (or one with
+    non-image profile_options) stays quiet."""
+    mod, _ = _load()
+
+    profiles = [
+        {"slug": "gpu", "image-variant": "gpu"},
+        {"slug": "gpu2", "image-variant": "gpu", "profile_options": {"size": {"choices": {}}}},
+    ]
+    with caplog.at_level("WARNING"):
+        _resolve(mod, profiles)
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings == [], f"unexpected warnings: {warnings!r}"
+
+
+def test_variant_resolution_does_not_mutate_input_profiles():
+    """Resolution returns new dicts; the z2jh-provided list is left intact."""
+    mod, _ = _load()
+
+    profiles = [{"slug": "gpu", "image-variant": "gpu", "kubespawner_override": {"cpu_limit": 4}}]
+    _resolve(mod, profiles)
+
+    assert profiles == [
+        {"slug": "gpu", "image-variant": "gpu", "kubespawner_override": {"cpu_limit": 4}}
+    ], f"input profiles were mutated: {profiles!r}"
+
+
+def _load_with_variant_profile(overrides=None):
+    """Load 01-spawner.py with one ``image-variant: gpu`` profile and the
+    z2jh ``singleuser.image`` values the hub reads in production."""
+    z2jh = sys.modules["z2jh"]
+    prior = z2jh.get_config
+
+    def fake_get_config(key, default=None):
+        return {
+            "custom.profiles": [{"slug": "gpu", "image-variant": "gpu"}],
+            "custom.image-variants": overrides or {},
+            "singleuser.image.name": BASE_NAME,
+            "singleuser.image.tag": BASE_TAG,
+        }.get(key, default)
+
+    z2jh.get_config = fake_get_config
+    try:
+        return _load()
+    finally:
+        z2jh.get_config = prior
+
+
+def test_variant_image_injected_at_load_time():
+    """Module load resolves variant profiles from custom.profiles +
+    singleuser.image + custom.image-variants, so both the spawner and
+    jhub-apps see the injected image."""
+    mod, _ = _load_with_variant_profile()
+
+    assert mod._profiles == [{"slug": "gpu", "kubespawner_override": {"image": GPU_IMAGE}}], (
+        f"load-time resolution did not inject the variant image: {mod._profiles!r}"
+    )
+
+
+def test_variant_override_map_applied_at_load_time():
+    """``custom.image-variants`` is read from z2jh at load and wins over
+    the derivation."""
+    mod, _ = _load_with_variant_profile(overrides={"gpu": "mirror.example.com/lab-gpu:v1"})
+
+    got = mod._profiles[0]["kubespawner_override"]["image"]
+    assert got == "mirror.example.com/lab-gpu:v1", f"override map ignored at load, got {got!r}"
+
+
+def test_load_log_names_the_injected_variant_image(caplog):
+    """``kubectl logs deploy/hub`` must be able to answer which image a variant
+    profile got — the load-time info line carries the derived ref."""
+    with caplog.at_level("INFO"):
+        _load_with_variant_profile()
+
+    infos = [r.getMessage() for r in caplog.records if r.levelname == "INFO"]
+    assert any(GPU_IMAGE in m and "gpu" in m for m in infos), (
+        f"expected an info line naming the injected image, got {infos!r}"
+    )
+
+
 def test_profile_list_is_the_filtering_callable_when_profiles_configured():
     """When profiles exist, KubeSpawner.profile_list is wired to the per-user
     callable, not the raw static list."""
