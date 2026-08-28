@@ -484,7 +484,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c8/22/9460e311f340cb62d26a38c419b1381b8593b0bb6b5d1f056938b086d362/lockfile-0.12.2-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/8c/2b30c12155ad8de0cf641d76a8b396a16d2c36bc6d50b621a62b7c4567c1/build-1.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cc/3e/8228047497767397d5e9ef195fb2739b6ed755d042ad3c0edb28f4f6d578/conda_lock-3.0.4-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/d8/3a/33189fc5f72f31d334345dfeca7a634c4949ad20e1c5093188f25e2c9c24/jupyterlab_launchpad-1.1.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/47/8c/bb941f9251290a3f01b75124530fd102bfd51948c30c0cdf7da00644f785/jupyterlab_launchpad-1.1.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d8/8e/bb97bb0c71802080bfc8952937d174e49cfc50de5c951dd47b2496f0dcdb/tqdm-4.68.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/da/e5/148ab5edb339f5833d04f0bcb8380a53e8b19bd5f091ae67222ed188b393/uv-0.9.13-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/e0/f9/0595336914c5619e5f28a1fb793285925a8cd4b432c9da0a987836c7f822/shellingham-1.5.4-py2.py3-none-any.whl
@@ -963,7 +963,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c8/22/9460e311f340cb62d26a38c419b1381b8593b0bb6b5d1f056938b086d362/lockfile-0.12.2-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/8c/2b30c12155ad8de0cf641d76a8b396a16d2c36bc6d50b621a62b7c4567c1/build-1.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cc/3e/8228047497767397d5e9ef195fb2739b6ed755d042ad3c0edb28f4f6d578/conda_lock-3.0.4-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/d8/3a/33189fc5f72f31d334345dfeca7a634c4949ad20e1c5093188f25e2c9c24/jupyterlab_launchpad-1.1.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/47/8c/bb941f9251290a3f01b75124530fd102bfd51948c30c0cdf7da00644f785/jupyterlab_launchpad-1.1.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d8/8e/bb97bb0c71802080bfc8952937d174e49cfc50de5c951dd47b2496f0dcdb/tqdm-4.68.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e0/f9/0595336914c5619e5f28a1fb793285925a8cd4b432c9da0a987836c7f822/shellingham-1.5.4-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e1/04/e8135ebd1ad02c56ec633277529b2602ff99ff634be76cdba5744cf554fd/python_multipart-0.0.32-py3-none-any.whl
@@ -9791,10 +9791,10 @@ packages:
   - xattr>=1.0.0,<2.0.0 ; sys_platform == 'darwin'
   - zstandard>=0.15
   requires_python: '>=3.9'
-- pypi: https://files.pythonhosted.org/packages/d8/3a/33189fc5f72f31d334345dfeca7a634c4949ad20e1c5093188f25e2c9c24/jupyterlab_launchpad-1.1.0-py3-none-any.whl
+- pypi: https://files.pythonhosted.org/packages/47/8c/bb941f9251290a3f01b75124530fd102bfd51948c30c0cdf7da00644f785/jupyterlab_launchpad-1.1.1-py3-none-any.whl
   name: jupyterlab-launchpad
-  version: 1.1.0
-  sha256: cd8ca17985e961cdb836f3d6335c640724aacebbf6adef5bd163f3f397106e33
+  version: 1.1.1
+  sha256: 24a7af666d42f552491ae01d00a1d18d5dcd88b547e470a7ad00f5c08d4cc6ba
   requires_dist:
   - jupyter-server>=2.0.1,<3
   - jupyter-server-proxy ; extra == 'test'
