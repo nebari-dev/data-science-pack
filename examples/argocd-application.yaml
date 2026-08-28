@@ -1,0 +1,83 @@
+# ArgoCD Application deploying the data science pack from the published chart.
+#
+# Edit the two hostnames below, apply with `kubectl apply -f`, or reference
+# this file from an app-of-apps. The non-obvious settings each map to a
+# deploy-time failure mode and are explained inline.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: data-science-pack
+  namespace: argocd
+spec:
+  project: default
+  source:
+    # Central Nebari Helm repository. The chart lands in this index once its
+    # per-chart sync PR merges; until then it is installable as an OCI
+    # artifact: repoURL: oci://quay.io/nebari/charts (drop the `chart` field
+    # and put the chart name in the URL path).
+    repoURL: https://raw.githubusercontent.com/nebari-dev/helm-repository/gh-pages/
+    chart: nebari-data-science-pack
+    targetRevision: 0.1.0
+    helm:
+      # Release name is load-bearing: the chart mounts the operator-provisioned
+      # OIDC secret by its conventional name <release>-<chart>-oidc-client.
+      releaseName: data-science-pack
+      values: |
+        keycloak:
+          hostname: keycloak.example.com
+        sharedStorage:
+          storageClass: longhorn
+          size: 100Gi
+          nfsServer:
+            enabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    # Namespace is load-bearing: the operator names the hub OIDC client
+    # <namespace>-<NebariApp name>, which the chart derives as
+    # jupyterhub-<release>-<chart>.
+    namespace: jupyterhub
+  # z2jh regenerates three Secret token fields on every `helm template` (its
+  # lookup-based retention can't run under ArgoCD's repo-server), and two
+  # Deployment checksum annotations derive from them. Without all five paths
+  # plus RespectIgnoreDifferences=true, selfHeal restarts hub/proxy on every
+  # sync. Trade-off: config changes flowing through the hub Secret (e.g.
+  # custom.profiles) still sync but need a manual
+  # `kubectl -n jupyterhub rollout restart deployment/hub` to take effect.
+  ignoreDifferences:
+    - kind: Secret
+      name: hub
+      namespace: jupyterhub
+      jsonPointers:
+        - /data/hub.config.ConfigurableHTTPProxy.auth_token
+        - /data/hub.config.JupyterHub.cookie_secret
+        - /data/hub.config.CryptKeeper.keys
+    - group: apps
+      kind: Deployment
+      name: hub
+      namespace: jupyterhub
+      jsonPointers:
+        - /spec/template/metadata/annotations/checksum~1secret
+    - group: apps
+      kind: Deployment
+      name: proxy
+      namespace: jupyterhub
+      jsonPointers:
+        - /spec/template/metadata/annotations/checksum~1auth-token
+  syncPolicy:
+    # The operator only reconciles NebariApps in namespaces labeled
+    # nebari.dev/managed=true; without it the app reports NamespaceNotOptedIn,
+    # no OIDC client secret is provisioned, and the hub crash-loops.
+    managedNamespaceMetadata:
+      labels:
+        nebari.dev/managed: "true"
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true
+      # First sync would otherwise fail preflight when the NebariApp CRD
+      # (installed by the operator) isn't registered yet.
+      - SkipDryRunOnMissingResource=true
