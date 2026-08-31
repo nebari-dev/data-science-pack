@@ -78,6 +78,11 @@ Leaving `tag` empty disables the init container entirely — no Nebi in user pod
 pinned per chart release (`scripts/bump_image_tags.py` only handles the JupyterLab images),
 so override it to test a PR build or to roll forward between chart releases.
 
+When overriding, keep the binary **≥ v0.15**: `jupyterlab-launchpad` (≥ 1.1.1, pinned in
+the JupyterLab image) listens for `nebi:job-completed` from this binary to refresh the
+kernel list immediately after an environment build. Older nebi never sends the message,
+so kernels silently fall back to the ~61s `KernelSpecManager` poll with no error logged.
+
 ## The token exchange
 
 Nebi needs a per-user credential, and the hub is the only component holding the user's
@@ -212,6 +217,7 @@ CA merge step is ordered before it, so the bundle is ready. See
 | Empty environment dropdown in jhub-apps | Exchange failure, or `auth_state` missing — `kubectl logs deploy/hub \| grep nebi-envs`. |
 | Registry changes not visible | Hub not restarted since the change. |
 | Apps missing packages in a Nebi env | `jhub-app-proxy-version` below v0.2.3. |
+| New kernels take ~61s to appear after an env build | `nebi.image.tag` below v0.15 (no `nebi:job-completed` sender), launchpad below 1.1.1, the Nebi tab not open when the build finished, or nebi fell back to team mode after a slow start (`/version` unreachable for ~900ms at handshake time) — all fail silently to the poll. |
 
 ```bash
 # Is the binary in the pod?

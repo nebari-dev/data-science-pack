@@ -43,6 +43,7 @@ jobs:
     with:
       image: nebari-data-science-pack-jupyterlab
       target: jupyterlab
+      smoke_test_labextensions: true
     secrets:
       QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
 

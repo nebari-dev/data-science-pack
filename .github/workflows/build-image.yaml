@@ -37,6 +37,11 @@ on:
         required: false
         default: ""
         type: string
+      smoke_test_labextensions:
+        description: "After each arch build, run `jupyter labextension list` in the pushed image and assert the jupyterlab-launchpad version pinned in images/jupyterlab/pixi.toml is enabled. Only meaningful for jupyterlab-target images. Skipped on fork PRs (no pushed image to run)."
+        required: false
+        default: false
+        type: boolean
     secrets:
       QUAY_TOKEN:
         required: false
@@ -96,6 +101,15 @@ jobs:
             GPU=${{ inputs.gpu }}
             NEBI_IMAGE=${{ inputs.nebi_image }}
 
+      - name: "Smoke test: labextensions enabled at pinned versions"
+        if: env.IS_FORK_PR != 'true' && inputs.smoke_test_labextensions
+        run: |
+          expected=$(sed -nE 's/^jupyterlab-launchpad = "==([^"]+)"$/\1/p' images/jupyterlab/pixi.toml)
+          test -n "$expected" || { echo "could not read jupyterlab-launchpad pin from pixi.toml"; exit 1; }
+          out=$(docker run --rm "ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@${{ steps.build.outputs.digest }}" jupyter labextension list 2>&1)
+          printf '%s\n' "$out"
+          grep -F "jupyterlab-launchpad v${expected}" <<< "$out"
+
       - name: "Export digest"
         if: env.IS_FORK_PR != 'true'
         run: |
@@ -149,6 +163,15 @@ jobs:
             BASE_IMAGE=${{ inputs.base_image }}
             GPU=${{ inputs.gpu }}
             NEBI_IMAGE=${{ inputs.nebi_image }}
+
+      - name: "Smoke test: labextensions enabled at pinned versions"
+        if: env.IS_FORK_PR != 'true' && inputs.smoke_test_labextensions
+        run: |
+          expected=$(sed -nE 's/^jupyterlab-launchpad = "==([^"]+)"$/\1/p' images/jupyterlab/pixi.toml)
+          test -n "$expected" || { echo "could not read jupyterlab-launchpad pin from pixi.toml"; exit 1; }
+          out=$(docker run --rm "ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@${{ steps.build.outputs.digest }}" jupyter labextension list 2>&1)
+          printf '%s\n' "$out"
+          grep -F "jupyterlab-launchpad v${expected}" <<< "$out"
 
       - name: "Export digest"
         if: env.IS_FORK_PR != 'true'
