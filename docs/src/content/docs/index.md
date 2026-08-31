@@ -17,6 +17,7 @@ Nebari's custom images, per-group shared storage, and integration with the
 | **JupyterHub** | Multi-user notebook server with Nebari's custom images |
 | **jhub-apps** | Deploy and share data science applications (Streamlit, Panel, custom commands) alongside notebooks |
 | **NebariApp integration** | Registers routing, Keycloak OAuth, and a landing-page card via the Nebari Operator |
+| **Real-time collaboration** | Shared notebook and file editing in JupyterLab through the official collaboration extension |
 | **Shared storage** | Per-group directories (`/shared/<group>`) mounted into every user pod |
 | **Nebi integration** | Ships the `nebi` environment-manager binary into JupyterLab pods via an init container |
 | **RBAC bootstrap** | One-shot Keycloak Job that wires group-membership claims and shared-mount roles |
@@ -27,6 +28,7 @@ Nebari's custom images, per-group shared storage, and integration with the
 - [Quick Start](/quick-start/) — install the chart and access JupyterHub.
 - [Architecture](/architecture/) — how the proxy, hub, jhub-apps, and user pods fit together.
 - [Shared Storage](/shared-storage/) — per-group directories, StorageClass requirements, and the transitional NFS mode.
+- [Real-time Collaboration](/real-time-collaboration/) — shared notebook editing and server sharing boundaries.
 
 ## Administration
 

@@ -34,6 +34,8 @@ derivation rules and the defaults worth knowing about before you override them.
 - [Values reference](/values-reference/) — every field in every section.
 - [Server profiles](/server-profiles/) — `jupyterhub.custom.profiles`, image choices, and
   per-group gating.
+- [Real-time Collaboration](/real-time-collaboration/) — shared notebook editing and the
+  user-managed server sharing switch.
 - [Nebi integration](/nebi-integration/) — the `nebi.*` values and the token exchange behind
   them.
 - [MLflow integration](/mlflow-integration/) — `jupyterhub.singleuser.extraEnv` plus an
