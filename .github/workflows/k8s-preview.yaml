@@ -355,6 +355,29 @@ jobs:
           echo "KEYCLOAK_PORT_FORWARD_PID=$!" >> "$GITHUB_ENV"
           sleep 3
 
+      # Cloudflare Access is the real security boundary for this preview
+      # (only allow-listed accounts reach the tunnel at all) -- a simple,
+      # known password for the Keycloak-side login is fine here, so
+      # reviewers don't need to hunt for real credentials on a throwaway
+      # cluster. The admin password is piped straight from the Secret into
+      # the token request and never echoed or logged.
+      - name: Create a test login user in Keycloak
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          admin_token=$(curl -sS -X POST "http://localhost:8001/realms/master/protocol/openid-connect/token" \
+            -d "grant_type=password" -d "client_id=admin-cli" -d "username=admin" \
+            --data-urlencode "password=$(kubectl -n keycloak get secret keycloak-admin-credentials -o jsonpath='{.data.admin-password}' | base64 -d)" \
+            | jq -r '.access_token')
+          if [ -z "$admin_token" ] || [ "$admin_token" = "null" ]; then
+            echo "::error::Failed to obtain a Keycloak admin token"
+            exit 1
+          fi
+
+          curl -sS -o /dev/null -w 'create user: HTTP %{http_code}\n' -X POST "http://localhost:8001/admin/realms/nebari/users" \
+            -H "Authorization: Bearer $admin_token" -H "Content-Type: application/json" \
+            -d '{"username":"reviewer","enabled":true,"emailVerified":true,"credentials":[{"type":"password","value":"admin","temporary":false}]}'
+
       # jhub-apps runs as a managed service subprocess inside the hub pod,
       # not its own Deployment, so a crash there doesn't fail `helm --wait`
       # or the rollout checks above -- it only shows up as a 502 on
@@ -565,7 +588,9 @@ jobs:
             You'll be asked to sign in via Cloudflare Access (GitHub SSO) first —
             only accounts on the Access application's allow-list get through.
             **Then JupyterHub login:** goes through Keycloak (the operator-provisioned
-            OIDC client for this preview's NebariApp).
+            OIDC client for this preview's NebariApp). **Username:** `reviewer`
+            **Password:** `admin` — Cloudflare Access is the real gate here, so
+            this account is intentionally simple.
 
             Keycloak's own login page is also reachable directly:
             ${{ steps.cf_dns.outputs.keycloak_url }}
