@@ -196,18 +196,25 @@ jobs:
       # (see values.yaml, jupyterhub.hub.extraVolumes comment). Poll by
       # label-free name match rather than assuming a fixed provisioning
       # time -- the operator's reconcile loop has no SLA.
+      # Checking the Secret merely EXISTS isn't enough: the operator creates
+      # it with client-id/client-secret on its first reconcile pass, then
+      # patches in issuer-url on a later pass (GetExternalIssuerURL). A hub
+      # restart triggered right after the Secret's first appearance still
+      # hits FileNotFoundError on /etc/oauth/issuer-url specifically -- wait
+      # for that key's actual (non-empty) value, not just the object.
       - name: Wait for operator to provision the Keycloak client secret
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: |
           for i in $(seq 1 36); do
-            if kubectl -n pr-preview get secret preview-nebari-data-science-pack-oidc-client >/dev/null 2>&1; then
-              echo "operator secret present after $(( i * 5 ))s"
+            issuer_b64=$(kubectl -n pr-preview get secret preview-nebari-data-science-pack-oidc-client -o jsonpath='{.data.issuer-url}' 2>/dev/null)
+            if [ -n "$issuer_b64" ]; then
+              echo "operator secret's issuer-url populated after $(( i * 5 ))s"
               exit 0
             fi
             sleep 5
           done
-          echo "::error::operator never created the Keycloak client secret within 3m"
+          echo "::error::operator never populated issuer-url on the Keycloak client secret within 3m"
           kubectl -n pr-preview get nebariapp -o yaml || true
           exit 1
 
