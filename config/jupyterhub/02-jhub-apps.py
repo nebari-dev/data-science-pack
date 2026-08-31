@@ -2,6 +2,7 @@
 
 # ruff: noqa: F821 - `c` is a magic global provided by JupyterHub
 import os
+import shlex
 from urllib.parse import urlsplit, urlunsplit
 
 from jhub_apps import theme_template_paths, themes
@@ -127,9 +128,24 @@ if _oidc_secret:
 
 # Point jhub-apps' own hub-API client at localhost instead of the `hub`
 # Service it inherits from z2jh -- see _localhost_hub_api_url's docstring.
+#
+# Setting it via svc["environment"] (like the OIDC secret above) does NOT
+# work here: JupyterHub's Spawner.get_env() computes
+# env['JUPYTERHUB_API_URL'] = hub_api_url from self.hub.api_url AFTER
+# merging self.environment, unconditionally overwriting whatever we set
+# -- confirmed live (the resulting subprocess still saw the `hub` Service
+# URL). Wrapping the service's own command with a shell-level `env
+# VAR=value` assignment is the only thing that can win: it sets the
+# variable for jhub-apps' uvicorn process specifically, after JupyterHub
+# has already finished building the parent env.
 _hub_api_url = _localhost_hub_api_url(os.environ.get("JUPYTERHUB_API_URL", ""))
 if _hub_api_url:
     for svc in c.JupyterHub.services:
-        if svc.get("name") == "japps":
-            svc.setdefault("environment", {})["JUPYTERHUB_API_URL"] = _hub_api_url
+        if svc.get("name") == "japps" and svc.get("command"):
+            quoted_cmd = " ".join(shlex.quote(part) for part in svc["command"])
+            svc["command"] = [
+                "sh",
+                "-c",
+                f"exec env JUPYTERHUB_API_URL={shlex.quote(_hub_api_url)} {quoted_cmd}",
+            ]
             break

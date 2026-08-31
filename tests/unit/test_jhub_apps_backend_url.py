@@ -9,6 +9,14 @@ Service via that Service's ClusterIP -- confirmed to time out
 to localhost (same port/path) is always reliable for same-pod traffic
 and doesn't depend on hairpin NAT support.
 
+Setting svc["environment"] does NOT work here (confirmed live):
+JupyterHub's Spawner.get_env() computes
+env['JUPYTERHUB_API_URL'] = hub_api_url from self.hub.api_url AFTER
+merging self.environment, unconditionally overwriting it. Only a
+shell-level `env VAR=value` wrapped around the service's own command
+can win, since that's applied after JupyterHub has already built the
+parent env.
+
 02-jhub-apps.py isn't independently importable: it needs `jhub_apps`
 and `z2jh` (real chart-image dependencies, not installed in the unit
 test venv) at module load time for things unrelated to this fix. Stub
@@ -24,6 +32,16 @@ import types
 
 from conftest import FakeConfig, load_config_module
 
+ORIGINAL_COMMAND = [
+    "python",
+    "-m",
+    "uvicorn",
+    "jhub_apps.service.app:app",
+    "--port=10202",
+    "--host=0.0.0.0",
+    "--workers=1",
+]
+
 
 def _install_stub_dependencies(monkeypatch):
     """Stub jhub_apps + z2jh just enough for 02-jhub-apps.py to load."""
@@ -33,7 +51,11 @@ def _install_stub_dependencies(monkeypatch):
 
     def _fake_install_jhub_apps(c, spawner_to_subclass=None):
         c.JupyterHub.services = [
-            {"name": "japps", "oauth_client_id": "service-japps"}
+            {
+                "name": "japps",
+                "oauth_client_id": "service-japps",
+                "command": list(ORIGINAL_COMMAND),
+            }
         ]
         c.JupyterHub.load_roles = [{"name": "user", "scopes": []}]
         return c
@@ -66,20 +88,24 @@ def _japps_service(c):
     return next(svc for svc in c.JupyterHub.services if svc.get("name") == "japps")
 
 
-def test_japps_service_env_points_hub_api_at_localhost(monkeypatch):
+def test_japps_command_wrapped_with_localhost_hub_api_url(monkeypatch):
     c, _ = _load(monkeypatch, JUPYTERHUB_API_URL="http://hub:8081/hub/api")
     japps = _japps_service(c)
-    assert japps["environment"]["JUPYTERHUB_API_URL"] == "http://localhost:8081/hub/api"
+    assert japps["command"][:2] == ["sh", "-c"]
+    shell_line = japps["command"][2]
+    assert "JUPYTERHUB_API_URL=http://localhost:8081/hub/api" in shell_line
+    # The original argv is still there, just appended after the env assignment.
+    assert "uvicorn jhub_apps.service.app:app" in shell_line
 
 
 def test_preserves_a_nonstandard_port(monkeypatch):
     c, _ = _load(monkeypatch, JUPYTERHUB_API_URL="http://hub:9999/hub/api")
     japps = _japps_service(c)
-    assert japps["environment"]["JUPYTERHUB_API_URL"] == "http://localhost:9999/hub/api"
+    assert "JUPYTERHUB_API_URL=http://localhost:9999/hub/api" in japps["command"][2]
 
 
-def test_no_jupyterhub_api_url_set_leaves_japps_env_untouched(monkeypatch):
+def test_no_jupyterhub_api_url_set_leaves_japps_command_untouched(monkeypatch):
     monkeypatch.delenv("JUPYTERHUB_API_URL", raising=False)
     c, _ = _load(monkeypatch)
     japps = _japps_service(c)
-    assert "JUPYTERHUB_API_URL" not in japps.get("environment", {})
+    assert japps["command"] == ORIGINAL_COMMAND
