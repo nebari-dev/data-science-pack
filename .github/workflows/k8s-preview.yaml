@@ -389,7 +389,7 @@ jobs:
 
           curl -sS -o /dev/null -w 'create user: HTTP %{http_code}\n' -X POST "http://localhost:8001/admin/realms/nebari/users" \
             -H "Authorization: Bearer $admin_token" -H "Content-Type: application/json" \
-            -d '{"username":"reviewer","enabled":true,"emailVerified":true,"credentials":[{"type":"password","value":"admin","temporary":false}]}'
+            -d '{"username":"reviewer","enabled":true,"email":"reviewer@example.com","emailVerified":true,"firstName":"Preview","lastName":"Reviewer","credentials":[{"type":"password","value":"admin","temporary":false}]}'
 
       # jhub-apps runs as a managed service subprocess inside the hub pod,
       # not its own Deployment, so a crash there doesn't fail `helm --wait`
