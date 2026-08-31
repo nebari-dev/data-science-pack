@@ -81,8 +81,10 @@ image field; the inner `profile_options.image.choices.default` is what the Jupyt
 profile selector shows. Both must be bumped alongside `jupyterhub.singleuser.image.tag`.
 
 z2jh values cannot reference other values, so the duplication is unavoidable.
-`scripts/bump_image_tags.py` syncs all three on an automated bump — hand edits have to keep
-up on their own.
+`scripts/bump_image_tags.py` syncs all three on an automated bump, and
+`tests/unit/test_image_ref_sync.py` fails CI if a hand edit lets any jupyterlab-tagged ref
+in this repo's `values.yaml` drift from `singleuser.image`. Choices pointing at other
+images (like the R image above) are left alone by both.
 :::
 
 ## Gating profiles by group

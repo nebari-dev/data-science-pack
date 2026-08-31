@@ -217,7 +217,7 @@ CA merge step is ordered before it, so the bundle is ready. See
 | Empty environment dropdown in jhub-apps | Exchange failure, or `auth_state` missing — `kubectl logs deploy/hub \| grep nebi-envs`. |
 | Registry changes not visible | Hub not restarted since the change. |
 | Apps missing packages in a Nebi env | `jhub-app-proxy-version` below v0.2.3. |
-| New kernels take ~61s to appear after an env build | `nebi.image.tag` below v0.15 (no `nebi:job-completed` sender), launchpad below 1.1.1, the Nebi tab not open when the build finished, or nebi fell back to team mode after a slow start (`/version` unreachable for ~900ms at handshake time) — all fail silently to the poll. |
+| New kernels take ~61s to appear after an env build | Checkable: `nebi.image.tag` below v0.15 (no `nebi:job-completed` sender — `kubectl -n data-science exec <user-pod> -- nebi --version`), or launchpad below 1.1.1 / disabled (`kubectl -n data-science exec <user-pod> -- jupyter labextension list 2>&1 \| grep launchpad`). Not checkable — no signal anywhere in this stack: the Nebi tab wasn't open when the build finished, or nebi fell back to team mode after a slow start (`/version` unreachable for ~900ms at handshake time). Re-test with the Nebi tab open. |
 
 ```bash
 # Is the binary in the pod?

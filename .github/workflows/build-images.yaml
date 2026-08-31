@@ -68,6 +68,7 @@ jobs:
       build_arm64: false
       base_image: "nvidia/cuda:12.8.1-base-ubuntu24.04"
       gpu: true
+      smoke_test_labextensions: true
     secrets:
       QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
 
