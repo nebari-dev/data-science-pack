@@ -150,6 +150,15 @@ jobs:
           helm repo add jupyterhub https://hub.jupyter.org/helm-chart/
           helm dependency build .
 
+      # No --wait here: with nebariapp.auth.enabled=true, the hub pod reads
+      # the operator-provisioned Keycloak client Secret at import time
+      # (config/jupyterhub/00-gateway-auth.py) and crashes with
+      # FileNotFoundError if it starts before the operator has created it --
+      # the Secret volume is mounted `optional: true` so the pod itself
+      # comes up fine, only the hub container's Python process crash-loops.
+      # That race is inherent (operator reconciliation runs concurrently
+      # with the chart install, not before it), so we wait for the Secret
+      # separately below instead of blocking helm on hub's rollout status.
       - name: Deploy chart
         id: deploy
         env:
@@ -161,8 +170,36 @@ jobs:
             --set jupyterhub.hub.image.tag=preview \
             --set nebariapp.enabled=true \
             --set nebariapp.hostname="pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
-            --set jupyterhub.custom.external-url="pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
-            --wait --timeout 5m
+            --set jupyterhub.custom.external-url="pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}"
+
+      # Secret name convention: {Release.Name}-{Chart.Name}-oidc-client
+      # (see values.yaml, jupyterhub.hub.extraVolumes comment). Poll by
+      # label-free name match rather than assuming a fixed provisioning
+      # time -- the operator's reconcile loop has no SLA.
+      - name: Wait for operator to provision the Keycloak client secret
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          for i in $(seq 1 36); do
+            if kubectl -n pr-preview get secret preview-nebari-data-science-pack-oidc-client >/dev/null 2>&1; then
+              echo "operator secret present after $(( i * 5 ))s"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::operator never created the Keycloak client secret within 3m"
+          kubectl -n pr-preview get nebariapp -o yaml || true
+          exit 1
+
+      # The hub container already crash-looped at least once (reading the
+      # Secret volume before the operator populated it) and Kubernetes'
+      # optional-secret volume sync can lag kubelet's resync period, so
+      # force an immediate restart now that the secret is confirmed present
+      # instead of waiting out CrashLoopBackOff's own backoff schedule.
+      - name: Restart hub to pick up the operator secret
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: kubectl -n pr-preview rollout restart deployment/hub
 
       - name: Wait for hub + proxy
         env:
@@ -224,13 +261,12 @@ jobs:
       # Interactive SSH debug session into the live runner (cluster still
       # up, KUBECONFIG still valid) instead of guessing blind from static
       # logs. limit-access-to-actor restricts the SSH session to whoever
-      # triggered this run — required on a public repo. Temporarily
-      # unconditional (not gated to failure()) while actively debugging the
-      # nebariapp/Keycloak auth path live instead of iterating full CI runs.
-      - name: Debug via tmate SSH
-        if: always()
+      # triggered this run — required on a public repo. Bounded to 20min
+      # so a forgotten session doesn't eat the whole 90min job timeout.
+      - name: Debug via tmate SSH on deploy failure
+        if: failure()
         uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
-        timeout-minutes: 45
+        timeout-minutes: 20
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         with:
