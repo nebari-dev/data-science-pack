@@ -105,10 +105,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
+      # v0.32.0+ required: the sandbox's kind cluster uses containerd's
+      # config v4 format, which `kind load` on older CLI releases can't
+      # parse ("ERROR: unknown containerd config version: 4").
       - name: Install kind
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
-          version: v0.27.0
+          version: v0.33.0
           install_only: true
 
       - name: Provision sandbox (kind + full NIC platform stack)
