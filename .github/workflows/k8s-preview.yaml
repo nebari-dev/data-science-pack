@@ -170,6 +170,38 @@ jobs:
           kubectl create namespace pr-preview --dry-run=client -o yaml | kubectl apply -f -
           kubectl label namespace pr-preview nebari.dev/managed=true --overwrite
 
+      # Keycloak's own KC_HOSTNAME (bitnami/keycloakx) is fixed to NIC's
+      # internal keycloak.nebari.local by default -- every self-referencing
+      # URL Keycloak renders (login form action, issuer, redirects) is
+      # absolute and uses that value regardless of the incoming Host
+      # header, confirmed live: a request proxied to Keycloak with the Host
+      # header rewritten to keycloak.nebari.local still rendered a login
+      # form whose action="https://keycloak.nebari.local/..." -- unreachable
+      # from a real browser, since .local is never publicly resolvable.
+      #
+      # Point Keycloak's own hostname AND the operator's KEYCLOAK_EXTERNAL_URL
+      # at the same public, per-PR, single-label hostname the Cloudflare
+      # Tunnel already routes (no DNS/cert changes, no Worker, no collision
+      # risk) so Keycloak's self-generated URLs are actually reachable and
+      # the operator writes a matching issuer into hub's OIDC client secret.
+      - name: Point Keycloak's own hostname at the public tunnel route
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          echo "--- current keycloak-keycloakx env (KC_HOSTNAME*) ---"
+          kubectl -n keycloak get statefulset keycloak-keycloakx \
+            -o jsonpath='{.spec.template.spec.containers[0].env}' | jq '[.[] | select(.name | test("HOSTNAME"))]'
+
+          kc_public_url="https://keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}"
+          kubectl -n keycloak set env statefulset/keycloak-keycloakx \
+            KC_HOSTNAME="$kc_public_url" KC_HOSTNAME_STRICT=true
+          kubectl -n keycloak rollout status statefulset/keycloak-keycloakx --timeout=180s
+
+          operator_deploy=$(kubectl get deploy -A -o json | jq -r '.items[] | select(.metadata.name | test("operator")) | "\(.metadata.namespace)/\(.metadata.name)"' | head -1)
+          kubectl -n "${operator_deploy%%/*}" set env deployment/"${operator_deploy##*/}" \
+            KEYCLOAK_EXTERNAL_URL="$kc_public_url"
+          kubectl -n "${operator_deploy%%/*}" rollout status deployment/"${operator_deploy##*/}" --timeout=120s
+
       # No --wait here: with nebariapp.auth.enabled=true, the hub pod reads
       # the operator-provisioned Keycloak client Secret at import time
       # (config/jupyterhub/00-gateway-auth.py) and crashes with
@@ -275,12 +307,10 @@ jobs:
 
       # Keycloak itself, so a reviewer can sign in there directly and land
       # on JupyterHub already authenticated (same Keycloak SSO cookie the
-      # hub's own OAuth redirect relies on). Keycloak's issuer/hostname
-      # stay pinned to NIC's internal keycloak.nebari.local (that's what
-      # the operator baked into hub's OIDC client secret -- changing it
-      # would break the hub login flow) so this is exposed under a
-      # DIFFERENT public hostname with the Host header rewritten back to
-      # keycloak.nebari.local at the tunnel, not by reconfiguring Keycloak.
+      # hub's own OAuth redirect relies on). Keycloak's own hostname was
+      # repointed at this same public route earlier (see "Point Keycloak's
+      # own hostname..."), so no Host-header rewrite is needed here -- the
+      # request just flows straight through with its real Host header.
       - name: Port-forward Keycloak
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
@@ -429,7 +459,7 @@ jobs:
             -d "$(jq -n --arg host "$PREVIEW_HOSTNAME" --arg kchost "$KEYCLOAK_HOSTNAME" \
               '{config: {ingress: [
                 {hostname: $host, service: "http://localhost:8000"},
-                {hostname: $kchost, service: "http://localhost:8001", originRequest: {httpHostHeader: "keycloak.nebari.local"}},
+                {hostname: $kchost, service: "http://localhost:8001"},
                 {service: "http_status:404"}
               ]}}')" \
             > /dev/null
