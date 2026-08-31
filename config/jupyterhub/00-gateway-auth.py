@@ -438,7 +438,15 @@ class KeyCloakOAuthenticator(GenericOAuthenticator):
                 old_profiles = auth_state.get("allowed_jupyterlab_profiles")
                 if old_profiles is not None:
                     new_state["allowed_jupyterlab_profiles"] = old_profiles
-        return {"auth_state": new_state}
+        auth_model = {"auth_state": new_state}
+        if self.manage_groups:
+            # With manage_groups enabled, JupyterHub treats a refresh
+            # auth_model whose "groups" is absent/None as an error at
+            # spawn time (refresh_pre_spawn), failing the spawn with 500.
+            # Re-derive groups from the preserved oauth_user claims the
+            # same way update_auth_model does at login.
+            auth_model["groups"] = sorted(await self.get_user_groups(new_state))
+        return auth_model
 
     async def update_auth_model(self, auth_model):
         """Stamp auth_state with the subset of KC groups that hold the
@@ -571,8 +579,12 @@ def configure(
     # scope param entirely; KC then issues a token without `openid` and
     # /userinfo returns 403 at token_to_user.
     c.KeyCloakOAuthenticator.scope = ["openid", "profile", "email", "groups"]
-    c.KeyCloakOAuthenticator.claim_groups_key = "groups"
-    c.KeyCloakOAuthenticator.admin_groups = set(admin_groups or ["admin"])
+    # OAuthenticator 17 requires managed groups for admin_groups.
+    # The Keycloak groups mapper is reconciled to emit full paths; keep
+    # those paths here so /admin is not conflated with /team/admin.
+    c.KeyCloakOAuthenticator.manage_groups = True
+    c.KeyCloakOAuthenticator.auth_state_groups_key = "oauth_user.groups"
+    c.KeyCloakOAuthenticator.admin_groups = set(admin_groups or ["/admin"])
     # Persist tokens so refresh_user can use the stored refresh_token.
     c.KeyCloakOAuthenticator.enable_auth_state = True
     c.KeyCloakOAuthenticator.refresh_pre_spawn = True
@@ -676,7 +688,7 @@ else:
         # issuer-url`` first, then falls back to the chart-derived value
         # baked in by ``00-chart-derived.py`` at Helm render time from
         # ``keycloak.backchannelURL``). Empty string → no split-horizon.
-        _backchannel_issuer = get_chart_config(  # noqa: F821
+        _backchannel_issuer = get_chart_config(
             "keycloak-backchannel-issuer-url", "",
         )
         configure(

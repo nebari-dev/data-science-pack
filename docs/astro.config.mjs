@@ -17,9 +17,14 @@ export default defineConfig({
       description:
         'A Helm chart for deploying JupyterHub with jhub-apps on Kubernetes, integrated with the Nebari Operator via the NebariApp CRD.',
       // Shared Nebari identity (brand colors, fonts, logo, favicon, footer, GitHub link)
-      // comes from the @nebari/starlight theme plugin. logoHref sets where the header logo
-      // takes the reader when they click it — nebari.dev for the project's main site.
-      plugins: [nebari({ logoHref: 'https://nebari.dev/' })],
+      // comes from the @nebari/starlight theme plugin. logoHref sends the header logo
+      // to the pack catalog; githubHref points the GitHub icon at this repository.
+      plugins: [
+        nebari({
+          logoHref: 'https://packs.nebari.dev/',
+          githubHref: 'https://github.com/nebari-dev/data-science-pack',
+        }),
+      ],
       sidebar: [
         {
           label: 'Overview',
@@ -34,9 +39,19 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Administration',
+          items: [
+            { label: 'Admin setup', slug: 'admin-setup' },
+            { label: 'Server profiles', slug: 'server-profiles' },
+            { label: 'Nebi integration', slug: 'nebi-integration' },
+            { label: 'MLflow integration', slug: 'mlflow-integration' },
+          ],
+        },
+        {
           label: 'Reference',
           items: [
             { label: 'Configuration', slug: 'configuration' },
+            { label: 'Values reference', slug: 'values-reference' },
             { label: 'NebariApp Integration', slug: 'nebariapp-integration' },
           ],
         },
