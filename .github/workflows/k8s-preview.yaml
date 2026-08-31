@@ -3,7 +3,7 @@ name: K8s Stack Preview
 # Gateway, via nebari-dev/action-nebari-sandbox) plus this PR's chart into
 # an ephemeral kind cluster on the runner, then exposes
 # JupyterHub through a per-PR Cloudflare Tunnel behind Cloudflare Access
-# (GitHub-org SSO) so a reviewer can click a link and use it.
+# (GitHub SSO) so a reviewer can click a link and use it.
 #
 # This repo is public, so a plain shared secret posted in the PR comment
 # (a quick-tunnel URL, a basic-auth password) is readable by anyone who
@@ -11,7 +11,10 @@ name: K8s Stack Preview
 # authenticating the *person*, not a string in the comment: Cloudflare
 # challenges every request to *.<vars.PREVIEW_DOMAIN> with a GitHub SSO
 # login and only lets it through to cloudflared if the signed-in account
-# is a member of this GitHub org. The PR comment only ever contains a URL.
+# matches the Access application's policy (currently an explicit email
+# allow-list, not org membership -- see the Cloudflare Access application
+# for this domain for who's currently allowed). The PR comment only ever
+# contains a URL.
 #
 # The domain is a repo Variable (Settings -> Secrets and variables ->
 # Actions -> Variables -> PREVIEW_DOMAIN, currently openteams.app), not
@@ -22,14 +25,18 @@ name: K8s Stack Preview
 # level (<domain> + *.<domain>); a second level needs the paid Advanced
 # Certificate Manager add-on, which this setup doesn't use.
 #
-# Scope, deliberately: the tunnel points straight at the `proxy-public`
-# service (dummy-authenticator login, same as local Tilt dev). The chart
-# deploys with nebariapp.enabled=false — nebariapp.auth.enabled=true
-# was tried to additionally exercise the operator/Keycloak reconcile,
-# but 00-gateway-auth.py reads /etc/oauth/issuer-url unconditionally at
-# import time, before the operator's async client provisioning can ever
-# populate it, so the hub pod crash-loops. Not worth chasing for a
-# preview link; the operator/OIDC path stays untested here.
+# Scope: the tunnel points straight at the `proxy-public` service. The
+# chart deploys with nebariapp.enabled=true (nebariapp.auth.enabled=true
+# by chart default), so login goes through the real operator-provisioned
+# Keycloak OIDC client, exercising the same auth path production deploys
+# use. Getting this working required: (1) not blocking `helm upgrade
+# --install` with `--wait`, since the hub pod crash-loops on
+# FileNotFoundError until the operator's async client-provisioning
+# Secret exists -- a separate step now polls for that Secret and force-
+# restarts hub once it appears; (2) labelling the release namespace
+# `nebari.dev/managed=true` before install, since nic-operator otherwise
+# never reconciles the NebariApp at all (condition NamespaceNotOptedIn),
+# which is a permanent gate, not a slow-provisioning race.
 #
 # The link only lives for the run's duration (bounded by timeout-minutes
 # below) — it is not a persistent per-PR environment. Each run creates its
@@ -403,13 +410,10 @@ jobs:
 
             ${{ github.event.pull_request.head.repo.fork && '⚠️ **This PR is from a fork** — the code running in this preview is not from a trusted maintainer branch.' || '' }}
 
-            You'll be asked to sign in via Cloudflare Access (GitHub SSO) before
-            reaching JupyterHub — only members of this GitHub org get through.
-            **Then JupyterHub login:** dummy authenticator, any username + any password.
-
-            This goes straight to JupyterHub's proxy; the operator-provisioned
-            NebariApp/OIDC route isn't deployed here (see workflow header comment
-            for why) — this preview doesn't exercise operator/Keycloak reconcile.
+            You'll be asked to sign in via Cloudflare Access (GitHub SSO) first —
+            only accounts on the Access application's allow-list get through.
+            **Then JupyterHub login:** goes through Keycloak (the operator-provisioned
+            OIDC client for this preview's NebariApp).
 
             Live until the expiry time above, or until the `deploy-preview` label
             is removed. Push a new commit or re-add the label to redeploy.
