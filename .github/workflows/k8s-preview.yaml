@@ -155,12 +155,33 @@ jobs:
           kubectl -n pr-preview rollout status deployment/hub --timeout=180s
           kubectl -n pr-preview rollout status deployment/proxy --timeout=180s
 
+      - name: Port-forward JupyterHub proxy
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          kubectl -n pr-preview port-forward svc/proxy-public 8000:80 \
+            > /tmp/port-forward.log 2>&1 &
+          echo "PORT_FORWARD_PID=$!" >> "$GITHUB_ENV"
+          sleep 3
+
       # jhub-apps runs as a managed service subprocess inside the hub pod,
       # not its own Deployment, so a crash there doesn't fail `helm --wait`
       # or the rollout checks above -- it only shows up as a 502 on
-      # /services/japps/* once someone hits it. Always dump the hub log
-      # (not gated on failure) so a broken jhub-apps subprocess is visible
-      # in this run's own output instead of only from a live login attempt.
+      # /services/japps/* once someone hits it. Hit its root path directly
+      # (bypassing Cloudflare, straight to CHP) so a crashed/never-bound
+      # uvicorn process shows up here instead of only from a live login.
+      - name: Smoke-test jhub-apps service
+        if: always()
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          echo "--- GET /services/japps/ ---"
+          curl -sS -o /tmp/japps-root.html -w 'HTTP %{http_code}\n' http://localhost:8000/services/japps/ || true
+          head -c 2000 /tmp/japps-root.html || true
+          echo
+          echo "--- japps process in hub pod ---"
+          kubectl -n pr-preview exec deploy/hub -- ps aux | grep -i "uvicorn\|japps" || true
+
       - name: Dump hub logs (jhub-apps startup)
         if: always()
         env:
@@ -197,14 +218,6 @@ jobs:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         with:
           limit-access-to-actor: true
-
-      - name: Port-forward JupyterHub proxy
-        env:
-          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
-        run: |
-          kubectl -n pr-preview port-forward svc/proxy-public 8000:80 \
-            > /tmp/port-forward.log 2>&1 &
-          echo "PORT_FORWARD_PID=$!" >> "$GITHUB_ENV"
 
       - name: Install cloudflared
         run: |
