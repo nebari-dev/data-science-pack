@@ -346,6 +346,15 @@ jobs:
       - name: Run tunnel until the job times out
         run: /tmp/cloudflared tunnel --no-autoupdate run --token "${TUNNEL_TOKEN}"
 
+      # Runs once the tunnel step above ends (timeout or a manual cancel),
+      # so this captures anything logged in response to real traffic during
+      # the tunnel's lifetime -- unlike the earlier startup-time log dump.
+      - name: Dump hub logs after tunnel closes
+        if: always()
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: kubectl -n pr-preview logs deployment/hub --tail=1000 || true
+
       - name: Delete DNS record
         if: always()
         env:
