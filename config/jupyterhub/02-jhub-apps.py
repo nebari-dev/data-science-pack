@@ -2,11 +2,31 @@
 
 # ruff: noqa: F821 - `c` is a magic global provided by JupyterHub
 import os
+from urllib.parse import urlsplit, urlunsplit
 
 from jhub_apps import theme_template_paths, themes
 from jhub_apps.configuration import install_jhub_apps
 from kubespawner import KubeSpawner
 from z2jh import get_config
+
+
+def _localhost_hub_api_url(url: str) -> str:
+    """Rewrite a hub API URL's host to localhost, keeping port and path.
+
+    jhub-apps runs as a managed-service subprocess inside the SAME pod as
+    hub, but z2jh's JUPYTERHUB_API_URL points at the `hub` Service
+    (ClusterIP self-reference). Routing same-pod traffic through a Service
+    depends on the CNI supporting hairpin NAT for a pod reaching its own
+    Service -- observed to time out (httpcore.ConnectTimeout) on a
+    kind/kindnet cluster. localhost is always reliable for same-pod
+    traffic regardless of hairpin NAT support.
+    """
+    if not url:
+        return url
+    parsed = urlsplit(url)
+    netloc = f"localhost:{parsed.port}" if parsed.port else "localhost"
+    return urlunsplit(parsed._replace(netloc=netloc))
+
 
 # Configure jhub-apps
 # bind_url must include the real external hostname so JupyterHub constructs
@@ -103,4 +123,13 @@ if _oidc_secret:
     for svc in c.JupyterHub.services:
         if svc.get("name") == "japps":
             svc.setdefault("environment", {})["JUPYTERHUB_OIDC_CLIENT_SECRET"] = _oidc_secret
+            break
+
+# Point jhub-apps' own hub-API client at localhost instead of the `hub`
+# Service it inherits from z2jh -- see _localhost_hub_api_url's docstring.
+_hub_api_url = _localhost_hub_api_url(os.environ.get("JUPYTERHUB_API_URL", ""))
+if _hub_api_url:
+    for svc in c.JupyterHub.services:
+        if svc.get("name") == "japps":
+            svc.setdefault("environment", {})["JUPYTERHUB_API_URL"] = _hub_api_url
             break
