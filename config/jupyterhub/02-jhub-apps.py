@@ -1,8 +1,8 @@
 """jhub-apps integration configuration."""
 
 # ruff: noqa: F821 - `c` is a magic global provided by JupyterHub
-from inspect import isawaitable
 import os
+from inspect import isawaitable
 
 from jhub_apps import theme_template_paths, themes
 from jhub_apps.configuration import install_jhub_apps
