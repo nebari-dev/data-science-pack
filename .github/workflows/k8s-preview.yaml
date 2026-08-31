@@ -248,15 +248,20 @@ jobs:
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: |
-          kubectl -n pr-preview get pods -o wide || true
-          kubectl -n pr-preview get jobs || true
-          kubectl -n pr-preview get events --sort-by=.lastTimestamp || true
-          for pod in $(kubectl -n pr-preview get pods -o name 2>/dev/null); do
-            echo "--- describe $pod ---"
-            kubectl -n pr-preview describe "$pod" || true
-            echo "--- logs $pod ---"
-            kubectl -n pr-preview logs "$pod" --all-containers --tail=100 || true
+          for ns in pr-preview keycloak; do
+            echo "=== namespace: $ns ==="
+            kubectl -n "$ns" get pods -o wide || true
+            kubectl -n "$ns" get jobs || true
+            kubectl -n "$ns" get secrets || true
+            kubectl -n "$ns" get events --sort-by=.lastTimestamp || true
+            for pod in $(kubectl -n "$ns" get pods -o name 2>/dev/null); do
+              echo "--- describe $pod ($ns) ---"
+              kubectl -n "$ns" describe "$pod" || true
+              echo "--- logs $pod ($ns) ---"
+              kubectl -n "$ns" logs "$pod" --all-containers --tail=100 || true
+            done
           done
+          kubectl -n pr-preview get nebariapp -o yaml || true
 
       # Interactive SSH debug session into the live runner (cluster still
       # up, KUBECONFIG still valid) instead of guessing blind from static
