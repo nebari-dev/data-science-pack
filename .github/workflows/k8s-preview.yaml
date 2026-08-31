@@ -14,13 +14,13 @@ name: K8s Stack Preview
 # is a member of this GitHub org. The PR comment only ever contains a URL.
 #
 # The domain is a repo Variable (Settings -> Secrets and variables ->
-# Actions -> Variables -> PREVIEW_DOMAIN, currently github.fyi), not
+# Actions -> Variables -> PREVIEW_DOMAIN, currently openteams.app), not
 # hardcoded, so it can be repointed without editing this file. Hostnames
-# built from it stay single-level (pr-<n>.<domain>, never
-# pr-<n>.dspack.<domain>) deliberately: Cloudflare's free Universal SSL
-# only auto-covers the zone apex plus one wildcard level (<domain> +
-# *.<domain>); a second level needs the paid Advanced Certificate
-# Manager add-on, which this setup doesn't use.
+# built from it stay single-level (pr-<n>-data-science-pack.<domain>,
+# never pr-<n>.data-science-pack.<domain>) deliberately: Cloudflare's
+# free Universal SSL only auto-covers the zone apex plus one wildcard
+# level (<domain> + *.<domain>); a second level needs the paid Advanced
+# Certificate Manager add-on, which this setup doesn't use.
 #
 # Scope, deliberately: the tunnel points straight at the `proxy-public`
 # service (dummy-authenticator login, same as local Tilt dev). The chart
@@ -39,16 +39,16 @@ name: K8s Stack Preview
 # One-time setup this workflow assumes already exists (Cloudflare Zero
 # Trust dashboard, done by a repo admin, not scripted here). The tunnel,
 # the PREVIEW_DOMAIN zone, and Zero Trust/Access all live in ONE
-# Cloudflare account (aktechlabs) — not the account behind
+# Cloudflare account (OpenTeams Account) — not the account behind
 # CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID, which docs.yml uses for
 # Pages:
 #   - Variable PREVIEW_DOMAIN (repo Settings -> Actions -> Variables):
-#     the zone name, e.g. github.fyi.
+#     the zone name, e.g. openteams.app.
 #   - That zone in the Cloudflare account, with an Access self-hosted
 #     application for `*.<PREVIEW_DOMAIN>`, GitHub as identity provider,
-#     policy scoped to this org. Note this wildcard covers ANY
-#     single-label subdomain of the zone, not just previews — fine as
-#     long as the zone isn't also hosting unrelated services outside
+#     policy scoped to this org (nebari-dev). Note this wildcard covers
+#     ANY single-label subdomain of the zone, not just previews — fine
+#     as long as the zone isn't also hosting unrelated services outside
 #     this org's control.
 #   - Secret CLOUDFLARE_TUNNEL_ACCOUNT_ID: that account's id (the
 #     `cfd_tunnel` API is account-scoped; can't be derived from the
@@ -59,7 +59,7 @@ name: K8s Stack Preview
 #       * Zone -> Zone -> Read        (to resolve the zone id by name)
 #       * Zone -> DNS -> Edit         (to create/delete the CNAME record)
 #     Zone Resources: Include -> Specific zone -> the PREVIEW_DOMAIN zone.
-#     Account Resources: Include -> Specific account -> aktechlabs.
+#     Account Resources: Include -> Specific account -> OpenTeams Account.
 #
 # Only runs when a maintainer/collaborator adds the `deploy-preview` label
 # (GitHub restricts who can label a PR) — arbitrary PR authors, including
@@ -142,7 +142,7 @@ jobs:
             --set jupyterhub.hub.image.name=nebari-data-science-pack-jupyterhub \
             --set jupyterhub.hub.image.tag=preview \
             --set nebariapp.enabled=false \
-            --set jupyterhub.custom.external-url="pr-${{ github.event.pull_request.number }}.${{ env.PREVIEW_DOMAIN }}" \
+            --set jupyterhub.custom.external-url="pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
             --wait --timeout 5m
 
       - name: Wait for hub + proxy
@@ -208,7 +208,7 @@ jobs:
         env:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_TUNNEL_ACCOUNT_ID }}
-          PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}.${{ env.PREVIEW_DOMAIN }}
+          PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}
         run: |
           tunnel_secret=$(openssl rand -base64 32)
           echo "::add-mask::${tunnel_secret}"
@@ -259,7 +259,7 @@ jobs:
         id: cf_dns
         env:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
-          PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}.${{ env.PREVIEW_DOMAIN }}
+          PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}
         run: |
           zone_id=$(curl -fsS "https://api.cloudflare.com/client/v4/zones?name=${PREVIEW_DOMAIN}" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id')
@@ -282,7 +282,7 @@ jobs:
           echo "DNS_RECORD_ID=${record_id}" >> "$GITHUB_ENV"
           echo "url=https://${PREVIEW_HOSTNAME}" >> "$GITHUB_OUTPUT"
 
-      # The URL itself (pr-<n>.github.fyi) is identical on every run, so
+      # The URL itself (pr-<n>-data-science-pack.<domain>) is identical on every run, so
       # without a timestamp the sticky comment would post byte-identical
       # text each redeploy and look like it never updated.
       - name: Compute deployment timestamps
