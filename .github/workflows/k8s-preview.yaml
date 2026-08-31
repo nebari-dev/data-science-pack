@@ -1,7 +1,7 @@
 name: K8s Stack Preview
 # Deploys the full Nebari platform stack (Keycloak + nic-operator + Envoy
-# Gateway, via nebari-dev/action-nebari-sandbox's `platform` profile) plus
-# this PR's chart into an ephemeral k3d cluster on the runner, then exposes
+# Gateway, via nebari-dev/action-nebari-sandbox) plus this PR's chart into
+# an ephemeral kind cluster on the runner, then exposes
 # JupyterHub through a per-PR Cloudflare Tunnel behind Cloudflare Access
 # (GitHub-org SSO) so a reviewer can click a link and use it.
 #
@@ -67,8 +67,8 @@ name: K8s Stack Preview
 # attacker-authored code once labeled; the comment flags this so whoever
 # labels it is doing so knowingly.
 #
-# Residual risk not covered here: k3d pods share the runner's Docker daemon
-# rather than being hardware-isolated, and k3d's default CNI (flannel)
+# Residual risk not covered here: kind nodes share the runner's Docker daemon
+# rather than being hardware-isolated, and kind's default CNI (kindnet)
 # does not enforce NetworkPolicy, so a container escape or outbound abuse
 # from inside a spawned notebook pod is not blocked at the network layer.
 # Per-job GITHUB_TOKEN permissions are scoped to the minimum each job
@@ -105,23 +105,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: Provision sandbox (k3d + full NIC platform stack)
-        id: sandbox
-        uses: nebari-dev/action-nebari-sandbox@dbdb054c16efee3b29e26aee406c12fb9639bfd0 # v2.2.0
+      - name: Install kind
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
-          profile: platform
+          version: v0.27.0
+          install_only: true
+
+      - name: Provision sandbox (kind + full NIC platform stack)
+        id: sandbox
+        uses: nebari-dev/action-nebari-sandbox@9ac369ebf87ac2ae217504dcbf824c77f70e429a # v3.0.0
+        with:
           cluster-name: pr-preview-${{ github.event.pull_request.number }}
 
       - name: Build hub image from this PR
         run: docker build --target jupyterhub -t nebari-data-science-pack-jupyterhub:preview images/
 
-      - name: Install k3d CLI (for image import)
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | \
-            TAG=v5.8.3 bash
-
       - name: Side-load hub image into the sandbox cluster
-        run: k3d image import nebari-data-science-pack-jupyterhub:preview -c ${{ steps.sandbox.outputs.cluster-name }}
+        run: kind load docker-image nebari-data-science-pack-jupyterhub:preview --name ${{ steps.sandbox.outputs.cluster-name }}
 
       # charts/ is gitignored (dependency .tgz files aren't committed), so a
       # fresh checkout needs this before `helm upgrade --install` can find
@@ -338,10 +338,6 @@ jobs:
           curl -fsS -X DELETE \
             "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${TUNNEL_ID}" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" || true
-
-      - name: Cleanup cluster
-        if: always()
-        run: k3d cluster delete ${{ steps.sandbox.outputs.cluster-name }} || true
 
   cleanup-preview:
     if: github.event.action == 'unlabeled' && github.event.label.name == 'deploy-preview'
