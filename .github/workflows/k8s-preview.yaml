@@ -150,6 +150,19 @@ jobs:
           helm repo add jupyterhub https://hub.jupyter.org/helm-chart/
           helm dependency build .
 
+      # nic-operator only reconciles NebariApps in namespaces opted into
+      # Nebari management; without this label it sets condition
+      # NamespaceNotOptedIn and never provisions the Keycloak client at
+      # all (confirmed via `kubectl get nebariapp -o yaml` after a deploy
+      # failure -- not a slow-provisioning race, a permanent gate that
+      # would never resolve on its own).
+      - name: Create + label the preview namespace for the operator
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          kubectl create namespace pr-preview --dry-run=client -o yaml | kubectl apply -f -
+          kubectl label namespace pr-preview nebari.dev/managed=true --overwrite
+
       # No --wait here: with nebariapp.auth.enabled=true, the hub pod reads
       # the operator-provisioned Keycloak client Secret at import time
       # (config/jupyterhub/00-gateway-auth.py) and crashes with
