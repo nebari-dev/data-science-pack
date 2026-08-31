@@ -188,7 +188,13 @@ jobs:
       # because the pod was mounting a DIFFERENT, nonexistent secret name
       # the whole time (release name here is "preview") -- confirmed only
       # after ruling out timing races and kubelet caching across 5 retries.
-      # Override it explicitly to match this release's actual name.
+      # Override it explicitly to match this release's actual name. Using
+      # --set with list-index syntax (extraVolumes[1].secret.secretName=...)
+      # against a values.yaml-defined list corrupts the OTHER elements'
+      # `name` fields too (Helm's --set doesn't deep-merge per-element into
+      # an existing default list) -- confirmed by a real failure:
+      # "volumes[2].name: Required value, volumes[3].name: Required value".
+      # --set-json with the full, correct array sidesteps that.
       - name: Deploy chart
         id: deploy
         env:
@@ -201,7 +207,7 @@ jobs:
             --set nebariapp.enabled=true \
             --set nebariapp.hostname="pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
             --set jupyterhub.custom.external-url="pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
-            --set jupyterhub.hub.extraVolumes[1].secret.secretName=preview-nebari-data-science-pack-oidc-client
+            --set-json 'jupyterhub.hub.extraVolumes=[{"name":"custom-config","configMap":{"name":"nebari-data-science-pack-hub-config"}},{"name":"oauth-client","secret":{"secretName":"preview-nebari-data-science-pack-oidc-client","optional":true}},{"name":"org-ca","configMap":{"name":"nebari-trust-bundle","optional":true}},{"name":"ca-merged","emptyDir":{}}]'
 
       # Secret name convention: {Release.Name}-{Chart.Name}-oidc-client
       # (see values.yaml, jupyterhub.hub.extraVolumes comment). Poll by
