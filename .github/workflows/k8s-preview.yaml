@@ -155,6 +155,18 @@ jobs:
           kubectl -n pr-preview rollout status deployment/hub --timeout=180s
           kubectl -n pr-preview rollout status deployment/proxy --timeout=180s
 
+      # jhub-apps runs as a managed service subprocess inside the hub pod,
+      # not its own Deployment, so a crash there doesn't fail `helm --wait`
+      # or the rollout checks above -- it only shows up as a 502 on
+      # /services/japps/* once someone hits it. Always dump the hub log
+      # (not gated on failure) so a broken jhub-apps subprocess is visible
+      # in this run's own output instead of only from a live login attempt.
+      - name: Dump hub logs (jhub-apps startup)
+        if: always()
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: kubectl -n pr-preview logs deployment/hub --tail=500
+
       # Cleanup deletes the whole cluster next, so this is the only chance
       # to see why a pod/job didn't reach Ready if `helm --wait` timed out.
       - name: Debug pod/job status on deploy failure
