@@ -120,8 +120,23 @@ jobs:
         with:
           cluster-name: pr-preview-${{ github.event.pull_request.number }}
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      # Every run gets a fresh runner (empty Docker daemon), so a plain
+      # `docker build` re-runs every layer -- including the apt/pixi
+      # installs -- from scratch every time. GitHub Actions cache (type=gha)
+      # persists layers across runs so an unchanged pixi.lock/pixi.toml
+      # reuses the previous run's install instead of redoing it.
       - name: Build hub image from this PR
-        run: docker build --target jupyterhub -t nebari-data-science-pack-jupyterhub:preview images/
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: images/
+          target: jupyterhub
+          tags: nebari-data-science-pack-jupyterhub:preview
+          load: true
+          cache-from: type=gha,scope=k8s-preview-jupyterhub
+          cache-to: type=gha,scope=k8s-preview-jupyterhub,mode=max
 
       - name: Side-load hub image into the sandbox cluster
         run: kind load docker-image nebari-data-science-pack-jupyterhub:preview --name ${{ steps.sandbox.outputs.cluster-name }}
@@ -144,7 +159,8 @@ jobs:
             --namespace pr-preview --create-namespace \
             --set jupyterhub.hub.image.name=nebari-data-science-pack-jupyterhub \
             --set jupyterhub.hub.image.tag=preview \
-            --set nebariapp.enabled=false \
+            --set nebariapp.enabled=true \
+            --set nebariapp.hostname="pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
             --set jupyterhub.custom.external-url="pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
             --wait --timeout 5m
 
@@ -208,12 +224,13 @@ jobs:
       # Interactive SSH debug session into the live runner (cluster still
       # up, KUBECONFIG still valid) instead of guessing blind from static
       # logs. limit-access-to-actor restricts the SSH session to whoever
-      # triggered this run — required on a public repo. Bounded to 20min
-      # so a forgotten session doesn't eat the whole 90min job timeout.
-      - name: Debug via tmate SSH on deploy failure
-        if: failure()
+      # triggered this run — required on a public repo. Temporarily
+      # unconditional (not gated to failure()) while actively debugging the
+      # nebariapp/Keycloak auth path live instead of iterating full CI runs.
+      - name: Debug via tmate SSH
+        if: always()
         uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
-        timeout-minutes: 20
+        timeout-minutes: 45
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         with:
