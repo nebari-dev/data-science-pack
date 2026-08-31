@@ -273,6 +273,23 @@ jobs:
           echo "PORT_FORWARD_PID=$!" >> "$GITHUB_ENV"
           sleep 3
 
+      # Keycloak itself, so a reviewer can sign in there directly and land
+      # on JupyterHub already authenticated (same Keycloak SSO cookie the
+      # hub's own OAuth redirect relies on). Keycloak's issuer/hostname
+      # stay pinned to NIC's internal keycloak.nebari.local (that's what
+      # the operator baked into hub's OIDC client secret -- changing it
+      # would break the hub login flow) so this is exposed under a
+      # DIFFERENT public hostname with the Host header rewritten back to
+      # keycloak.nebari.local at the tunnel, not by reconfiguring Keycloak.
+      - name: Port-forward Keycloak
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: |
+          kubectl -n keycloak port-forward svc/keycloak-keycloakx-http 8001:8080 \
+            > /tmp/port-forward-keycloak.log 2>&1 &
+          echo "KEYCLOAK_PORT_FORWARD_PID=$!" >> "$GITHUB_ENV"
+          sleep 3
+
       # jhub-apps runs as a managed service subprocess inside the hub pod,
       # not its own Deployment, so a crash there doesn't fail `helm --wait`
       # or the rollout checks above -- it only shows up as a 502 on
@@ -366,6 +383,7 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_TUNNEL_ACCOUNT_ID }}
           PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}
+          KEYCLOAK_HOSTNAME: keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}
         run: |
           tunnel_secret=$(openssl rand -base64 32)
           echo "::add-mask::${tunnel_secret}"
@@ -408,8 +426,12 @@ jobs:
             "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${tunnel_id}/configurations" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg host "$PREVIEW_HOSTNAME" \
-              '{config: {ingress: [{hostname: $host, service: "http://localhost:8000"}, {service: "http_status:404"}]}}')" \
+            -d "$(jq -n --arg host "$PREVIEW_HOSTNAME" --arg kchost "$KEYCLOAK_HOSTNAME" \
+              '{config: {ingress: [
+                {hostname: $host, service: "http://localhost:8000"},
+                {hostname: $kchost, service: "http://localhost:8001", originRequest: {httpHostHeader: "keycloak.nebari.local"}},
+                {service: "http_status:404"}
+              ]}}')" \
             > /dev/null
 
       - name: Point DNS at the tunnel
@@ -417,6 +439,7 @@ jobs:
         env:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
           PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}
+          KEYCLOAK_HOSTNAME: keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}
         run: |
           zone_id=$(curl -fsS "https://api.cloudflare.com/client/v4/zones?name=${PREVIEW_DOMAIN}" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id')
@@ -438,6 +461,19 @@ jobs:
           fi
           echo "DNS_RECORD_ID=${record_id}" >> "$GITHUB_ENV"
           echo "url=https://${PREVIEW_HOSTNAME}" >> "$GITHUB_OUTPUT"
+
+          kc_record_resp=$(curl -fsS -X POST "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg host "$KEYCLOAK_HOSTNAME" --arg target "${TUNNEL_ID}.cfargotunnel.com" \
+              '{type: "CNAME", name: $host, content: $target, proxied: true}')")
+          kc_record_id=$(jq -r '.result.id' <<< "$kc_record_resp")
+          if [ -z "$kc_record_id" ] || [ "$kc_record_id" = "null" ]; then
+            echo "::error::Keycloak DNS record creation failed: $kc_record_resp"
+            exit 1
+          fi
+          echo "KEYCLOAK_DNS_RECORD_ID=${kc_record_id}" >> "$GITHUB_ENV"
+          echo "keycloak_url=https://${KEYCLOAK_HOSTNAME}" >> "$GITHUB_OUTPUT"
 
       # The URL itself (pr-<n>-data-science-pack.<domain>) is identical on every run, so
       # without a timestamp the sticky comment would post byte-identical
@@ -466,6 +502,11 @@ jobs:
             **Then JupyterHub login:** goes through Keycloak (the operator-provisioned
             OIDC client for this preview's NebariApp).
 
+            Keycloak's own login page is also reachable directly:
+            ${{ steps.cf_dns.outputs.keycloak_url }}
+            Signing in there first establishes the SSO session, so visiting
+            JupyterHub afterward skips straight past the login prompt.
+
             Live until the expiry time above, or until the `deploy-preview` label
             is removed. Push a new commit or re-add the label to redeploy.
 
@@ -489,6 +530,10 @@ jobs:
           [ -n "${ZONE_ID:-}" ] && [ -n "${DNS_RECORD_ID:-}" ] || exit 0
           curl -fsS -X DELETE \
             "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${DNS_RECORD_ID}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" || true
+          [ -n "${KEYCLOAK_DNS_RECORD_ID:-}" ] || exit 0
+          curl -fsS -X DELETE \
+            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${KEYCLOAK_DNS_RECORD_ID}" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" || true
 
       - name: Delete Cloudflare Tunnel
