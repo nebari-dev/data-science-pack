@@ -262,6 +262,18 @@ jobs:
       # an existing default list) -- confirmed by a real failure:
       # "volumes[2].name: Required value, volumes[3].name: Required value".
       # --set-json with the full, correct array sidesteps that.
+      #
+      # keycloak.backchannelURL: Keycloak's public hostname sits behind
+      # Cloudflare Access (same as the JupyterHub hostname), which is fine
+      # for the browser-facing authorize/login legs -- the reviewer already
+      # has an Access session -- but hub's OWN server-to-server token
+      # exchange has no such session and gets blocked/redirected by
+      # Access instead of getting a JSON response back, confirmed live:
+      # json.decoder.JSONDecodeError: Expecting value: line 1 column 1
+      # (an empty/non-JSON body from the token endpoint). Point the
+      # backchannel (token_url, userdata_url only -- authorize_url stays
+      # on the public issuer) straight at Keycloak's in-cluster Service,
+      # bypassing Cloudflare/Access entirely for that leg.
       - name: Deploy chart
         id: deploy
         env:
@@ -274,6 +286,7 @@ jobs:
             --set nebariapp.enabled=true \
             --set nebariapp.hostname="pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
             --set jupyterhub.custom.external-url="pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
+            --set keycloak.backchannelURL="http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080" \
             --set-json 'jupyterhub.hub.extraVolumes=[{"name":"custom-config","configMap":{"name":"nebari-data-science-pack-hub-config"}},{"name":"oauth-client","secret":{"secretName":"preview-nebari-data-science-pack-oidc-client","optional":true}},{"name":"org-ca","configMap":{"name":"nebari-trust-bundle","optional":true}},{"name":"ca-merged","emptyDir":{}}]'
 
       # Secret name convention: {Release.Name}-{Chart.Name}-oidc-client
