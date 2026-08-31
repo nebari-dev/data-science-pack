@@ -21,6 +21,7 @@ notebook = "==7.6.0"
 nbval = "*"
 
 # jupyterlab extensions
+jupyter-collaboration = ">=5.0.0,<6"
 jupyterlab-git = ">=0.54.0"
 sidecar = ">=0.8.1,<0.9"
 ipywidgets = ">=8.1.8,<9"

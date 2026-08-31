@@ -2,6 +2,7 @@
 
 # ruff: noqa: F821 - `c` is a magic global provided by JupyterHub
 import os
+from inspect import isawaitable
 
 from jhub_apps import theme_template_paths, themes
 from jhub_apps.configuration import install_jhub_apps
@@ -73,6 +74,13 @@ for key, value in japps_config.items():
 # Install jhub-apps (sets up service, roles, etc.)
 c = install_jhub_apps(c, spawner_to_subclass=KubeSpawner)
 
+
+def _materialize_config_list(value):
+    if hasattr(value, "get_value"):
+        return value.get_value([])
+    return value
+
+
 # Extend the `user` role with the scopes the jhub-apps sharing dropdown
 # ("Individuals and group access") needs: the dropdown is (other hub users +
 # hub groups) filtered by the requesting user's token scopes, and without
@@ -91,9 +99,56 @@ if get_config("custom.sharing-scopes-enabled", True):
         if _role.get("name") == "user":
             _role["scopes"] = sorted(
                 set(_role["scopes"])
-                | {"read:users:name", "read:groups:name", "shares!user"}
+                | {
+                    "list:groups",
+                    "list:users",
+                    "read:groups:name",
+                    "read:users:name",
+                    "shares!user",
+                }
             )
             break
+    # JupyterLab RTC's sharing UI runs from the browser OAuth token. This
+    # allowlist lets it request share-management scopes without exposing those
+    # permissions to notebook kernels or terminals via the server token. The
+    # Hub still grants only scopes the current user already has.
+    _rtc_oauth_client_allowed_scopes = {
+        "access:servers!server",
+        "list:groups",
+        "list:users",
+        "read:groups:name",
+        "read:users:name",
+        "servers!user",
+        "shares!server",
+        "shares!user",
+    }
+    try:
+        _existing_oauth_client_allowed_scopes = c.Spawner.get(
+            "oauth_client_allowed_scopes", []
+        )
+    except AttributeError:
+        _existing_oauth_client_allowed_scopes = getattr(
+            c.Spawner, "oauth_client_allowed_scopes", []
+        )
+    _existing_oauth_client_allowed_scopes = _materialize_config_list(
+        _existing_oauth_client_allowed_scopes
+    )
+
+    if callable(_existing_oauth_client_allowed_scopes):
+        _base_oauth_client_allowed_scopes = _existing_oauth_client_allowed_scopes
+
+        async def _oauth_client_allowed_scopes_with_rtc(spawner):
+            scopes = _base_oauth_client_allowed_scopes(spawner)
+            if isawaitable(scopes):
+                scopes = await scopes
+            return sorted(set(scopes or []) | _rtc_oauth_client_allowed_scopes)
+
+        c.Spawner.oauth_client_allowed_scopes = _oauth_client_allowed_scopes_with_rtc
+    else:
+        c.Spawner.oauth_client_allowed_scopes = sorted(
+            set(_existing_oauth_client_allowed_scopes or [])
+            | _rtc_oauth_client_allowed_scopes
+        )
 
 # Forward JUPYTERHUB_OIDC_CLIENT_SECRET to the jhub-apps subprocess so that
 # 03-nebi-envs.py (which is re-evaluated inside the subprocess via

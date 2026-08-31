@@ -202,6 +202,7 @@ always win.
 | `trust-bundle-key` | `ca-certificates.crt` | Key within it. |
 | `profiles` | two profiles | Server sizes — see [Server profiles](/server-profiles/). |
 | `terminal-customization` | `true` | Starship prompt in JupyterLab terminals. |
+| `sharing-scopes-enabled` | `true` | Grants the user and browser-token scopes used by jhub-apps and JupyterLab real-time collaboration sharing UI. This lets users list Hub user/group names for recipient picking; set false to disable user-managed server sharing. |
 | `shared-storage-groups` | `[]` | Allowlist; empty = every group in the token. |
 | `shared-storage-mount-prefix` | `/shared` | — |
 | `storage-capacity` | `20Gi` | Per-user home PVC size (`claim-{username}`, RWO). |

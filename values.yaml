@@ -493,6 +493,11 @@ jupyterhub:
     # ``image: ...`` lines inside each profile_options.image.choices.default
     # entry so the profile selector shows the right tag. (z2jh values.yaml
     # cannot reference other values, so the duplication is unavoidable.)
+    # Grants ordinary users the scopes needed by jhub-apps and JupyterLab's
+    # real-time collaboration sharing UI to share their own running servers.
+    # This also lets users list Hub user/group names so the sharing recipient
+    # picker can work. Set false to disable user-managed server sharing.
+    sharing-scopes-enabled: true
     profiles:
       - slug: small-instance
         display_name: "Small Instance"
@@ -588,6 +593,12 @@ jupyterhub:
       #                          # here to add more or replace the default.
       # startup_apps: []
   hub:
+    labels:
+      # jhub-apps runs as a managed service in the Hub pod but talks to the Hub
+      # API through the hub Service when hub_host is "hub". Match the source
+      # label required by the Hub NetworkPolicy for port 8081.
+      hub.jupyter.org/network-access-hub: "true"
+
     # Custom Nebari hub image with jhub-apps pre-installed.
     # Tag below is the PR-53 merge-commit SHA at the moment of pinning; the
     # corresponding immutable digest is
