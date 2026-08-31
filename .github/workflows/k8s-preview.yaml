@@ -218,22 +218,34 @@ jobs:
           kubectl -n pr-preview get nebariapp -o yaml || true
           exit 1
 
-      # The hub container already crash-looped at least once (reading the
-      # Secret volume before the operator populated it) and Kubernetes'
-      # optional-secret volume sync can lag kubelet's resync period, so
-      # force an immediate restart now that the secret is confirmed present
-      # instead of waiting out CrashLoopBackOff's own backoff schedule.
-      - name: Restart hub to pick up the operator secret
-        env:
-          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
-        run: kubectl -n pr-preview rollout restart deployment/hub
-
-      - name: Wait for hub + proxy
+      # A single restart isn't reliable here even though the API server
+      # confirms issuer-url is populated: kubelet's own Secret volume cache
+      # (node-local, ~1min TTL) can still hand a freshly-restarted pod the
+      # pre-population snapshot it fetched for the pod's first, crash-looped
+      # attempt -- confirmed by the same FileNotFoundError recurring on a
+      # restart issued 5s after the secret was already confirmed complete.
+      # Retry the restart until a rollout actually succeeds, giving the
+      # kubelet cache time to expire between attempts, instead of assuming
+      # one restart is enough.
+      - name: Restart hub until it picks up the operator secret
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: |
-          kubectl -n pr-preview rollout status deployment/hub --timeout=180s
-          kubectl -n pr-preview rollout status deployment/proxy --timeout=180s
+          for attempt in 1 2 3 4 5; do
+            kubectl -n pr-preview rollout restart deployment/hub
+            if kubectl -n pr-preview rollout status deployment/hub --timeout=90s; then
+              echo "hub ready on attempt $attempt"
+              exit 0
+            fi
+            echo "hub not ready on attempt $attempt, retrying..."
+          done
+          echo "::error::hub never became ready after 5 restart attempts"
+          exit 1
+
+      - name: Wait for proxy
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
+        run: kubectl -n pr-preview rollout status deployment/proxy --timeout=180s
 
       - name: Port-forward JupyterHub proxy
         env:
