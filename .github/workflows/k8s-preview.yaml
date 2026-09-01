@@ -661,10 +661,16 @@ jobs:
       # deadline hit) is the expected outcome and treated as success; any
       # other nonzero exit (e.g. cloudflared itself crashing) still fails
       # the step for real.
+      # GitHub Actions runs `run:` steps as `bash -e`: a plain
+      # `cmd; ec=$?` doesn't work here because -e aborts the step the
+      # instant `timeout` returns 124, before `ec=$?` is ever reached.
+      # `|| ec=$?` catches the nonzero exit inside a protected context
+      # instead (the compound command's own status is that of the
+      # assignment, which always succeeds).
       - name: Run tunnel until it times out
         run: |
-          timeout 1200 /tmp/cloudflared tunnel --no-autoupdate run --token "${TUNNEL_TOKEN}"
-          ec=$?
+          ec=0
+          timeout 1200 /tmp/cloudflared tunnel --no-autoupdate run --token "${TUNNEL_TOKEN}" || ec=$?
           [ "$ec" -eq 0 ] || [ "$ec" -eq 124 ] || exit "$ec"
 
       # Runs once the tunnel step above ends (its own timeout, cloudflared
@@ -738,7 +744,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          deployment_id=$(gh api "repos/${{ github.repository }}/deployments?environment=pr-${{ github.event.pull_request.number }}-preview&per_page=1" --jq '.[0].id')
+          deployment_id=$(gh api "repos/${{ github.repository }}/deployments?environment=pr-${{ github.event.pull_request.number }}-preview&per_page=1" --jq '.[0].id' 2>/dev/null || true)
           [ -n "$deployment_id" ] && [ "$deployment_id" != "null" ] || exit 0
           gh api "repos/${{ github.repository }}/deployments/${deployment_id}/statuses" \
             -X POST -f state=inactive -f description="Preview stopped (label removed)" > /dev/null || true
