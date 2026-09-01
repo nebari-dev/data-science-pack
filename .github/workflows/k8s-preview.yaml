@@ -633,7 +633,7 @@ jobs:
 
             | Project | Deployment | Actions | Updated (UTC) |
             | --- | --- | --- | --- |
-            | `${{ github.event.pull_request.head.ref }}` | 🟢 [Ready](${{ steps.cf_dns.outputs.url }}) | [Preview](${{ steps.cf_dns.outputs.url }}) · [Keycloak](${{ steps.cf_dns.outputs.keycloak_url }}) | ${{ steps.timestamps.outputs.deployed_at }} |
+            | `nebari-data-science-pack` | 🟢 [Ready](${{ steps.cf_dns.outputs.url }}) | [Preview](${{ steps.cf_dns.outputs.url }}) · [Keycloak](${{ steps.cf_dns.outputs.keycloak_url }}) | ${{ steps.timestamps.outputs.deployed_at }} |
 
             ${{ github.event.pull_request.head.repo.fork && '⚠️ **This PR is from a fork** — the code running in this preview is not from a trusted maintainer branch.' || '' }}
 
