@@ -580,11 +580,21 @@ jobs:
       # The URL itself (pr-<n>-data-science-pack.<domain>) is identical on every run, so
       # without a timestamp the sticky comment would post byte-identical
       # text each redeploy and look like it never updated.
+      # ISO timestamps feed <relative-time> in the comment below -- GitHub's
+      # own web component (used all over its UI for "3 minutes ago") that
+      # ticks live client-side once rendered, confirmed via `gh api /markdown`
+      # to survive comment sanitization unstripped. Beats a static UTC
+      # string the reader has to convert to their own timezone by hand, and
+      # unlike re-editing the comment every minute, needs no extra CI runs.
+      # The plain UTC strings are the fallback text shown before JS
+      # hydrates <relative-time>.
       - name: Compute deployment timestamps
         id: timestamps
         run: |
           echo "deployed_at=$(date -u +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
           echo "expires_at=$(date -u -d '+20 minutes' +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
+          echo "deployed_at_iso=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+          echo "expires_at_iso=$(date -u -d '+20 minutes' +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
       # A GitHub Deployment/Environment, not just the comment below: GitHub
       # renders this as its own "View deployment" box pinned near the top
@@ -631,13 +641,13 @@ jobs:
           message: |
             The latest K8s stack preview for this PR.
 
-            | Project | Deployment | Actions | Updated (UTC) |
+            | Project | Deployment | Actions | Updated |
             | --- | --- | --- | --- |
-            | `nebari-data-science-pack` | 🟢 [Ready](${{ steps.cf_dns.outputs.url }}) | [Preview](${{ steps.cf_dns.outputs.url }}) · [Keycloak](${{ steps.cf_dns.outputs.keycloak_url }}) | ${{ steps.timestamps.outputs.deployed_at }} |
+            | `nebari-data-science-pack` | 🟢 [Ready](${{ steps.cf_dns.outputs.url }}) | [Preview](${{ steps.cf_dns.outputs.url }}) · [Keycloak](${{ steps.cf_dns.outputs.keycloak_url }}) | <relative-time datetime="${{ steps.timestamps.outputs.deployed_at_iso }}">${{ steps.timestamps.outputs.deployed_at }}</relative-time> |
 
             ${{ github.event.pull_request.head.repo.fork && '⚠️ **This PR is from a fork** — the code running in this preview is not from a trusted maintainer branch.' || '' }}
 
-            Expires ${{ steps.timestamps.outputs.expires_at }} — push a new commit or re-add the `deploy-preview` label to redeploy.
+            Expires <relative-time datetime="${{ steps.timestamps.outputs.expires_at_iso }}">${{ steps.timestamps.outputs.expires_at }}</relative-time> — push a new commit or re-add the `deploy-preview` label to redeploy.
 
       # Bounded to 20min so the live preview doesn't sit open (and burn CI
       # minutes) indefinitely, and so this step ends itself well under the
