@@ -629,27 +629,15 @@ jobs:
           header: k8s-preview
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           message: |
-            **K8s stack preview** for `${{ github.event.pull_request.head.ref }}`:
-            ${{ steps.cf_dns.outputs.url }}
+            The latest K8s stack preview for this PR.
 
-            Deployed: ${{ steps.timestamps.outputs.deployed_at }} · Expires: ${{ steps.timestamps.outputs.expires_at }}
+            | Project | Deployment | Actions | Updated (UTC) |
+            | --- | --- | --- | --- |
+            | `${{ github.event.pull_request.head.ref }}` | 🟢 [Ready](${{ steps.cf_dns.outputs.url }}) | [Preview](${{ steps.cf_dns.outputs.url }}) · [Keycloak](${{ steps.cf_dns.outputs.keycloak_url }}) | ${{ steps.timestamps.outputs.deployed_at }} |
 
             ${{ github.event.pull_request.head.repo.fork && '⚠️ **This PR is from a fork** — the code running in this preview is not from a trusted maintainer branch.' || '' }}
 
-            You'll be asked to sign in via Cloudflare Access (GitHub SSO) first —
-            only accounts on the Access application's allow-list get through.
-            **Then JupyterHub login:** goes through Keycloak (the operator-provisioned
-            OIDC client for this preview's NebariApp). **Username:** `reviewer`
-            **Password:** `admin` — Cloudflare Access is the real gate here, so
-            this account is intentionally simple.
-
-            Keycloak's own login page is also reachable directly:
-            ${{ steps.cf_dns.outputs.keycloak_url }}
-            Signing in there first establishes the SSO session, so visiting
-            JupyterHub afterward skips straight past the login prompt.
-
-            Live until the expiry time above, or until the `deploy-preview` label
-            is removed. Push a new commit or re-add the label to redeploy.
+            Expires ${{ steps.timestamps.outputs.expires_at }} — push a new commit or re-add the `deploy-preview` label to redeploy.
 
       # Bounded to 20min so the live preview doesn't sit open (and burn CI
       # minutes) indefinitely, and so this step ends itself well under the
