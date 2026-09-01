@@ -38,7 +38,7 @@ name: K8s Stack Preview
 # never reconciles the NebariApp at all (condition NamespaceNotOptedIn),
 # which is a permanent gate, not a slow-provisioning race.
 #
-# The link only lives for 20 minutes (the tunnel step's own timeout) — it
+# The link only lives for 20 minutes (the tunnel step's own timeout); it
 # is not a persistent per-PR environment. Each run creates its own
 # Cloudflare Tunnel + DNS record (so concurrent previews on different PRs
 # don't collide on the same route) and deletes both on cleanup.
@@ -46,7 +46,7 @@ name: K8s Stack Preview
 # One-time setup this workflow assumes already exists (Cloudflare Zero
 # Trust dashboard, done by a repo admin, not scripted here). The tunnel,
 # the PREVIEW_DOMAIN zone, and Zero Trust/Access all live in ONE
-# Cloudflare account (OpenTeams Account) — not the account behind
+# Cloudflare account (OpenTeams Account), not the account behind
 # CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID, which docs.yml uses for
 # Pages:
 #   - Variable PREVIEW_DOMAIN (repo Settings -> Actions -> Variables):
@@ -54,7 +54,7 @@ name: K8s Stack Preview
 #   - That zone in the Cloudflare account, with an Access self-hosted
 #     application for `*.<PREVIEW_DOMAIN>`, GitHub as identity provider,
 #     policy scoped to this org (nebari-dev). Note this wildcard covers
-#     ANY single-label subdomain of the zone, not just previews — fine
+#     ANY single-label subdomain of the zone, not just previews, fine
 #     as long as the zone isn't also hosting unrelated services outside
 #     this org's control.
 #   - Secret CLOUDFLARE_TUNNEL_ACCOUNT_ID: that account's id (the
@@ -69,7 +69,7 @@ name: K8s Stack Preview
 #     Account Resources: Include -> Specific account -> OpenTeams Account.
 #
 # Only runs when a maintainer/collaborator adds the `deploy-preview` label
-# (GitHub restricts who can label a PR) — arbitrary PR authors, including
+# (GitHub restricts who can label a PR): arbitrary PR authors, including
 # from forks, cannot trigger this themselves. Even so, a fork PR still runs
 # attacker-authored code once labeled; the comment flags this so whoever
 # labels it is doing so knowingly.
@@ -456,7 +456,7 @@ jobs:
       # Interactive SSH debug session into the live runner (cluster still
       # up, KUBECONFIG still valid) instead of guessing blind from static
       # logs. limit-access-to-actor restricts the SSH session to whoever
-      # triggered this run — required on a public repo. Bounded to 20min
+      # triggered this run, required on a public repo. Bounded to 20min
       # so a forgotten session doesn't eat the whole 90min job timeout.
       - name: Debug via tmate SSH on deploy failure
         if: failure()
@@ -503,7 +503,7 @@ jobs:
           # changes), so a re-run after the first attempt already created
           # this tunnel (and didn't get to clean it up) hits a 409 name
           # conflict here. Reuse the existing tunnel by name instead of
-          # failing — it doesn't need the original tunnel_secret, just a
+          # failing: it doesn't need the original tunnel_secret, just a
           # fresh --token from the /token endpoint below.
           if [ -z "$tunnel_id" ]; then
             echo "::warning::Tunnel create failed (likely a name conflict from a retry), looking up existing tunnel named ${tunnel_name}: $create_resp"
@@ -634,6 +634,7 @@ jobs:
             -f description="Live for 20 minutes" > /dev/null
 
       - name: Comment preview link on PR
+        id: comment_preview
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
           header: k8s-preview
@@ -645,9 +646,9 @@ jobs:
             | --- | --- | --- | --- |
             | `nebari-data-science-pack` | 🟢 [Ready](${{ steps.cf_dns.outputs.url }}) | [Preview](${{ steps.cf_dns.outputs.url }}) · [Keycloak](${{ steps.cf_dns.outputs.keycloak_url }}) | <relative-time datetime="${{ steps.timestamps.outputs.deployed_at_iso }}">${{ steps.timestamps.outputs.deployed_at }}</relative-time> |
 
-            ${{ github.event.pull_request.head.repo.fork && '⚠️ **This PR is from a fork** — the code running in this preview is not from a trusted maintainer branch.' || '' }}
+            ${{ github.event.pull_request.head.repo.fork && '⚠️ **This PR is from a fork**: the code running in this preview is not from a trusted maintainer branch.' || '' }}
 
-            Expires <relative-time datetime="${{ steps.timestamps.outputs.expires_at_iso }}">${{ steps.timestamps.outputs.expires_at }}</relative-time> — push a new commit or re-add the `deploy-preview` label to redeploy.
+            Expires <relative-time datetime="${{ steps.timestamps.outputs.expires_at_iso }}">${{ steps.timestamps.outputs.expires_at }}</relative-time>. Push a new commit or re-add the `deploy-preview` label to redeploy.
 
       # Bounded to 20min so the live preview doesn't sit open (and burn CI
       # minutes) indefinitely, and so this step ends itself well under the
@@ -692,6 +693,30 @@ jobs:
           [ -n "${DEPLOYMENT_ID:-}" ] || exit 0
           gh api "repos/${{ github.repository }}/deployments/${DEPLOYMENT_ID}/statuses" \
             -X POST -f state=inactive -f description="Preview expired" > /dev/null || true
+
+      # The comment above still says "Ready" / "Expires in N minutes" once
+      # the tunnel closes -- it was only ever written once, at deploy time,
+      # and <relative-time> only keeps the clock ticking, not the
+      # surrounding wording or status. Edit it again now that the run is
+      # actually tearing down, so a reader doesn't see a green "Ready" row
+      # next to a relative time that has flipped to the past. Only do this
+      # when the first post succeeded (skip if the run failed before ever
+      # reaching that step, since there is no live-preview comment to
+      # correct in that case).
+      - name: Comment that the preview expired
+        if: always() && steps.comment_preview.outcome == 'success'
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: k8s-preview
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          message: |
+            The K8s stack preview for this PR has expired.
+
+            | Project | Deployment | Actions | Updated |
+            | --- | --- | --- | --- |
+            | `nebari-data-science-pack` | ⚫ Expired | - | <relative-time datetime="${{ steps.timestamps.outputs.expires_at_iso }}">${{ steps.timestamps.outputs.expires_at }}</relative-time> |
+
+            Push a new commit or re-add the `deploy-preview` label to redeploy.
 
       - name: Delete DNS record
         if: always()
@@ -753,6 +778,6 @@ jobs:
           header: k8s-preview
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           message: |
-            **K8s stack preview** stopped — the `deploy-preview` label was removed.
+            **K8s stack preview** stopped: the `deploy-preview` label was removed.
 
             Add it again to redeploy.
