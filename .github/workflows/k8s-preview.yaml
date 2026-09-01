@@ -100,18 +100,43 @@ env:
   CLOUDFLARED_SHA256: "9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17"
 
 jobs:
+  # A `labeled` event fires the whole workflow for ANY label add, not just
+  # deploy-preview -- e.g. someone adding extend-preview (see the tunnel
+  # step below) would otherwise start a second run of this job, which
+  # `concurrency: cancel-in-progress` then uses to cancel the very run
+  # extend-preview was meant to extend. Scope labeled/unlabeled triggers to
+  # the deploy-preview label itself; extend-preview is read by the
+  # already-running tunnel step polling the API, not by starting a new run.
   deploy-preview:
-    if: contains(github.event.pull_request.labels.*.name, 'deploy-preview') && github.event.action != 'unlabeled'
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'deploy-preview') &&
+      github.event.action != 'unlabeled' &&
+      (github.event.action != 'labeled' || github.event.label.name == 'deploy-preview')
     name: Deploy preview
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
       contents: read
       pull-requests: write
+      issues: write
       deployments: write
     steps:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      # So it shows up as an existing, pickable label in the PR's label
+      # picker instead of requiring someone to freehand-type a brand-new
+      # name (which GitHub does support, but it's an easy thing to miss).
+      # `gh label create` errors if the label already exists; that's fine,
+      # this step is just making sure it's there.
+      - name: Ensure the extend-preview label exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create extend-preview --repo "${{ github.repository }}" \
+            --color BFD4F2 \
+            --description "Push this preview's expiry back 20 minutes" \
+            2>/dev/null || true
 
       # v0.32.0+ required: the sandbox's kind cluster uses containerd's
       # config v4 format, which `kind load` on older CLI releases can't
@@ -648,29 +673,60 @@ jobs:
 
             ${{ github.event.pull_request.head.repo.fork && '⚠️ **This PR is from a fork**: the code running in this preview is not from a trusted maintainer branch.' || '' }}
 
-            Expires <relative-time datetime="${{ steps.timestamps.outputs.expires_at_iso }}">${{ steps.timestamps.outputs.expires_at }}</relative-time>. Push a new commit or re-add the `deploy-preview` label to redeploy.
+            Expires <relative-time datetime="${{ steps.timestamps.outputs.expires_at_iso }}">${{ steps.timestamps.outputs.expires_at }}</relative-time>. Add the `extend-preview` label any time before then for 20 more minutes, or push a new commit or re-add `deploy-preview` to redeploy from scratch.
 
-      # Bounded to 20min so the live preview doesn't sit open (and burn CI
-      # minutes) indefinitely, and so this step ends itself well under the
-      # job's 90min timeout-minutes -- letting the job's own timeout kill
-      # this step instead makes GitHub mark the whole run "cancelled" with
-      # a "job has exceeded the maximum execution time" failure annotation,
-      # which looks like a real failure even though nothing broke -- the
-      # preview is *meant* to expire. `timeout`'s exit 124 (its own
-      # deadline hit) is the expected outcome and treated as success; any
-      # other nonzero exit (e.g. cloudflared itself crashing) still fails
-      # the step for real.
-      # GitHub Actions runs `run:` steps as `bash -e`: a plain
-      # `cmd; ec=$?` doesn't work here because -e aborts the step the
-      # instant `timeout` returns 124, before `ec=$?` is ever reached.
-      # `|| ec=$?` catches the nonzero exit inside a protected context
-      # instead (the compound command's own status is that of the
-      # assignment, which always succeeds).
-      - name: Run tunnel until it times out
+      # Bounded to 20min by default so the live preview doesn't sit open
+      # (and burn CI minutes) indefinitely, and so this step ends itself
+      # well under the job's 90min timeout-minutes -- letting the job's own
+      # timeout kill this step instead makes GitHub mark the whole run
+      # "cancelled" with a "job has exceeded the maximum execution time"
+      # failure annotation, which looks like a real failure even though
+      # nothing broke -- the preview is *meant* to expire eventually.
+      #
+      # Runs cloudflared in the background instead of blocking on it, so
+      # this loop can poll for the `extend-preview` label between checks
+      # and push the deadline back 20 minutes from whenever it actually
+      # sees the label (not just tack 20 more onto whatever's left) --
+      # each occurrence is a one-shot reset, consumed by removing the
+      # label, so it can be reused any number of times before expiry.
+      # Ultimately still bounded by the job's own 90min timeout-minutes
+      # regardless of how many times it's extended.
+      #
+      # `kill -0 $pid` checks liveness without signaling; if cloudflared
+      # exits on its own (a real crash, not us closing it), `wait` reaps
+      # its actual exit code so a genuine failure still fails the step --
+      # `|| ec=$?` catches that under `bash -e` (GitHub Actions' default
+      # for run: steps) without the step aborting mid-check.
+      - name: Run tunnel until it times out (extend via the extend-preview label)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          /tmp/cloudflared tunnel --no-autoupdate run --token "${TUNNEL_TOKEN}" &
+          cloudflared_pid=$!
+
+          deadline=$(( $(date +%s) + 1200 ))
           ec=0
-          timeout 1200 /tmp/cloudflared tunnel --no-autoupdate run --token "${TUNNEL_TOKEN}" || ec=$?
-          [ "$ec" -eq 0 ] || [ "$ec" -eq 124 ] || exit "$ec"
+          while true; do
+            if ! kill -0 "$cloudflared_pid" 2>/dev/null; then
+              wait "$cloudflared_pid" || ec=$?
+              break
+            fi
+            now=$(date +%s)
+            if [ "$now" -ge "$deadline" ]; then
+              kill "$cloudflared_pid" 2>/dev/null || true
+              wait "$cloudflared_pid" 2>/dev/null || true
+              break
+            fi
+            if gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" --jq '.[].name' 2>/dev/null \
+                | grep -qx "extend-preview"; then
+              deadline=$(( now + 1200 ))
+              gh api -X DELETE "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/extend-preview" \
+                > /dev/null 2>&1 || true
+              echo "extend-preview seen -- new deadline: $(date -u -d "@$deadline" +'%Y-%m-%d %H:%M UTC')"
+            fi
+            sleep 15
+          done
+          [ "$ec" -eq 0 ] || exit "$ec"
 
       # Runs once the tunnel step above ends (its own timeout, cloudflared
       # exiting, or a manual cancel), so this captures anything logged in
