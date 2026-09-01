@@ -86,9 +86,18 @@ on:
   pull_request:
     types: [labeled, unlabeled, synchronize]
 
+# cancel-in-progress is normally what we want (one live preview per PR,
+# newest commit wins), but it operates on the whole workflow RUN, not on
+# whether deploy-preview's job condition ends up true. Adding the
+# extend-preview label (see the tunnel step) fires a `labeled` event just
+# like any other label add, which would otherwise queue a new run here and
+# cancel the very run extend-preview was meant to extend -- even though
+# that new run's job condition skips it and does nothing. Excluding that
+# one case lets the new (skipped) run queue harmlessly behind the current
+# one instead of cancelling it.
 concurrency:
   group: k8s-preview-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !(github.event.action == 'labeled' && github.event.label.name == 'extend-preview') }}
 
 env:
   PREVIEW_LABEL: deploy-preview
