@@ -38,10 +38,10 @@ name: K8s Stack Preview
 # never reconciles the NebariApp at all (condition NamespaceNotOptedIn),
 # which is a permanent gate, not a slow-provisioning race.
 #
-# The link only lives for the run's duration (bounded by timeout-minutes
-# below) — it is not a persistent per-PR environment. Each run creates its
-# own Cloudflare Tunnel + DNS record (so concurrent previews on different
-# PRs don't collide on the same route) and deletes both on cleanup.
+# The link only lives for 20 minutes (the tunnel step's own timeout) — it
+# is not a persistent per-PR environment. Each run creates its own
+# Cloudflare Tunnel + DNS record (so concurrent previews on different PRs
+# don't collide on the same route) and deletes both on cleanup.
 #
 # One-time setup this workflow assumes already exists (Cloudflare Zero
 # Trust dashboard, done by a repo admin, not scripted here). The tunnel,
@@ -79,7 +79,7 @@ name: K8s Stack Preview
 # does not enforce NetworkPolicy, so a container escape or outbound abuse
 # from inside a spawned notebook pod is not blocked at the network layer.
 # Per-job GITHUB_TOKEN permissions are scoped to the minimum each job
-# needs so a compromised runner in the exposed 90-minute window can't use
+# needs so a compromised runner in the exposed 20-minute window can't use
 # an ambient token to touch other workflows or repo state.
 
 on:
@@ -583,7 +583,7 @@ jobs:
         id: timestamps
         run: |
           echo "deployed_at=$(date -u +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
-          echo "expires_at=$(date -u -d '+90 minutes' +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
+          echo "expires_at=$(date -u -d '+20 minutes' +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
 
       - name: Comment preview link on PR
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
@@ -613,12 +613,26 @@ jobs:
             Live until the expiry time above, or until the `deploy-preview` label
             is removed. Push a new commit or re-add the label to redeploy.
 
-      - name: Run tunnel until the job times out
-        run: /tmp/cloudflared tunnel --no-autoupdate run --token "${TUNNEL_TOKEN}"
+      # Bounded to 20min so the live preview doesn't sit open (and burn CI
+      # minutes) indefinitely, and so this step ends itself well under the
+      # job's 90min timeout-minutes -- letting the job's own timeout kill
+      # this step instead makes GitHub mark the whole run "cancelled" with
+      # a "job has exceeded the maximum execution time" failure annotation,
+      # which looks like a real failure even though nothing broke -- the
+      # preview is *meant* to expire. `timeout`'s exit 124 (its own
+      # deadline hit) is the expected outcome and treated as success; any
+      # other nonzero exit (e.g. cloudflared itself crashing) still fails
+      # the step for real.
+      - name: Run tunnel until it times out
+        run: |
+          timeout 1200 /tmp/cloudflared tunnel --no-autoupdate run --token "${TUNNEL_TOKEN}"
+          ec=$?
+          [ "$ec" -eq 0 ] || [ "$ec" -eq 124 ] || exit "$ec"
 
-      # Runs once the tunnel step above ends (timeout or a manual cancel),
-      # so this captures anything logged in response to real traffic during
-      # the tunnel's lifetime -- unlike the earlier startup-time log dump.
+      # Runs once the tunnel step above ends (its own timeout, cloudflared
+      # exiting, or a manual cancel), so this captures anything logged in
+      # response to real traffic during the tunnel's lifetime -- unlike the
+      # earlier startup-time log dump.
       - name: Dump hub logs after tunnel closes
         if: always()
         env:
