@@ -142,7 +142,7 @@ Admin guide: [Nebi integration](/nebi-integration/).
 | Field | Default | What it does |
 |---|---|---|
 | `nebi.image.repository` | `quay.io/nebari/nebi` | Binary copied into user pods by an init container. |
-| `nebi.image.tag` | `sha-5ca877a` | Pinned per chart release. Empty disables the init container. |
+| `nebi.image.tag` | `sha-5ca877a` | Pinned per chart release. Must be ≥ v0.15 for `jupyterlab-launchpad` (≥ 1.1.1) to receive `nebi:job-completed`; older nebi never sends it and kernel refresh silently falls back to the ~61s poll. Empty disables the init container. |
 | `nebi.image.pullPolicy` | `IfNotPresent` | — |
 | `nebi.remoteURL` | `""` *(derived)* | Browser-facing Nebi URL, used for the OIDC redirect. |
 | `nebi.internalURL` | `""` *(derived)* | In-cluster URL for the token-exchange path. |
