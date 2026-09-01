@@ -108,6 +108,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      deployments: write
     steps:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -585,6 +586,43 @@ jobs:
           echo "deployed_at=$(date -u +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
           echo "expires_at=$(date -u -d '+20 minutes' +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
 
+      # A GitHub Deployment/Environment, not just the comment below: GitHub
+      # renders this as its own "View deployment" box pinned near the top
+      # of the PR (like Vercel's bot), so the latest link + status is
+      # visible without scrolling into the comment thread -- unlike the
+      # sticky comment, which is an in-place edit of a comment created on
+      # the PR's first deploy, so it doesn't move and is easy to miss.
+      # `required_contexts: []` skips gating this on other checks for the
+      # same commit (e.g. lint/test workflows still running) -- this is a
+      # preview link, not a merge gate. auto_inactive (default true on the
+      # status call) marks any prior deployment to this same per-PR
+      # environment inactive, so redeploys don't leave stale green boxes.
+      - name: Create GitHub deployment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          deployment_json=$(jq -n \
+            --arg ref "${{ github.event.pull_request.head.sha }}" \
+            --arg environment "pr-${{ github.event.pull_request.number }}-preview" \
+            '{ref: $ref, environment: $environment, task: "deploy:preview",
+              auto_merge: false, transient_environment: true,
+              production_environment: false, required_contexts: [],
+              description: "K8s stack preview"}')
+          deployment_id=$(gh api "repos/${{ github.repository }}/deployments" \
+            -X POST --input - --jq '.id' <<< "$deployment_json")
+          if [ -z "$deployment_id" ] || [ "$deployment_id" = "null" ]; then
+            echo "::error::Failed to create GitHub deployment"
+            exit 1
+          fi
+          echo "DEPLOYMENT_ID=${deployment_id}" >> "$GITHUB_ENV"
+
+          gh api "repos/${{ github.repository }}/deployments/${deployment_id}/statuses" \
+            -X POST \
+            -f state=success \
+            -f environment_url="${{ steps.cf_dns.outputs.url }}" \
+            -f log_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            -f description="Live for 20 minutes" > /dev/null
+
       - name: Comment preview link on PR
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
@@ -639,6 +677,18 @@ jobs:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: kubectl -n pr-preview logs deployment/hub --tail=1000 || true
 
+      # The URL in the deployment box above is dead once the tunnel closes
+      # -- mark it inactive so the box reflects that instead of still
+      # showing green with a link that no longer resolves.
+      - name: Mark GitHub deployment inactive
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [ -n "${DEPLOYMENT_ID:-}" ] || exit 0
+          gh api "repos/${{ github.repository }}/deployments/${DEPLOYMENT_ID}/statuses" \
+            -X POST -f state=inactive -f description="Preview expired" > /dev/null || true
+
       - name: Delete DNS record
         if: always()
         env:
@@ -671,6 +721,7 @@ jobs:
     permissions:
       pull-requests: write
       actions: write
+      deployments: write
     steps:
       - name: Cancel the in-flight preview run for this PR
         env:
@@ -682,6 +733,15 @@ jobs:
           if [ -n "$run_id" ]; then
             gh run cancel "$run_id" --repo "${{ github.repository }}"
           fi
+
+      - name: Mark GitHub deployment inactive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          deployment_id=$(gh api "repos/${{ github.repository }}/deployments?environment=pr-${{ github.event.pull_request.number }}-preview&per_page=1" --jq '.[0].id')
+          [ -n "$deployment_id" ] && [ "$deployment_id" != "null" ] || exit 0
+          gh api "repos/${{ github.repository }}/deployments/${deployment_id}/statuses" \
+            -X POST -f state=inactive -f description="Preview stopped (label removed)" > /dev/null || true
 
       - name: Comment that the preview stopped
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
