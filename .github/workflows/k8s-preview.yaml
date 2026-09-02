@@ -518,98 +518,25 @@ jobs:
         env:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_TUNNEL_ACCOUNT_ID }}
-          PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}
-          KEYCLOAK_HOSTNAME: keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}
         run: |
-          tunnel_secret=$(openssl rand -base64 32)
-          echo "::add-mask::${tunnel_secret}"
-
-          tunnel_name="pr-${{ github.event.pull_request.number }}-${{ github.run_id }}"
-          create_resp=$(curl -sS -X POST \
-            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel" \
-            -H "Authorization: Bearer ${CF_API_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "$(jq -n --arg name "$tunnel_name" --arg secret "$tunnel_secret" \
-              '{name: $name, config_src: "cloudflare", tunnel_secret: $secret}')")
-          tunnel_id=$(jq -r '.result.id // empty' <<< "$create_resp")
-
-          # A GitHub Actions retry reuses the same run_id (only run_attempt
-          # changes), so a re-run after the first attempt already created
-          # this tunnel (and didn't get to clean it up) hits a 409 name
-          # conflict here. Reuse the existing tunnel by name instead of
-          # failing: it doesn't need the original tunnel_secret, just a
-          # fresh --token from the /token endpoint below.
-          if [ -z "$tunnel_id" ]; then
-            echo "::warning::Tunnel create failed (likely a name conflict from a retry), looking up existing tunnel named ${tunnel_name}: $create_resp"
-            tunnel_id=$(curl -fsS "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel?name=${tunnel_name}&is_deleted=false" \
-              -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id // empty')
-          fi
-          if [ -z "$tunnel_id" ]; then
-            echo "::error::Tunnel creation failed and no existing tunnel named ${tunnel_name} found: $create_resp"
-            exit 1
-          fi
-          echo "tunnel_id=${tunnel_id}" >> "$GITHUB_OUTPUT"
-          echo "TUNNEL_ID=${tunnel_id}" >> "$GITHUB_ENV"
-
-          token_resp=$(curl -fsS \
-            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${tunnel_id}/token" \
-            -H "Authorization: Bearer ${CF_API_TOKEN}")
-          tunnel_token=$(jq -r '.result' <<< "$token_resp")
-          echo "::add-mask::${tunnel_token}"
-          echo "TUNNEL_TOKEN=${tunnel_token}" >> "$GITHUB_ENV"
-
-          curl -fsS -X PUT \
-            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${tunnel_id}/configurations" \
-            -H "Authorization: Bearer ${CF_API_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "$(jq -n --arg host "$PREVIEW_HOSTNAME" --arg kchost "$KEYCLOAK_HOSTNAME" \
-              '{config: {ingress: [
-                {hostname: $host, service: "http://localhost:8000"},
-                {hostname: $kchost, service: "http://localhost:8001"},
-                {service: "http_status:404"}
-              ]}}')" \
-            > /dev/null
+          python -m scripts.preview.cloudflare create-tunnel \
+            --account-id "$CF_ACCOUNT_ID" --api-token "$CF_API_TOKEN" \
+            --name "pr-${{ github.event.pull_request.number }}-${{ github.run_id }}" \
+            --preview-hostname "pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
+            --preview-service "http://localhost:8000" \
+            --keycloak-hostname "keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
+            --keycloak-service "http://localhost:8001"
 
       - name: Point DNS at the tunnel
         id: cf_dns
         env:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
-          PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}
-          KEYCLOAK_HOSTNAME: keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}
         run: |
-          zone_id=$(curl -fsS "https://api.cloudflare.com/client/v4/zones?name=${PREVIEW_DOMAIN}" \
-            -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id')
-          if [ -z "$zone_id" ] || [ "$zone_id" = "null" ]; then
-            echo "::error::Could not resolve zone id for ${PREVIEW_DOMAIN}"
-            exit 1
-          fi
-          echo "ZONE_ID=${zone_id}" >> "$GITHUB_ENV"
-
-          record_resp=$(curl -fsS -X POST "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records" \
-            -H "Authorization: Bearer ${CF_API_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "$(jq -n --arg host "$PREVIEW_HOSTNAME" --arg target "${TUNNEL_ID}.cfargotunnel.com" \
-              '{type: "CNAME", name: $host, content: $target, proxied: true}')")
-          record_id=$(jq -r '.result.id' <<< "$record_resp")
-          if [ -z "$record_id" ] || [ "$record_id" = "null" ]; then
-            echo "::error::DNS record creation failed: $record_resp"
-            exit 1
-          fi
-          echo "DNS_RECORD_ID=${record_id}" >> "$GITHUB_ENV"
-          echo "url=https://${PREVIEW_HOSTNAME}" >> "$GITHUB_OUTPUT"
-
-          kc_record_resp=$(curl -fsS -X POST "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records" \
-            -H "Authorization: Bearer ${CF_API_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "$(jq -n --arg host "$KEYCLOAK_HOSTNAME" --arg target "${TUNNEL_ID}.cfargotunnel.com" \
-              '{type: "CNAME", name: $host, content: $target, proxied: true}')")
-          kc_record_id=$(jq -r '.result.id' <<< "$kc_record_resp")
-          if [ -z "$kc_record_id" ] || [ "$kc_record_id" = "null" ]; then
-            echo "::error::Keycloak DNS record creation failed: $kc_record_resp"
-            exit 1
-          fi
-          echo "KEYCLOAK_DNS_RECORD_ID=${kc_record_id}" >> "$GITHUB_ENV"
-          echo "keycloak_url=https://${KEYCLOAK_HOSTNAME}" >> "$GITHUB_OUTPUT"
+          python -m scripts.preview.cloudflare create-dns \
+            --api-token "$CF_API_TOKEN" --domain "${{ env.PREVIEW_DOMAIN }}" \
+            --preview-hostname "pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
+            --keycloak-hostname "keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
+            --target "${TUNNEL_ID}.cfargotunnel.com"
 
       # The URL itself (pr-<n>-data-science-pack.<domain>) is identical on every run, so
       # without a timestamp the sticky comment would post byte-identical
@@ -788,14 +715,9 @@ jobs:
         env:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
         run: |
-          [ -n "${ZONE_ID:-}" ] && [ -n "${DNS_RECORD_ID:-}" ] || exit 0
-          curl -fsS -X DELETE \
-            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${DNS_RECORD_ID}" \
-            -H "Authorization: Bearer ${CF_API_TOKEN}" || true
-          [ -n "${KEYCLOAK_DNS_RECORD_ID:-}" ] || exit 0
-          curl -fsS -X DELETE \
-            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${KEYCLOAK_DNS_RECORD_ID}" \
-            -H "Authorization: Bearer ${CF_API_TOKEN}" || true
+          python -m scripts.preview.cloudflare delete-dns \
+            --api-token "$CF_API_TOKEN" --zone-id "${ZONE_ID:-}" \
+            --record-id "${DNS_RECORD_ID:-}" --record-id "${KEYCLOAK_DNS_RECORD_ID:-}"
 
       - name: Delete Cloudflare Tunnel
         if: always()
@@ -803,10 +725,8 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_TUNNEL_ACCOUNT_ID }}
         run: |
-          [ -n "${TUNNEL_ID:-}" ] || exit 0
-          curl -fsS -X DELETE \
-            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${TUNNEL_ID}" \
-            -H "Authorization: Bearer ${CF_API_TOKEN}" || true
+          python -m scripts.preview.cloudflare delete-tunnel \
+            --account-id "$CF_ACCOUNT_ID" --api-token "$CF_API_TOKEN" --tunnel-id "${TUNNEL_ID:-}"
 
   cleanup-preview:
     if: github.event.action == 'unlabeled' && github.event.label.name == 'deploy-preview'
