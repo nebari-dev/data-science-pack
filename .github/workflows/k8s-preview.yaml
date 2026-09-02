@@ -370,6 +370,21 @@ jobs:
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: |
+          # ArgoCD Application sync status -- the sandbox's own
+          # wait-platform.sh only polls for K8s resources existing per
+          # namespace, never checks whether ArgoCD ever actually synced
+          # the Application that's supposed to create them. Confirmed
+          # live: Keycloak's namespace had 0 resources after a 600s wait
+          # with no error anywhere else in the log -- this is the only
+          # place that would show whether ArgoCD ever attempted the sync
+          # at all, and why, if it didn't.
+          echo "=== ArgoCD Applications ==="
+          kubectl -n argocd get applications -o wide || true
+          for app in keycloak nebari-operator; do
+            echo "--- ArgoCD application/$app ---"
+            kubectl -n argocd get application "$app" -o yaml || true
+          done
+
           for ns in pr-preview keycloak; do
             echo "=== namespace: $ns ==="
             kubectl -n "$ns" get pods -o wide || true
