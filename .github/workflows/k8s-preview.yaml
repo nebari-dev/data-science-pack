@@ -518,51 +518,15 @@ jobs:
       # "cancelled" with a "job has exceeded the maximum execution time"
       # failure annotation, which looks like a real failure even though
       # nothing broke -- the preview is *meant* to expire eventually.
-      #
-      # Runs cloudflared in the background instead of blocking on it, so
-      # this loop can poll for the `extend-preview` label between checks
-      # and push the deadline back 20 minutes from whenever it actually
-      # sees the label (not just tack 20 more onto whatever's left) --
-      # each occurrence is a one-shot reset, consumed by removing the
-      # label, so it can be reused any number of times before expiry.
-      # Ultimately still bounded by the job's own 90min timeout-minutes
-      # regardless of how many times it's extended.
-      #
-      # `kill -0 $pid` checks liveness without signaling; if cloudflared
-      # exits on its own (a real crash, not us closing it), `wait` reaps
-      # its actual exit code so a genuine failure still fails the step --
-      # `|| ec=$?` catches that under `bash -e` (GitHub Actions' default
-      # for run: steps) without the step aborting mid-check.
+      # Extend the deadline any time before then via the extend-preview
+      # label; see scripts/preview/tunnel.py.
       - name: Run tunnel until it times out (extend via the extend-preview label)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          /tmp/cloudflared tunnel --no-autoupdate run --token "${TUNNEL_TOKEN}" &
-          cloudflared_pid=$!
-
-          deadline=$(( $(date +%s) + 1200 ))
-          ec=0
-          while true; do
-            if ! kill -0 "$cloudflared_pid" 2>/dev/null; then
-              wait "$cloudflared_pid" || ec=$?
-              break
-            fi
-            now=$(date +%s)
-            if [ "$now" -ge "$deadline" ]; then
-              kill "$cloudflared_pid" 2>/dev/null || true
-              wait "$cloudflared_pid" 2>/dev/null || true
-              break
-            fi
-            if gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" --jq '.[].name' 2>/dev/null \
-                | grep -qx "extend-preview"; then
-              deadline=$(( now + 1200 ))
-              gh api -X DELETE "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/extend-preview" \
-                > /dev/null 2>&1 || true
-              echo "extend-preview seen -- new deadline: $(date -u -d "@$deadline" +'%Y-%m-%d %H:%M UTC')"
-            fi
-            sleep 15
-          done
-          [ "$ec" -eq 0 ] || exit "$ec"
+          python -m scripts.preview.tunnel run \
+            --cloudflared /tmp/cloudflared --token "${TUNNEL_TOKEN}" \
+            --repo "${{ github.repository }}" --pr "${{ github.event.pull_request.number }}" \
+            --github-token "${{ secrets.GITHUB_TOKEN }}" \
+            --initial-seconds 1200 --poll-seconds 15 --extend-seconds 1200
 
       # Runs once the tunnel step above ends (its own timeout, cloudflared
       # exiting, or a manual cancel), so this captures anything logged in
