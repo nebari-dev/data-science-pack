@@ -139,13 +139,11 @@ jobs:
       # `gh label create` errors if the label already exists; that's fine,
       # this step is just making sure it's there.
       - name: Ensure the extend-preview label exists
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh label create extend-preview --repo "${{ github.repository }}" \
-            --color BFD4F2 \
-            --description "Push this preview's expiry back 20 minutes" \
-            2>/dev/null || true
+          python -m scripts.preview.github_api ensure-label-exists \
+            --repo "${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" \
+            --name extend-preview --color BFD4F2 \
+            --description "Push this preview's expiry back 20 minutes"
 
       # v0.32.0+ required: the sandbox's kind cluster uses containerd's
       # config v4 format, which `kind load` on older CLI releases can't
@@ -484,30 +482,26 @@ jobs:
       # status call) marks any prior deployment to this same per-PR
       # environment inactive, so redeploys don't leave stale green boxes.
       - name: Create GitHub deployment
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          deployment_json=$(jq -n \
-            --arg ref "${{ github.event.pull_request.head.sha }}" \
-            --arg environment "pr-${{ github.event.pull_request.number }}-preview" \
-            '{ref: $ref, environment: $environment, task: "deploy:preview",
-              auto_merge: false, transient_environment: true,
-              production_environment: false, required_contexts: [],
-              description: "K8s stack preview"}')
-          deployment_id=$(gh api "repos/${{ github.repository }}/deployments" \
-            -X POST --input - --jq '.id' <<< "$deployment_json")
-          if [ -z "$deployment_id" ] || [ "$deployment_id" = "null" ]; then
-            echo "::error::Failed to create GitHub deployment"
-            exit 1
-          fi
-          echo "DEPLOYMENT_ID=${deployment_id}" >> "$GITHUB_ENV"
+          python -m scripts.preview.github_api create-and-activate \
+            --repo "${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" \
+            --ref "${{ github.event.pull_request.head.sha }}" \
+            --environment "pr-${{ github.event.pull_request.number }}-preview" \
+            --task "deploy:preview" --description "K8s stack preview" \
+            --environment-url "${{ steps.cf_dns.outputs.url }}" \
+            --log-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --status-description "Live for 20 minutes"
 
-          gh api "repos/${{ github.repository }}/deployments/${deployment_id}/statuses" \
-            -X POST \
-            -f state=success \
-            -f environment_url="${{ steps.cf_dns.outputs.url }}" \
-            -f log_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            -f description="Live for 20 minutes" > /dev/null
+      - name: Render the ready-preview comment body
+        id: render_ready
+        run: |
+          python -m scripts.preview.comment render-ready \
+            --url "${{ steps.cf_dns.outputs.url }}" --keycloak-url "${{ steps.cf_dns.outputs.keycloak_url }}" \
+            --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" \
+            --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}" \
+            --expires-at "${{ steps.timestamps.outputs.expires_at }}" \
+            --expires-at-iso "${{ steps.timestamps.outputs.expires_at_iso }}" \
+            ${{ github.event.pull_request.head.repo.fork && '--fork' || '' }}
 
       - name: Comment preview link on PR
         id: comment_preview
@@ -515,16 +509,7 @@ jobs:
         with:
           header: k8s-preview
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          message: |
-            The latest K8s stack preview for this PR.
-
-            | Project | Deployment | Actions | Updated |
-            | --- | --- | --- | --- |
-            | `nebari-data-science-pack` | 🟢 [Ready](${{ steps.cf_dns.outputs.url }}) | [Preview](${{ steps.cf_dns.outputs.url }}) · [Keycloak](${{ steps.cf_dns.outputs.keycloak_url }}) | <relative-time datetime="${{ steps.timestamps.outputs.deployed_at_iso }}">${{ steps.timestamps.outputs.deployed_at }}</relative-time> |
-
-            ${{ github.event.pull_request.head.repo.fork && '⚠️ **This PR is from a fork**: the code running in this preview is not from a trusted maintainer branch.' || '' }}
-
-            Expires <relative-time datetime="${{ steps.timestamps.outputs.expires_at_iso }}">${{ steps.timestamps.outputs.expires_at }}</relative-time>. Add the `extend-preview` label any time before then for 20 more minutes, or push a new commit or re-add `deploy-preview` to redeploy from scratch.
+          message: ${{ steps.render_ready.outputs.body }}
 
       # Bounded to 20min by default so the live preview doesn't sit open
       # (and burn CI minutes) indefinitely, and so this step ends itself
@@ -594,12 +579,10 @@ jobs:
       # showing green with a link that no longer resolves.
       - name: Mark GitHub deployment inactive
         if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          [ -n "${DEPLOYMENT_ID:-}" ] || exit 0
-          gh api "repos/${{ github.repository }}/deployments/${DEPLOYMENT_ID}/statuses" \
-            -X POST -f state=inactive -f description="Preview expired" > /dev/null || true
+          python -m scripts.preview.github_api mark-inactive \
+            --repo "${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" \
+            --deployment-id "${DEPLOYMENT_ID:-}" --description "Preview expired"
 
       # The comment above still says "Ready" / "Expires in N minutes" once
       # the tunnel closes -- it was only ever written once, at deploy time,
@@ -610,20 +593,21 @@ jobs:
       # when the first post succeeded (skip if the run failed before ever
       # reaching that step, since there is no live-preview comment to
       # correct in that case).
+      - name: Render the expired-preview comment body
+        id: render_expired
+        if: always() && steps.comment_preview.outcome == 'success'
+        run: |
+          python -m scripts.preview.comment render-expired \
+            --expires-at "${{ steps.timestamps.outputs.expires_at }}" \
+            --expires-at-iso "${{ steps.timestamps.outputs.expires_at_iso }}"
+
       - name: Comment that the preview expired
         if: always() && steps.comment_preview.outcome == 'success'
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
           header: k8s-preview
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          message: |
-            The K8s stack preview for this PR has expired.
-
-            | Project | Deployment | Actions | Updated |
-            | --- | --- | --- | --- |
-            | `nebari-data-science-pack` | ⚫ Expired | - | <relative-time datetime="${{ steps.timestamps.outputs.expires_at_iso }}">${{ steps.timestamps.outputs.expires_at }}</relative-time> |
-
-            Push a new commit or re-add the `deploy-preview` label to redeploy.
+          message: ${{ steps.render_expired.outputs.body }}
 
       - name: Delete DNS record
         if: always()
@@ -652,32 +636,29 @@ jobs:
       actions: write
       deployments: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
       - name: Cancel the in-flight preview run for this PR
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          run_id=$(gh api "repos/${{ github.repository }}/actions/runs?event=pull_request&status=in_progress" \
-            --jq '.workflow_runs[] | select(.name == "K8s Stack Preview") | select(.pull_requests[]?.number == ${{ github.event.pull_request.number }}) | .id' \
-            | head -1)
-          if [ -n "$run_id" ]; then
-            gh run cancel "$run_id" --repo "${{ github.repository }}"
-          fi
+          python -m scripts.preview.github_api cancel-in-flight-run \
+            --repo "${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" \
+            --workflow-name "K8s Stack Preview" --pr "${{ github.event.pull_request.number }}"
 
       - name: Mark GitHub deployment inactive
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          deployment_id=$(gh api "repos/${{ github.repository }}/deployments?environment=pr-${{ github.event.pull_request.number }}-preview&per_page=1" --jq '.[0].id' 2>/dev/null || true)
-          [ -n "$deployment_id" ] && [ "$deployment_id" != "null" ] || exit 0
-          gh api "repos/${{ github.repository }}/deployments/${deployment_id}/statuses" \
-            -X POST -f state=inactive -f description="Preview stopped (label removed)" > /dev/null || true
+          python -m scripts.preview.github_api mark-latest-inactive \
+            --repo "${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" \
+            --environment "pr-${{ github.event.pull_request.number }}-preview" \
+            --description "Preview stopped (label removed)"
+
+      - name: Render the stopped-preview comment body
+        id: render_stopped
+        run: python -m scripts.preview.comment render-stopped
 
       - name: Comment that the preview stopped
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
           header: k8s-preview
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          message: |
-            **K8s stack preview** stopped: the `deploy-preview` label was removed.
-
-            Add it again to redeploy.
+          message: ${{ steps.render_stopped.outputs.body }}

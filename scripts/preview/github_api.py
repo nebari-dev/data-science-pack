@@ -3,10 +3,27 @@
 All calls go through ``http.request_json`` (stdlib ``urllib.request``, no new
 dependency) rather than shelling out to the ``gh`` CLI, so the actual request
 being made is a plain, testable function call.
+
+Usage:
+    python -m scripts.preview.github_api ensure-label-exists --repo R \\
+        --token T --name NAME --color COLOR --description DESC
+    python -m scripts.preview.github_api create-and-activate --repo R \\
+        --token T --ref SHA --environment ENV --task TASK --description DESC \\
+        --environment-url URL --log-url URL --status-description DESC
+    python -m scripts.preview.github_api mark-inactive --repo R --token T \\
+        --deployment-id ID --description DESC
+    python -m scripts.preview.github_api mark-latest-inactive --repo R \\
+        --token T --environment ENV --description DESC
+    python -m scripts.preview.github_api cancel-in-flight-run --repo R \\
+        --token T --workflow-name NAME --pr N
 """
 
 from __future__ import annotations
 
+import argparse
+import sys
+
+from . import gha
 from .http import HTTPRequestError, request_json
 
 API_ROOT = "https://api.github.com"
@@ -150,3 +167,95 @@ def cancel_in_flight_run(repo: str, workflow_name: str, pr_number: int, token: s
             )
             return run["id"]
     return None
+
+
+def _cmd_ensure_label_exists(args: argparse.Namespace) -> int:
+    ensure_label_exists(args.repo, args.name, args.color, args.description, args.token)
+    return 0
+
+
+def _cmd_create_and_activate(args: argparse.Namespace) -> int:
+    deployment_id = create_deployment(
+        args.repo, ref=args.ref, environment=args.environment, token=args.token,
+        task=args.task, description=args.description,
+    )
+    gha.write_env("DEPLOYMENT_ID", str(deployment_id))
+    set_deployment_status(
+        args.repo, deployment_id, "success", args.token,
+        environment_url=args.environment_url, log_url=args.log_url,
+        description=args.status_description,
+    )
+    return 0
+
+
+def _cmd_mark_inactive(args: argparse.Namespace) -> int:
+    if not args.deployment_id:
+        return 0
+    mark_deployment_inactive(args.repo, int(args.deployment_id), args.token, description=args.description)
+    return 0
+
+
+def _cmd_mark_latest_inactive(args: argparse.Namespace) -> int:
+    deployment_id = find_latest_deployment_id(args.repo, args.environment, args.token)
+    if deployment_id is None:
+        return 0
+    mark_deployment_inactive(args.repo, deployment_id, args.token, description=args.description)
+    return 0
+
+
+def _cmd_cancel_in_flight_run(args: argparse.Namespace) -> int:
+    cancel_in_flight_run(args.repo, args.workflow_name, args.pr, args.token)
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="github_api")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("ensure-label-exists")
+    p.add_argument("--repo", required=True)
+    p.add_argument("--token", required=True)
+    p.add_argument("--name", required=True)
+    p.add_argument("--color", required=True)
+    p.add_argument("--description", required=True)
+    p.set_defaults(func=_cmd_ensure_label_exists)
+
+    p = sub.add_parser("create-and-activate")
+    p.add_argument("--repo", required=True)
+    p.add_argument("--token", required=True)
+    p.add_argument("--ref", required=True)
+    p.add_argument("--environment", required=True)
+    p.add_argument("--task", required=True)
+    p.add_argument("--description", required=True)
+    p.add_argument("--environment-url", required=True)
+    p.add_argument("--log-url", required=True)
+    p.add_argument("--status-description", required=True)
+    p.set_defaults(func=_cmd_create_and_activate)
+
+    p = sub.add_parser("mark-inactive")
+    p.add_argument("--repo", required=True)
+    p.add_argument("--token", required=True)
+    p.add_argument("--deployment-id", required=True)
+    p.add_argument("--description", required=True)
+    p.set_defaults(func=_cmd_mark_inactive)
+
+    p = sub.add_parser("mark-latest-inactive")
+    p.add_argument("--repo", required=True)
+    p.add_argument("--token", required=True)
+    p.add_argument("--environment", required=True)
+    p.add_argument("--description", required=True)
+    p.set_defaults(func=_cmd_mark_latest_inactive)
+
+    p = sub.add_parser("cancel-in-flight-run")
+    p.add_argument("--repo", required=True)
+    p.add_argument("--token", required=True)
+    p.add_argument("--workflow-name", required=True)
+    p.add_argument("--pr", required=True, type=int)
+    p.set_defaults(func=_cmd_cancel_in_flight_run)
+
+    args = parser.parse_args(argv[1:])
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
