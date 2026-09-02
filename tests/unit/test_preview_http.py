@@ -59,6 +59,28 @@ def test_post_sends_json_encoded_body_with_content_type(monkeypatch):
     assert captured["content_type"] == "application/json"
 
 
+def test_string_body_is_sent_as_is_not_json_encoded(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["data"] = request.data
+        captured["content_type"] = request.get_header("Content-type")
+        return _FakeResponse(b"{}")
+
+    monkeypatch.setattr("scripts.preview.http.urllib.request.urlopen", fake_urlopen)
+
+    request_json(
+        "POST",
+        "https://api.example.com/token",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        body="grant_type=password&username=admin",
+    )
+
+    assert captured["data"] == b"grant_type=password&username=admin"
+    # Content-Type came from the caller's headers, not auto-set to json.
+    assert captured["content_type"] == "application/x-www-form-urlencoded"
+
+
 def test_custom_headers_are_forwarded(monkeypatch):
     captured = {}
 

@@ -205,72 +205,17 @@ jobs:
           kubectl create namespace pr-preview --dry-run=client -o yaml | kubectl apply -f -
           kubectl label namespace pr-preview nebari.dev/managed=true --overwrite
 
-      # Keycloak's own KC_HOSTNAME (codecentric/keycloakx, via NIC's
-      # values/keycloak/base.yaml) is fixed to NIC's internal
-      # keycloak.nebari.local by default -- every self-referencing URL
-      # Keycloak renders (login form action, issuer, redirects) is
-      # absolute and uses that value regardless of the incoming Host
-      # header, confirmed live: a request reaching Keycloak still rendered
-      # a login form whose action="https://keycloak.nebari.local/..." --
-      # unreachable from a real browser, since .local is never publicly
-      # resolvable.
-      #
-      # A direct `kubectl set env` patch onto the live StatefulSet/
-      # Deployment DOES apply immediately but gets silently reverted:
-      # both Keycloak and nebari-operator are ArgoCD Applications with
-      # selfHeal: true (pkg/argocd/templates/apps/{keycloak,nebari-
-      # operator}.yaml in nebari-infrastructure-core), continuously
-      # reconciled against NIC's auto-created local GitOps repo
-      # (~/.nic/gitops/<cluster-name>, repository.local: {} in NIC's
-      # config) -- confirmed live: the patch step's own logs showed the
-      # StatefulSet/Deployment genuinely rolling to new pods, yet hub's
-      # redirect still landed on keycloak.nebari.local a couple minutes
-      # later once ArgoCD's reconcile loop caught the drift and reverted
-      # it. Editing the GitOps repo itself and forcing a hard refresh
-      # (the same pattern used for this project's other ArgoCD-managed
-      # clusters) lets selfHeal work for this change instead of against it.
+      # Why this is needed (ArgoCD selfHeal reverting a direct kubectl
+      # patch, Keycloak's KC_HOSTNAME being otherwise unreachable from a
+      # real browser) is explained in scripts/preview/keycloak_gitops.py's
+      # module docstring, next to the logic itself.
       - name: Point Keycloak's own hostname at the public tunnel route
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: |
-          kc_public_url="https://keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}"
-          gitops_dir="$HOME/.nic/gitops/${{ steps.sandbox.outputs.cluster-name }}"
-
-          echo "--- current rendered values (pre-patch) ---"
-          grep -n "keycloak.nebari.local" "$gitops_dir/values/keycloak/base.yaml" "$gitops_dir/manifests/nebari-operator/deployment-patch.yaml"
-
-          sed -i "s#https://keycloak\.nebari\.local#${kc_public_url}#g" \
-            "$gitops_dir/values/keycloak/base.yaml" \
-            "$gitops_dir/manifests/nebari-operator/deployment-patch.yaml"
-
-          git -C "$gitops_dir" -c user.email="ci@example.com" -c user.name="k8s-preview-ci" \
-            commit -am "Point Keycloak hostname at the public preview tunnel route"
-
-          kubectl -n argocd annotate application/keycloak application/nebari-operator \
-            argocd.argoproj.io/refresh=hard --overwrite
-
-          operator_deploy=$(kubectl get deploy -A -o json | jq -r '.items[] | select(.metadata.name | test("operator")) | "\(.metadata.namespace)/\(.metadata.name)"' | head -1)
-
-          # `rollout status` alone can return instantly if ArgoCD hasn't
-          # actually applied the refreshed spec yet (nothing new requested
-          # from kubectl's point of view) -- poll for the live env var to
-          # actually change before trusting rollout status to mean anything.
-          for i in $(seq 1 24); do
-            kc_live=$(kubectl -n keycloak get statefulset keycloak-keycloakx -o jsonpath='{.spec.template.spec.containers[0].env}' | jq -r '.[] | select(.name=="KC_HOSTNAME") | .value')
-            op_live=$(kubectl -n "${operator_deploy%%/*}" get deploy "${operator_deploy##*/}" -o jsonpath='{.spec.template.spec.containers[0].env}' | jq -r '.[] | select(.name=="KEYCLOAK_EXTERNAL_URL") | .value')
-            if [ "$kc_live" = "$kc_public_url" ] && [ "$op_live" = "$kc_public_url" ]; then
-              echo "ArgoCD applied the GitOps change after $(( i * 5 ))s"
-              break
-            fi
-            sleep 5
-          done
-          if [ "$kc_live" != "$kc_public_url" ] || [ "$op_live" != "$kc_public_url" ]; then
-            echo "::error::ArgoCD never applied the GitOps hostname change within 2m (keycloak=$kc_live, operator=$op_live)"
-            exit 1
-          fi
-
-          kubectl -n keycloak rollout status statefulset/keycloak-keycloakx --timeout=180s
-          kubectl -n "${operator_deploy%%/*}" rollout status deployment/"${operator_deploy##*/}" --timeout=180s
+          python -m scripts.preview.keycloak_gitops patch \
+            --gitops-dir "$HOME/.nic/gitops/${{ steps.sandbox.outputs.cluster-name }}" \
+            --kc-public-url "https://keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}"
 
       # No --wait here: with nebariapp.auth.enabled=true, the hub pod reads
       # the operator-provisioned Keycloak client Secret at import time
@@ -334,45 +279,24 @@ jobs:
       # restart triggered right after the Secret's first appearance still
       # hits FileNotFoundError on /etc/oauth/issuer-url specifically -- wait
       # for that key's actual (non-empty) value, not just the object.
+      # Why a mere Secret-exists check or a single restart isn't reliable
+      # here (the operator populates issuer-url on a later reconcile pass;
+      # kubelet's Secret volume cache can hand a fresh pod a stale
+      # snapshot) is explained in scripts/preview/k8s_wait.py.
       - name: Wait for operator to provision the Keycloak client secret
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: |
-          for i in $(seq 1 36); do
-            issuer_b64=$(kubectl -n pr-preview get secret preview-nebari-data-science-pack-oidc-client -o jsonpath='{.data.issuer-url}' 2>/dev/null)
-            if [ -n "$issuer_b64" ]; then
-              echo "operator secret's issuer-url populated after $(( i * 5 ))s"
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "::error::operator never populated issuer-url on the Keycloak client secret within 3m"
-          kubectl -n pr-preview get nebariapp -o yaml || true
-          exit 1
+          python -m scripts.preview.k8s_wait wait-for-secret-key \
+            --namespace pr-preview --secret preview-nebari-data-science-pack-oidc-client \
+            --key issuer-url --timeout-s 180 --poll-interval-s 5
 
-      # A single restart isn't reliable here even though the API server
-      # confirms issuer-url is populated: kubelet's own Secret volume cache
-      # (node-local, ~1min TTL) can still hand a freshly-restarted pod the
-      # pre-population snapshot it fetched for the pod's first, crash-looped
-      # attempt -- confirmed by the same FileNotFoundError recurring on a
-      # restart issued 5s after the secret was already confirmed complete.
-      # Retry the restart until a rollout actually succeeds, giving the
-      # kubelet cache time to expire between attempts, instead of assuming
-      # one restart is enough.
       - name: Restart hub until it picks up the operator secret
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: |
-          for attempt in 1 2 3 4 5; do
-            kubectl -n pr-preview rollout restart deployment/hub
-            if kubectl -n pr-preview rollout status deployment/hub --timeout=90s; then
-              echo "hub ready on attempt $attempt"
-              exit 0
-            fi
-            echo "hub not ready on attempt $attempt, retrying..."
-          done
-          echo "::error::hub never became ready after 5 restart attempts"
-          exit 1
+          python -m scripts.preview.k8s_wait restart-until-ready \
+            --namespace pr-preview --deployment hub --rollout-timeout-s 90 --max-attempts 5
 
       - name: Wait for proxy
         env:
@@ -413,18 +337,9 @@ jobs:
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: |
-          admin_token=$(curl -sS -X POST "http://localhost:8001/realms/master/protocol/openid-connect/token" \
-            -d "grant_type=password" -d "client_id=admin-cli" -d "username=admin" \
-            --data-urlencode "password=$(kubectl -n keycloak get secret keycloak-admin-credentials -o jsonpath='{.data.admin-password}' | base64 -d)" \
-            | jq -r '.access_token')
-          if [ -z "$admin_token" ] || [ "$admin_token" = "null" ]; then
-            echo "::error::Failed to obtain a Keycloak admin token"
-            exit 1
-          fi
-
-          curl -sS -o /dev/null -w 'create user: HTTP %{http_code}\n' -X POST "http://localhost:8001/admin/realms/nebari/users" \
-            -H "Authorization: Bearer $admin_token" -H "Content-Type: application/json" \
-            -d '{"username":"reviewer","enabled":true,"email":"reviewer@example.com","emailVerified":true,"firstName":"Preview","lastName":"Reviewer","credentials":[{"type":"password","value":"admin","temporary":false}]}'
+          admin_password=$(kubectl -n keycloak get secret keycloak-admin-credentials -o jsonpath='{.data.admin-password}' | base64 -d)
+          python -m scripts.preview.keycloak create-reviewer-user \
+            --base-url "http://localhost:8001" --realm nebari --admin-password "$admin_password"
 
       # jhub-apps runs as a managed service subprocess inside the hub pod,
       # not its own Deployment, so a crash there doesn't fail `helm --wait`

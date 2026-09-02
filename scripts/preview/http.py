@@ -33,13 +33,16 @@ def request_json(
 ) -> Any:
     """Send an HTTP request, returning the parsed JSON response body.
 
-    ``body``, if given, is JSON-encoded and sent with an
-    application/json Content-Type. Returns ``{}`` for an empty (e.g. 204)
-    response body.
+    ``body``, if a ``str``, is sent as-is (the caller sets its own
+    Content-Type, e.g. for a form-urlencoded Keycloak token request); any
+    other value is JSON-encoded with an application/json Content-Type.
+    Returns ``{}`` for an empty (e.g. 204) response body.
     """
     data = None
     req_headers = dict(headers or {})
-    if body is not None:
+    if isinstance(body, str):
+        data = body.encode("utf-8")
+    elif body is not None:
         data = json.dumps(body).encode("utf-8")
         req_headers.setdefault("Content-Type", "application/json")
 
