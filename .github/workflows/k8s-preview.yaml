@@ -380,7 +380,7 @@ jobs:
           # at all, and why, if it didn't.
           echo "=== ArgoCD Applications ==="
           kubectl -n argocd get applications -o wide || true
-          for app in keycloak nebari-operator; do
+          for app in keycloak nebari-operator cloudnative-pg; do
             echo "--- ArgoCD application/$app ---"
             kubectl -n argocd get application "$app" -o yaml || true
           done
