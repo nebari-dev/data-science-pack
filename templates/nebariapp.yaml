@@ -12,6 +12,5 @@
       "labels"    (include "nebari-data-science-pack.labels" . | fromYaml)
     )
     "spec" $spec
-    "ctx"  .
 ) -}}
 {{- end }}
