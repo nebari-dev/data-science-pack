@@ -17,6 +17,7 @@ def _run_kwargs(**overrides):
         "cloudflared_path": "/tmp/cloudflared", "tunnel_token": "tok", "repo": REPO, "pr_number": 205,
         "github_token": TOKEN, "url": URL, "keycloak_url": KC_URL,
         "deployed_at": DEPLOYED_AT, "deployed_at_iso": DEPLOYED_AT_ISO,
+        "wall_clock": lambda: 0.0,
         "list_labels_fn": lambda *a: [], "delete_label_fn": lambda *a: None,
         "find_comment_id_fn": lambda *a: None, "update_comment_fn": lambda *a: None,
     }
@@ -201,6 +202,50 @@ def test_run_updates_the_pr_comment_with_the_new_expiry_on_extend():
     # New expiry (t=0 + 30s = 1970-01-01 00:00:30 UTC), not the original.
     assert "1970-01-01T00:00:30Z" in body
     assert body.endswith(tunnel.STICKY_MARKER)
+
+
+def test_run_computes_comment_expiry_from_wall_clock_not_monotonic_clock():
+    # Regression test for a real bug found live: format_deadline() must
+    # never be fed the monotonic `clock`'s value directly. time.monotonic()
+    # has no relationship to the real epoch (often just seconds since
+    # process/boot start) -- interpreting it as Unix time produced
+    # "1970-01-01" in the actual PR comment. The extended deadline must be
+    # computed as wall_clock() + the remaining duration (deadline - the
+    # monotonic now), never the monotonic deadline interpreted as epoch
+    # time and never wall_clock() alone (ignoring how much time is left).
+    proc = _FakeProcess()
+    # Both clocks advance in lockstep on sleep() (as real time.monotonic()
+    # and time.time() would), just starting from very different epochs --
+    # that mismatch is exactly what the fix must account for.
+    state = {"mono": 1913.0, "wall": 1893456000.0}
+
+    def sleep(seconds):
+        state["mono"] += seconds
+        state["wall"] += seconds
+
+    label_calls = []
+    update_calls = []
+
+    def list_labels_fn(*a):
+        label_calls.append(1)
+        return ["extend-preview"] if len(label_calls) == 1 else []
+
+    tunnel.run(**_run_kwargs(
+        initial_seconds=30, poll_seconds=15, extend_seconds=30,
+        popen=lambda *a, **k: proc,
+        clock=lambda: state["mono"], wall_clock=lambda: state["wall"], sleep=sleep,
+        list_labels_fn=list_labels_fn, delete_label_fn=lambda *a: None,
+        find_comment_id_fn=lambda *a: 999,
+        update_comment_fn=lambda *a: update_calls.append(a),
+    ))
+
+    assert len(update_calls) == 1
+    body = update_calls[0][2]
+    # Extend at mono now=1913 -> new deadline=1943 -> 30s remaining.
+    # Wall-clock expiry = wall_now(1893456000) + 30 = 1893456030.
+    expected_iso = tunnel.format_deadline(1893456030)[1]
+    assert expected_iso in body
+    assert "1970-01-01" not in body
 
 
 def test_run_skips_comment_update_when_comment_not_found():

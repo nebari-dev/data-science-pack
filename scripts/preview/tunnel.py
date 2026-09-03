@@ -80,6 +80,7 @@ def run(
     extend_label: str = "extend-preview",
     popen: Callable[..., subprocess.Popen] = subprocess.Popen,
     clock: Callable[[], float] = time.monotonic,
+    wall_clock: Callable[[], float] = time.time,
     sleep: Callable[[float], None] = time.sleep,
     list_labels_fn: Callable[[str, int, str], list[str]] = list_labels,
     delete_label_fn: Callable[[str, int, str, str], None] = delete_label,
@@ -111,7 +112,13 @@ def run(
         if extend_label in list_labels_fn(repo, pr_number, github_token):
             deadline = next_deadline(now, deadline, True, extend_seconds)
             delete_label_fn(repo, pr_number, extend_label, github_token)
-            expires_at, expires_at_iso = format_deadline(deadline)
+            # `deadline` lives in `clock`'s namespace (time.monotonic() by
+            # default), which has no relationship to the real calendar --
+            # feeding it straight into format_deadline() produced garbage
+            # like "1970-01-01" (confirmed live). Convert the remaining
+            # duration into a real timestamp via `wall_clock` instead.
+            seconds_remaining = deadline - now
+            expires_at, expires_at_iso = format_deadline(wall_clock() + seconds_remaining)
             print(f"{extend_label} seen -- new deadline: {expires_at}")
             try:
                 comment_id = find_comment_id_fn(repo, pr_number, STICKY_MARKER, github_token)
