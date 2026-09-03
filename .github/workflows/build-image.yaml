@@ -37,6 +37,11 @@ on:
         required: false
         default: ""
         type: string
+      smoke_test_labextensions:
+        description: "After each arch build, run `jupyter labextension list` in the pushed image and assert the extensions pinned in images/jupyterlab/pixi.toml are enabled at their pinned versions. Enable for every image built from the jupyterlab Dockerfile target (including the GPU variant — it installs the same pixi.toml). Skipped on fork PRs (no pushed image to run)."
+        required: false
+        default: false
+        type: boolean
     secrets:
       QUAY_TOKEN:
         required: false
@@ -96,6 +101,36 @@ jobs:
             GPU=${{ inputs.gpu }}
             NEBI_IMAGE=${{ inputs.nebi_image }}
 
+      - name: "Smoke test: labextensions enabled at pinned versions"
+        if: env.IS_FORK_PR != 'true' && inputs.smoke_test_labextensions
+        run: |
+          ref="ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@${{ steps.build.outputs.digest }}"
+          # `jupyter labextension list` writes to stderr and colorizes the status
+          # words unconditionally (jupyter_server.extension.serverextension
+          # GREEN_ENABLED / RED_DISABLED / RED_X — guarded only by os.name != "nt"),
+          # so merge stderr and strip SGR sequences before matching. Keep grep -F
+          # substring matching: the real line has a trailing "(python, <pkg>)" and
+          # may carry "*" or a lock emoji after OK.
+          if ! out=$(docker run --rm "$ref" jupyter labextension list 2>&1); then
+            printf '%s\n' "$out"
+            echo "::error::could not run 'jupyter labextension list' in $ref"
+            exit 1
+          fi
+          plain=$(printf '%s\n' "$out" | sed -E 's/\x1b\[[0-9;]*m//g')
+          printf '%s\n' "$plain"
+          # Extensions whose pixi.toml pin name matches their labextension name.
+          # The list is hardcoded rather than derived from pixi.toml because the
+          # mapping isn't mechanical (jupyterlab_nvdashboard ships the extension
+          # as jupyterlab-nvdashboard; jhub-apps isn't a labextension at all).
+          for ext in jupyterlab-launchpad jupyterlab-nebari-mode jupyterlab-gallery jupyterlab-jhub-apps; do
+            expected=$(sed -nE "s/^${ext} = \"==([^\"]+)\"\$/\\1/p" images/jupyterlab/pixi.toml)
+            test -n "$expected" || { echo "::error::could not read exact ${ext} pin from images/jupyterlab/pixi.toml"; exit 1; }
+            grep -Fq " ${ext} v${expected} enabled OK" <<< "$plain" || {
+              echo "::error::${ext} v${expected} is not 'enabled OK' in $ref"
+              exit 1
+            }
+          done
+
       - name: "Export digest"
         if: env.IS_FORK_PR != 'true'
         run: |
@@ -149,6 +184,36 @@ jobs:
             BASE_IMAGE=${{ inputs.base_image }}
             GPU=${{ inputs.gpu }}
             NEBI_IMAGE=${{ inputs.nebi_image }}
+
+      - name: "Smoke test: labextensions enabled at pinned versions"
+        if: env.IS_FORK_PR != 'true' && inputs.smoke_test_labextensions
+        run: |
+          ref="ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@${{ steps.build.outputs.digest }}"
+          # `jupyter labextension list` writes to stderr and colorizes the status
+          # words unconditionally (jupyter_server.extension.serverextension
+          # GREEN_ENABLED / RED_DISABLED / RED_X — guarded only by os.name != "nt"),
+          # so merge stderr and strip SGR sequences before matching. Keep grep -F
+          # substring matching: the real line has a trailing "(python, <pkg>)" and
+          # may carry "*" or a lock emoji after OK.
+          if ! out=$(docker run --rm "$ref" jupyter labextension list 2>&1); then
+            printf '%s\n' "$out"
+            echo "::error::could not run 'jupyter labextension list' in $ref"
+            exit 1
+          fi
+          plain=$(printf '%s\n' "$out" | sed -E 's/\x1b\[[0-9;]*m//g')
+          printf '%s\n' "$plain"
+          # Extensions whose pixi.toml pin name matches their labextension name.
+          # The list is hardcoded rather than derived from pixi.toml because the
+          # mapping isn't mechanical (jupyterlab_nvdashboard ships the extension
+          # as jupyterlab-nvdashboard; jhub-apps isn't a labextension at all).
+          for ext in jupyterlab-launchpad jupyterlab-nebari-mode jupyterlab-gallery jupyterlab-jhub-apps; do
+            expected=$(sed -nE "s/^${ext} = \"==([^\"]+)\"\$/\\1/p" images/jupyterlab/pixi.toml)
+            test -n "$expected" || { echo "::error::could not read exact ${ext} pin from images/jupyterlab/pixi.toml"; exit 1; }
+            grep -Fq " ${ext} v${expected} enabled OK" <<< "$plain" || {
+              echo "::error::${ext} v${expected} is not 'enabled OK' in $ref"
+              exit 1
+            }
+          done
 
       - name: "Export digest"
         if: env.IS_FORK_PR != 'true'
