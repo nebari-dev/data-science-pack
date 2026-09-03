@@ -283,3 +283,35 @@ def test_main_cancel_in_flight_run_calls_through(monkeypatch):
 
     assert rc == 0
     assert called == [(REPO, "K8s Stack Preview", 205, TOKEN)]
+
+
+# --- comments -----------------------------------------------------------------
+
+
+def test_find_comment_id_returns_id_of_comment_containing_marker(monkeypatch):
+    _, fake = _capture(monkeypatch)
+    fake.next_result = [
+        {"id": 111, "body": "unrelated comment"},
+        {"id": 222, "body": "some text\n<!-- Sticky Pull Request Commentk8s-preview -->"},
+    ]
+
+    found = github_api.find_comment_id(REPO, 205, "<!-- Sticky Pull Request Commentk8s-preview -->", TOKEN)
+
+    assert found == 222
+
+
+def test_find_comment_id_returns_none_when_not_found(monkeypatch):
+    _, fake = _capture(monkeypatch)
+    fake.next_result = [{"id": 111, "body": "unrelated comment"}]
+
+    assert github_api.find_comment_id(REPO, 205, "<!-- Sticky Pull Request Commentk8s-preview -->", TOKEN) is None
+
+
+def test_update_comment_patches_the_comment_body(monkeypatch):
+    calls, _ = _capture(monkeypatch)
+
+    github_api.update_comment(REPO, 222, "new body", TOKEN)
+
+    assert calls[0]["method"] == "PATCH"
+    assert calls[0]["url"] == f"https://api.github.com/repos/{REPO}/issues/comments/222"
+    assert calls[0]["body"] == {"body": "new body"}

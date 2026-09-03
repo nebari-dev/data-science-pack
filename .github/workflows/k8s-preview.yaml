@@ -541,6 +541,10 @@ jobs:
             --cloudflared /tmp/cloudflared --token "${TUNNEL_TOKEN}" \
             --repo "${{ github.repository }}" --pr "${{ github.event.pull_request.number }}" \
             --github-token "${{ secrets.GITHUB_TOKEN }}" \
+            --url "${{ steps.cf_dns.outputs.url }}" --keycloak-url "${{ steps.cf_dns.outputs.keycloak_url }}" \
+            --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" \
+            --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}" \
+            ${{ github.event.pull_request.head.repo.fork && '--fork' || '' }} \
             --initial-seconds 1200 --poll-seconds 15 --extend-seconds 1200
 
       # Runs once the tunnel step above ends (its own timeout, cloudflared

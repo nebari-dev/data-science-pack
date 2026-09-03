@@ -143,6 +143,29 @@ def find_latest_deployment_id(repo: str, environment: str, token: str) -> int | 
     return result[0]["id"] if result else None
 
 
+# --- comments ---------------------------------------------------------------
+
+
+def find_comment_id(repo: str, pr_number: int, marker: str, token: str) -> int | None:
+    """Return the id of the PR comment containing ``marker``, or None."""
+    comments = request_json(
+        "GET", f"{API_ROOT}/repos/{repo}/issues/{pr_number}/comments?per_page=100", headers=_headers(token)
+    )
+    for c in comments:
+        if marker in c.get("body", ""):
+            return c["id"]
+    return None
+
+
+def update_comment(repo: str, comment_id: int, body: str, token: str) -> None:
+    request_json(
+        "PATCH",
+        f"{API_ROOT}/repos/{repo}/issues/comments/{comment_id}",
+        headers=_headers(token),
+        body={"body": body},
+    )
+
+
 # --- workflow runs ----------------------------------------------------------
 
 
