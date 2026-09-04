@@ -80,6 +80,8 @@ Not to be confused with `jupyterhub.singleuser`, which is the upstream passthrou
 
 | Field | Default | What it does |
 |---|---|---|
+| `singleuser.sharedMemory.enabled` | `true` | Mount a memory-backed `emptyDir` at `/dev/shm` in singleuser pods. |
+| `singleuser.sharedMemory.sizeLimit` | `8Gi` | Maximum tmpfs consumption; used pages count against the pod memory limit. |
 | `singleuser.networkPolicy.allowEgressToGateway` | `true` | Renders a NetworkPolicy letting user pods reach the Envoy Gateway pod. |
 | `singleuser.networkPolicy.gatewayNamespace` | `envoy-gateway-system` | Where the gateway runs. |
 | `singleuser.networkPolicy.gatewayName` | `nebari-gateway` | Gateway name, matched on `gateway.envoyproxy.io/owning-gateway-name`. |
@@ -89,6 +91,13 @@ Required on Hetzner k3s and any cluster where kube-proxy DNATs the LoadBalancer 
 proxy pod IP *before* the subchart's pod-level policy is evaluated — without it, user pods
 cannot reach `https://<hub>/services/japps` or the Nebi host. Kubernetes unions egress rules
 across policies selecting the same pod, so it is harmless where it is not needed.
+
+Profiles inherit the chart-wide shared-memory size. Set
+`kubespawner_override.shm_size_limit` on a profile to replace only that profile's
+limit. Setting `singleuser.sharedMemory.enabled: false` disables the mount for all
+profiles. The size limit caps tmpfs usage but does not reserve memory; only pages
+written to `/dev/shm` count against the pod's memory cgroup. Keep the pod memory
+limit large enough for both shared memory and the notebook processes.
 
 ## `singleuserCuller`
 

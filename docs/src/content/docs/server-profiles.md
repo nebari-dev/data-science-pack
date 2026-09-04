@@ -48,6 +48,37 @@ satisfy leaves the server `Pending` forever with no message in the UI.
 `kubespawner_override` accepts any KubeSpawner trait — `node_selector`, `image`,
 `extra_resource_limits`, `tolerations`, `environment`, and the rest.
 
+## Shared memory
+
+The chart mounts a memory-backed `emptyDir` at `/dev/shm` in every singleuser pod.
+The chart-wide default is controlled by `singleuser.sharedMemory`:
+
+```yaml
+singleuser:
+  sharedMemory:
+    enabled: true
+    sizeLimit: 8Gi
+```
+
+Profiles inherit that size. Use the chart-specific `shm_size_limit` override when a
+larger profile needs a different limit:
+
+```yaml
+jupyterhub:
+  custom:
+    profiles:
+      - slug: gpu-instance
+        display_name: "GPU Instance"
+        kubespawner_override:
+          mem_limit: "32G"
+          shm_size_limit: "16Gi"
+```
+
+`sizeLimit` caps tmpfs consumption; it does not reserve memory. Pages written to
+`/dev/shm` count against the pod's memory cgroup, so leave enough memory for the
+notebook and its worker processes. Ray commonly targets about 30% of available
+memory for its object store.
+
 ## Image choices within a profile
 
 `profile_options` adds a second dropdown under the selected profile:
