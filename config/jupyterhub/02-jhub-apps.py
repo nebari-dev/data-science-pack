@@ -2,11 +2,37 @@
 
 # ruff: noqa: F821 - `c` is a magic global provided by JupyterHub
 import os
+import shlex
 
 from jhub_apps import theme_template_paths, themes
 from jhub_apps.configuration import install_jhub_apps
 from kubespawner import KubeSpawner
 from z2jh import get_config
+
+# jhub-apps runs as a managed-service subprocess inside the SAME pod as
+# hub, but z2jh's hub_connect_ip="hub" (needed so KubeSpawner pods on other
+# nodes can reach the hub) makes JupyterHub inject JUPYTERHUB_API_URL
+# pointing at the `hub` Service (ClusterIP self-reference) for every
+# service, same-pod ones included. Routing same-pod traffic through a
+# Service depends on the CNI supporting hairpin NAT for a pod reaching its
+# own Service -- confirmed to time out (httpcore.ConnectTimeout) on a
+# kind/kindnet cluster.
+#
+# This can't be fixed by precomputing the target URL here in Python:
+# os.environ has no JUPYTERHUB_API_URL at config-load time in the hub
+# container's own process -- JupyterHub only computes and injects that
+# value into a service's environment at spawn time (confirmed live: an
+# earlier version of this fix read os.environ.get("JUPYTERHUB_API_URL")
+# here and it was always empty, so the rewrite never applied). Instead,
+# wrap the service's own command with a shell snippet that rewrites
+# $JUPYTERHUB_API_URL to localhost (keeping port/path) at the one point
+# where the real value exists: the moment the subprocess itself execs,
+# using whatever JupyterHub just put in its environment.
+_REWRITE_HUB_API_URL_TO_LOCALHOST = (
+    'export JUPYTERHUB_API_URL="$(printf %s "$JUPYTERHUB_API_URL" | '
+    "sed -E 's#^(https?://)[^/:]+#\\1localhost#')\""
+)
+
 
 # Configure jhub-apps
 # bind_url must include the real external hostname so JupyterHub constructs
@@ -104,3 +130,20 @@ if _oidc_secret:
         if svc.get("name") == "japps":
             svc.setdefault("environment", {})["JUPYTERHUB_OIDC_CLIENT_SECRET"] = _oidc_secret
             break
+
+# Point jhub-apps' own hub-API client at localhost instead of the `hub`
+# Service it inherits from z2jh -- see _REWRITE_HUB_API_URL_TO_LOCALHOST's
+# comment above. Setting svc["environment"] (like the OIDC secret above)
+# does NOT work here: JupyterHub's Spawner.get_env() computes
+# env['JUPYTERHUB_API_URL'] = hub_api_url from self.hub.api_url AFTER
+# merging self.environment, unconditionally overwriting whatever we set
+# there -- confirmed live.
+for svc in c.JupyterHub.services:
+    if svc.get("name") == "japps" and svc.get("command"):
+        quoted_cmd = " ".join(shlex.quote(part) for part in svc["command"])
+        svc["command"] = [
+            "sh",
+            "-c",
+            f"{_REWRITE_HUB_API_URL_TO_LOCALHOST}; exec {quoted_cmd}",
+        ]
+        break
