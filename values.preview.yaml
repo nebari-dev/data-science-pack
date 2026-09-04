@@ -1,0 +1,29 @@
+# Static overrides for k8s-preview.yaml's ephemeral deploy. PR-specific
+# values (hostname, external-url) are passed as --set flags at deploy time.
+jupyterhub:
+  hub:
+    image:
+      name: nebari-data-science-pack-jupyterhub
+      tag: preview
+    # jupyterhub.hub.extraVolumes in values.yaml hardcodes secretName for
+    # a "data-science-pack" release; override for this release ("preview").
+    extraVolumes:
+      - name: custom-config
+        configMap:
+          name: nebari-data-science-pack-hub-config
+      - name: oauth-client
+        secret:
+          secretName: preview-nebari-data-science-pack-oidc-client
+          optional: true
+      - name: org-ca
+        configMap:
+          name: nebari-trust-bundle
+          optional: true
+      - name: ca-merged
+        emptyDir: {}
+nebariapp:
+  enabled: true
+keycloak:
+  # hub's own token exchange can't go through Cloudflare Access (no
+  # browser session) -- route it in-cluster instead.
+  backchannelURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080"

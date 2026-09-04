@@ -1,100 +1,37 @@
 name: K8s Stack Preview
-# Deploys the full Nebari platform stack (Keycloak + nic-operator + Envoy
-# Gateway, via nebari-dev/action-nebari-sandbox) plus this PR's chart into
-# an ephemeral kind cluster on the runner, then exposes
-# JupyterHub through a per-PR Cloudflare Tunnel behind Cloudflare Access
-# (GitHub SSO) so a reviewer can click a link and use it.
+# Deploys Nebari (Keycloak + nic-operator + Envoy Gateway) plus this PR's
+# chart into an ephemeral kind cluster, exposed via a per-PR Cloudflare
+# Tunnel behind Cloudflare Access (GitHub SSO) -- the PR comment only
+# ever holds a URL, never a bypassable secret.
 #
-# This repo is public, so a plain shared secret posted in the PR comment
-# (a quick-tunnel URL, a basic-auth password) is readable by anyone who
-# opens the PR, not just intended reviewers. Access closes that gap by
-# authenticating the *person*, not a string in the comment: Cloudflare
-# challenges every request to *.<vars.PREVIEW_DOMAIN> with a GitHub SSO
-# login and only lets it through to cloudflared if the signed-in account
-# matches the Access application's policy (currently an explicit email
-# allow-list, not org membership -- see the Cloudflare Access application
-# for this domain for who's currently allowed). The PR comment only ever
-# contains a URL.
+# Hostnames stay single-level (pr-<n>-data-science-pack.<domain>): free
+# Cloudflare Universal SSL only covers the zone + one wildcard level.
 #
-# The domain is a repo Variable (Settings -> Secrets and variables ->
-# Actions -> Variables -> PREVIEW_DOMAIN, currently openteams.app), not
-# hardcoded, so it can be repointed without editing this file. Hostnames
-# built from it stay single-level (pr-<n>-data-science-pack.<domain>,
-# never pr-<n>.data-science-pack.<domain>) deliberately: Cloudflare's
-# free Universal SSL only auto-covers the zone apex plus one wildcard
-# level (<domain> + *.<domain>); a second level needs the paid Advanced
-# Certificate Manager add-on, which this setup doesn't use.
+# nebariapp.enabled=true routes login through the real
+# operator-provisioned Keycloak client, same auth path as production.
 #
-# Scope: the tunnel points straight at the `proxy-public` service. The
-# chart deploys with nebariapp.enabled=true (nebariapp.auth.enabled=true
-# by chart default), so login goes through the real operator-provisioned
-# Keycloak OIDC client, exercising the same auth path production deploys
-# use. Getting this working required: (1) not blocking `helm upgrade
-# --install` with `--wait`, since the hub pod crash-loops on
-# FileNotFoundError until the operator's async client-provisioning
-# Secret exists -- a separate step now polls for that Secret and force-
-# restarts hub once it appears; (2) labelling the release namespace
-# `nebari.dev/managed=true` before install, since nic-operator otherwise
-# never reconciles the NebariApp at all (condition NamespaceNotOptedIn),
-# which is a permanent gate, not a slow-provisioning race.
+# Live 20min by default (tunnel step's own timeout); extend-preview
+# label adds 20 more, reusable any number of times. Only runs when
+# deploy-preview is added (GitHub gates who can label a PR); a labeled
+# fork PR still runs its own code, so the comment flags that.
 #
-# The link only lives for 20 minutes (the tunnel step's own timeout); it
-# is not a persistent per-PR environment. Each run creates its own
-# Cloudflare Tunnel + DNS record (so concurrent previews on different PRs
-# don't collide on the same route) and deletes both on cleanup.
+# One-time setup (Cloudflare Zero Trust dashboard, not scripted here):
+#   - Variable PREVIEW_DOMAIN: the zone name (e.g. openteams.app).
+#   - Access app for *.<PREVIEW_DOMAIN>, GitHub IdP, policy for this org.
+#   - Secret CLOUDFLARE_TUNNEL_ACCOUNT_ID: that Cloudflare account's id.
+#   - Secret CLOUDFLARE_TUNNEL_API_TOKEN: Tunnel:Edit + Zone:Read +
+#     DNS:Edit, scoped to the PREVIEW_DOMAIN zone/account only. Separate
+#     from CLOUDFLARE_API_TOKEN (docs.yml's Pages account).
 #
-# One-time setup this workflow assumes already exists (Cloudflare Zero
-# Trust dashboard, done by a repo admin, not scripted here). The tunnel,
-# the PREVIEW_DOMAIN zone, and Zero Trust/Access all live in ONE
-# Cloudflare account (OpenTeams Account), not the account behind
-# CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID, which docs.yml uses for
-# Pages:
-#   - Variable PREVIEW_DOMAIN (repo Settings -> Actions -> Variables):
-#     the zone name, e.g. openteams.app.
-#   - That zone in the Cloudflare account, with an Access self-hosted
-#     application for `*.<PREVIEW_DOMAIN>`, GitHub as identity provider,
-#     policy scoped to this org (nebari-dev). Note this wildcard covers
-#     ANY single-label subdomain of the zone, not just previews, fine
-#     as long as the zone isn't also hosting unrelated services outside
-#     this org's control.
-#   - Secret CLOUDFLARE_TUNNEL_ACCOUNT_ID: that account's id (the
-#     `cfd_tunnel` API is account-scoped; can't be derived from the
-#     token alone).
-#   - Secret CLOUDFLARE_TUNNEL_API_TOKEN: a custom token scoped to
-#     EXACTLY three permissions, nothing broader:
-#       * Account -> Cloudflare Tunnel -> Edit
-#       * Zone -> Zone -> Read        (to resolve the zone id by name)
-#       * Zone -> DNS -> Edit         (to create/delete the CNAME record)
-#     Zone Resources: Include -> Specific zone -> the PREVIEW_DOMAIN zone.
-#     Account Resources: Include -> Specific account -> OpenTeams Account.
-#
-# Only runs when a maintainer/collaborator adds the `deploy-preview` label
-# (GitHub restricts who can label a PR): arbitrary PR authors, including
-# from forks, cannot trigger this themselves. Even so, a fork PR still runs
-# attacker-authored code once labeled; the comment flags this so whoever
-# labels it is doing so knowingly.
-#
-# Residual risk not covered here: kind nodes share the runner's Docker daemon
-# rather than being hardware-isolated, and kind's default CNI (kindnet)
-# does not enforce NetworkPolicy, so a container escape or outbound abuse
-# from inside a spawned notebook pod is not blocked at the network layer.
-# Per-job GITHUB_TOKEN permissions are scoped to the minimum each job
-# needs so a compromised runner in the exposed 20-minute window can't use
-# an ambient token to touch other workflows or repo state.
+# Residual risk: kind shares the runner's Docker daemon, kindnet doesn't
+# enforce NetworkPolicy. GITHUB_TOKEN is scoped minimally per job.
 
 on:
   pull_request:
     types: [labeled, unlabeled, synchronize]
 
-# cancel-in-progress is normally what we want (one live preview per PR,
-# newest commit wins), but it operates on the whole workflow RUN, not on
-# whether deploy-preview's job condition ends up true. Adding the
-# extend-preview label (see the tunnel step) fires a `labeled` event just
-# like any other label add, which would otherwise queue a new run here and
-# cancel the very run extend-preview was meant to extend -- even though
-# that new run's job condition skips it and does nothing. Excluding that
-# one case lets the new (skipped) run queue harmlessly behind the current
-# one instead of cancelling it.
+# Exclude extend-preview labeled events: they'd otherwise queue a new
+# (skipped) run that cancels the very run being extended.
 concurrency:
   group: k8s-preview-${{ github.event.pull_request.number }}
   cancel-in-progress: ${{ !(github.event.action == 'labeled' && github.event.label.name == 'extend-preview') }}
@@ -102,20 +39,16 @@ concurrency:
 env:
   PREVIEW_LABEL: deploy-preview
   PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
+  PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}-data-science-pack.${{ vars.PREVIEW_DOMAIN }}
+  KEYCLOAK_HOSTNAME: keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ vars.PREVIEW_DOMAIN }}
   CLOUDFLARED_VERSION: "2026.7.3"
-  # sha256 of cloudflared-linux-amd64 for the pinned version above,
-  # computed from the official release asset at
-  # https://github.com/cloudflare/cloudflared/releases/tag/2026.7.3
+  # sha256 of cloudflared-linux-amd64 for CLOUDFLARED_VERSION above.
   CLOUDFLARED_SHA256: "9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17"
 
 jobs:
-  # A `labeled` event fires the whole workflow for ANY label add, not just
-  # deploy-preview -- e.g. someone adding extend-preview (see the tunnel
-  # step below) would otherwise start a second run of this job, which
-  # `concurrency: cancel-in-progress` then uses to cancel the very run
-  # extend-preview was meant to extend. Scope labeled/unlabeled triggers to
-  # the deploy-preview label itself; extend-preview is read by the
-  # already-running tunnel step polling the API, not by starting a new run.
+  # labeled fires for ANY label, not just deploy-preview. Scope triggers
+  # to deploy-preview itself; extend-preview is polled by the already
+  # running tunnel step, not by starting a new run.
   deploy-preview:
     if: >-
       contains(github.event.pull_request.labels.*.name, 'deploy-preview') &&
@@ -133,11 +66,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      # So it shows up as an existing, pickable label in the PR's label
-      # picker instead of requiring someone to freehand-type a brand-new
-      # name (which GitHub does support, but it's an easy thing to miss).
-      # `gh label create` errors if the label already exists; that's fine,
-      # this step is just making sure it's there.
+      # So it's a pickable label, not something to freehand-type.
       - name: Ensure the extend-preview label exists
         run: |
           python -m scripts.preview.github_api ensure-label-exists \
@@ -145,9 +74,7 @@ jobs:
             --name extend-preview --color BFD4F2 \
             --description "Push this preview's expiry back 20 minutes"
 
-      # v0.32.0+ required: the sandbox's kind cluster uses containerd's
-      # config v4 format, which `kind load` on older CLI releases can't
-      # parse ("ERROR: unknown containerd config version: 4").
+      # v0.32.0+: older kind can't parse the sandbox's containerd v4 config.
       - name: Install kind
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
@@ -163,11 +90,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
-      # Every run gets a fresh runner (empty Docker daemon), so a plain
-      # `docker build` re-runs every layer -- including the apt/pixi
-      # installs -- from scratch every time. GitHub Actions cache (type=gha)
-      # persists layers across runs so an unchanged pixi.lock/pixi.toml
-      # reuses the previous run's install instead of redoing it.
+      # GHA cache (type=gha) reuses pixi/apt layers instead of rebuilding
+      # from scratch on every run's fresh Docker daemon.
       - name: Build hub image from this PR
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -181,21 +105,15 @@ jobs:
       - name: Side-load hub image into the sandbox cluster
         run: kind load docker-image nebari-data-science-pack-jupyterhub:preview --name ${{ steps.sandbox.outputs.cluster-name }}
 
-      # charts/ is gitignored (dependency .tgz files aren't committed), so a
-      # fresh checkout needs this before `helm upgrade --install` can find
-      # the jupyterhub subchart. Resolves against the version/digest already
-      # pinned in the committed Chart.lock, not a new or bumped dependency.
+      # charts/ is gitignored; needed before helm can find the jupyterhub
+      # subchart. Pinned to the committed Chart.lock, not a new version.
       - name: Fetch chart dependencies
         run: |
           helm repo add jupyterhub https://hub.jupyter.org/helm-chart/
           helm dependency build .
 
-      # nic-operator only reconciles NebariApps in namespaces opted into
-      # Nebari management; without this label it sets condition
-      # NamespaceNotOptedIn and never provisions the Keycloak client at
-      # all (confirmed via `kubectl get nebariapp -o yaml` after a deploy
-      # failure -- not a slow-provisioning race, a permanent gate that
-      # would never resolve on its own).
+      # nic-operator only reconciles NebariApps in nebari.dev/managed=true
+      # namespaces -- a permanent gate without this, not a slow race.
       - name: Create + label the preview namespace for the operator
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
@@ -203,84 +121,30 @@ jobs:
           kubectl create namespace pr-preview --dry-run=client -o yaml | kubectl apply -f -
           kubectl label namespace pr-preview nebari.dev/managed=true --overwrite
 
-      # Why this is needed (ArgoCD selfHeal reverting a direct kubectl
-      # patch, Keycloak's KC_HOSTNAME being otherwise unreachable from a
-      # real browser) is explained in scripts/preview/keycloak_gitops.py's
-      # module docstring, next to the logic itself.
+      # Why (ArgoCD selfHeal reverts a direct patch; KC_HOSTNAME must
+      # match the public route) is in scripts/preview/keycloak_gitops.py.
       - name: Point Keycloak's own hostname at the public tunnel route
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: |
           python -m scripts.preview.keycloak_gitops patch \
             --gitops-dir "$HOME/.nic/gitops/${{ steps.sandbox.outputs.cluster-name }}" \
-            --kc-public-url "https://keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}"
+            --kc-public-url "https://$KEYCLOAK_HOSTNAME"
 
-      # No --wait here: with nebariapp.auth.enabled=true, the hub pod reads
-      # the operator-provisioned Keycloak client Secret at import time
-      # (config/jupyterhub/00-gateway-auth.py) and crashes with
-      # FileNotFoundError if it starts before the operator has created it --
-      # the Secret volume is mounted `optional: true` so the pod itself
-      # comes up fine, only the hub container's Python process crash-loops.
-      # That race is inherent (operator reconciliation runs concurrently
-      # with the chart install, not before it), so we wait for the Secret
-      # separately below instead of blocking helm on hub's rollout status.
-      #
-      # jupyterhub.hub.extraVolumes[1] (values.yaml) hardcodes
-      # secretName: data-science-pack-nebari-data-science-pack-oidc-client
-      # -- a literal string baked in for a release named "data-science-pack",
-      # not templated off .Release.Name. Every restart/retry against the
-      # real (correctly-populated) operator secret still 404'd on the mount
-      # because the pod was mounting a DIFFERENT, nonexistent secret name
-      # the whole time (release name here is "preview") -- confirmed only
-      # after ruling out timing races and kubelet caching across 5 retries.
-      # Override it explicitly to match this release's actual name. Using
-      # --set with list-index syntax (extraVolumes[1].secret.secretName=...)
-      # against a values.yaml-defined list corrupts the OTHER elements'
-      # `name` fields too (Helm's --set doesn't deep-merge per-element into
-      # an existing default list) -- confirmed by a real failure:
-      # "volumes[2].name: Required value, volumes[3].name: Required value".
-      # --set-json with the full, correct array sidesteps that.
-      #
-      # keycloak.backchannelURL: Keycloak's public hostname sits behind
-      # Cloudflare Access (same as the JupyterHub hostname), which is fine
-      # for the browser-facing authorize/login legs -- the reviewer already
-      # has an Access session -- but hub's OWN server-to-server token
-      # exchange has no such session and gets blocked/redirected by
-      # Access instead of getting a JSON response back, confirmed live:
-      # json.decoder.JSONDecodeError: Expecting value: line 1 column 1
-      # (an empty/non-JSON body from the token endpoint). Point the
-      # backchannel (token_url, userdata_url only -- authorize_url stays
-      # on the public issuer) straight at Keycloak's in-cluster Service,
-      # bypassing Cloudflare/Access entirely for that leg.
+      # No --wait: hub crash-loops until the operator's Keycloak Secret
+      # exists (async); polled separately below instead of blocking helm.
       - name: Deploy chart
         id: deploy
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: |
-          helm upgrade --install preview . \
+          helm upgrade --install preview . -f values.preview.yaml \
             --namespace pr-preview --create-namespace \
-            --set jupyterhub.hub.image.name=nebari-data-science-pack-jupyterhub \
-            --set jupyterhub.hub.image.tag=preview \
-            --set nebariapp.enabled=true \
-            --set nebariapp.hostname="pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
-            --set jupyterhub.custom.external-url="pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
-            --set keycloak.backchannelURL="http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080" \
-            --set-json 'jupyterhub.hub.extraVolumes=[{"name":"custom-config","configMap":{"name":"nebari-data-science-pack-hub-config"}},{"name":"oauth-client","secret":{"secretName":"preview-nebari-data-science-pack-oidc-client","optional":true}},{"name":"org-ca","configMap":{"name":"nebari-trust-bundle","optional":true}},{"name":"ca-merged","emptyDir":{}}]'
+            --set nebariapp.hostname="$PREVIEW_HOSTNAME" --set jupyterhub.custom.external-url="$PREVIEW_HOSTNAME"
 
-      # Secret name convention: {Release.Name}-{Chart.Name}-oidc-client
-      # (see values.yaml, jupyterhub.hub.extraVolumes comment). Poll by
-      # label-free name match rather than assuming a fixed provisioning
-      # time -- the operator's reconcile loop has no SLA.
-      # Checking the Secret merely EXISTS isn't enough: the operator creates
-      # it with client-id/client-secret on its first reconcile pass, then
-      # patches in issuer-url on a later pass (GetExternalIssuerURL). A hub
-      # restart triggered right after the Secret's first appearance still
-      # hits FileNotFoundError on /etc/oauth/issuer-url specifically -- wait
-      # for that key's actual (non-empty) value, not just the object.
-      # Why a mere Secret-exists check or a single restart isn't reliable
-      # here (the operator populates issuer-url on a later reconcile pass;
-      # kubelet's Secret volume cache can hand a fresh pod a stale
-      # snapshot) is explained in scripts/preview/k8s_wait.py.
+      # Secret existing isn't enough: the operator populates issuer-url on
+      # a later reconcile pass. See k8s_wait.py for why a single restart
+      # afterward isn't reliable either (kubelet Secret volume caching).
       - name: Wait for operator to provision the Keycloak client secret
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
@@ -310,12 +174,8 @@ jobs:
           echo "PORT_FORWARD_PID=$!" >> "$GITHUB_ENV"
           sleep 3
 
-      # Keycloak itself, so a reviewer can sign in there directly and land
-      # on JupyterHub already authenticated (same Keycloak SSO cookie the
-      # hub's own OAuth redirect relies on). Keycloak's own hostname was
-      # repointed at this same public route earlier (see "Point Keycloak's
-      # own hostname..."), so no Host-header rewrite is needed here -- the
-      # request just flows straight through with its real Host header.
+      # So a reviewer can sign in directly and land on JupyterHub already
+      # authenticated (same SSO cookie hub's own OAuth redirect relies on).
       - name: Port-forward Keycloak
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
@@ -325,12 +185,8 @@ jobs:
           echo "KEYCLOAK_PORT_FORWARD_PID=$!" >> "$GITHUB_ENV"
           sleep 3
 
-      # Cloudflare Access is the real security boundary for this preview
-      # (only allow-listed accounts reach the tunnel at all) -- a simple,
-      # known password for the Keycloak-side login is fine here, so
-      # reviewers don't need to hunt for real credentials on a throwaway
-      # cluster. The admin password is piped straight from the Secret into
-      # the token request and never echoed or logged.
+      # Cloudflare Access is the real security boundary here, so a
+      # simple known password for this account is fine.
       - name: Create a test login user in Keycloak
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
@@ -339,22 +195,14 @@ jobs:
           python -m scripts.preview.keycloak create-reviewer-user \
             --base-url "http://localhost:8001" --realm nebari --admin-password "$admin_password"
 
-      # jhub-apps runs as a managed service subprocess inside the hub pod,
-      # not its own Deployment, so a crash there doesn't fail `helm --wait`
-      # or the rollout checks above -- it only shows up as a 502 on
-      # /services/japps/* once someone hits it. Hit its root path directly
-      # (bypassing Cloudflare, straight to CHP) so a crashed/never-bound
-      # uvicorn process shows up here instead of only from a live login.
+      # jhub-apps runs as a subprocess in the hub pod, so a crash there
+      # doesn't fail helm --wait -- only shows up as a 502 later. Check now.
       - name: Smoke-test jhub-apps service
         if: always()
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: |
-          echo "--- GET /services/japps/ ---"
-          curl -sS -o /tmp/japps-root.html -w 'HTTP %{http_code}\n' http://localhost:8000/services/japps/ || true
-          head -c 2000 /tmp/japps-root.html || true
-          echo
-          echo "--- japps process in hub pod ---"
+          curl -sS -o /tmp/japps-root.html -w 'japps HTTP %{http_code}\n' http://localhost:8000/services/japps/ || true; head -c 2000 /tmp/japps-root.html || true
           kubectl -n pr-preview exec deploy/hub -- ps aux | grep -i "uvicorn\|japps" || true
 
       - name: Dump hub logs (jhub-apps startup)
@@ -363,63 +211,15 @@ jobs:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: kubectl -n pr-preview logs deployment/hub --tail=500
 
-      # Cleanup deletes the whole cluster next, so this is the only chance
-      # to see why a pod/job didn't reach Ready if `helm --wait` timed out.
+      # Last chance to see why before cleanup deletes the cluster.
       - name: Debug pod/job status on deploy failure
         if: failure()
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
-        run: |
-          # ArgoCD Application sync status -- the sandbox's own
-          # wait-platform.sh only polls for K8s resources existing per
-          # namespace, never checks whether ArgoCD ever actually synced
-          # the Application that's supposed to create them. Confirmed
-          # live: Keycloak's namespace had 0 resources after a 600s wait
-          # with no error anywhere else in the log -- this is the only
-          # place that would show whether ArgoCD ever attempted the sync
-          # at all, and why, if it didn't.
-          echo "=== ArgoCD Applications ==="
-          kubectl -n argocd get applications -o wide || true
-          for app in keycloak nebari-operator cloudnative-pg; do
-            echo "--- ArgoCD application/$app ---"
-            kubectl -n argocd get application "$app" -o yaml || true
-          done
+        run: bash scripts/preview-debug-dump.sh
 
-          for ns in pr-preview keycloak; do
-            echo "=== namespace: $ns ==="
-            kubectl -n "$ns" get pods -o wide || true
-            kubectl -n "$ns" get jobs || true
-            kubectl -n "$ns" get secrets || true
-            kubectl -n "$ns" get events --sort-by=.lastTimestamp || true
-            for pod in $(kubectl -n "$ns" get pods -o name 2>/dev/null); do
-              echo "--- describe $pod ($ns) ---"
-              kubectl -n "$ns" describe "$pod" || true
-              echo "--- logs $pod ($ns) ---"
-              kubectl -n "$ns" logs "$pod" --all-containers --tail=100 || true
-            done
-          done
-          kubectl -n pr-preview get nebariapp -o yaml || true
-
-          echo "=== nebari-operator deployment env ==="
-          for d in $(kubectl get deploy -A -o json | jq -r '.items[] | select(.metadata.name | test("operator")) | "\(.metadata.namespace)/\(.metadata.name)"'); do
-            ns="${d%%/*}"; name="${d##*/}"
-            echo "--- $d ---"
-            kubectl -n "$ns" get deploy "$name" -o jsonpath='{.spec.template.spec.containers[0].env}' | jq . || true
-          done
-
-          echo "=== oidc-client secret: keys + issuer-url presence (no values printed) ==="
-          kubectl -n pr-preview get secret preview-nebari-data-science-pack-oidc-client -o json 2>/dev/null | jq -r '.data | keys' || true
-          issuer_b64=$(kubectl -n pr-preview get secret preview-nebari-data-science-pack-oidc-client -o jsonpath='{.data.issuer-url}' 2>/dev/null)
-          echo "issuer-url key present: $([ -n "$issuer_b64" ] && echo yes || echo no); decoded byte length: $(echo -n "$issuer_b64" | base64 -d 2>/dev/null | wc -c)"
-
-          echo "=== NIC config domain ==="
-          find /tmp -maxdepth 1 -iname "nic-config*.yaml" -exec grep -H "^domain:" {} \; || true
-
-      # Interactive SSH debug session into the live runner (cluster still
-      # up, KUBECONFIG still valid) instead of guessing blind from static
-      # logs. limit-access-to-actor restricts the SSH session to whoever
-      # triggered this run, required on a public repo. Bounded to 20min
-      # so a forgotten session doesn't eat the whole 90min job timeout.
+      # Live SSH into the runner instead of guessing from static logs.
+      # Scoped to the triggering actor; bounded so it can't eat the job.
       - name: Debug via tmate SSH on deploy failure
         if: failure()
         uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
@@ -436,11 +236,8 @@ jobs:
           echo "${CLOUDFLARED_SHA256}  /tmp/cloudflared" | sha256sum -c -
           chmod +x /tmp/cloudflared
 
-      # A per-run named Tunnel (not the anonymous quick-tunnel) so:
-      # (a) it can sit behind an Access application (quick tunnels have no
-      #     account/zone attached, so no policy can be bound to them), and
-      # (b) each PR gets its own tunnel + hostname, so two PRs previewing
-      #     at once don't share one route and cross-talk.
+      # Named Tunnel (not quick-tunnel) so it can sit behind Access and
+      # each PR gets its own hostname.
       - name: Create Cloudflare Tunnel for this PR
         id: cf_tunnel
         env:
@@ -448,12 +245,9 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_TUNNEL_ACCOUNT_ID }}
         run: |
           python -m scripts.preview.cloudflare create-tunnel \
-            --account-id "$CF_ACCOUNT_ID" --api-token "$CF_API_TOKEN" \
-            --name "pr-${{ github.event.pull_request.number }}-${{ github.run_id }}" \
-            --preview-hostname "pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
-            --preview-service "http://localhost:8000" \
-            --keycloak-hostname "keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
-            --keycloak-service "http://localhost:8001"
+            --account-id "$CF_ACCOUNT_ID" --api-token "$CF_API_TOKEN" --name "pr-${{ github.event.pull_request.number }}-${{ github.run_id }}" \
+            --preview-hostname "$PREVIEW_HOSTNAME" --preview-service "http://localhost:8000" \
+            --keycloak-hostname "$KEYCLOAK_HOSTNAME" --keycloak-service "http://localhost:8001"
 
       - name: Point DNS at the tunnel
         id: cf_dns
@@ -461,22 +255,11 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_API_TOKEN }}
         run: |
           python -m scripts.preview.cloudflare create-dns \
-            --api-token "$CF_API_TOKEN" --domain "${{ env.PREVIEW_DOMAIN }}" \
-            --preview-hostname "pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
-            --keycloak-hostname "keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ env.PREVIEW_DOMAIN }}" \
-            --target "${TUNNEL_ID}.cfargotunnel.com"
+            --api-token "$CF_API_TOKEN" --domain "$PREVIEW_DOMAIN" --target "${TUNNEL_ID}.cfargotunnel.com" \
+            --preview-hostname "$PREVIEW_HOSTNAME" --keycloak-hostname "$KEYCLOAK_HOSTNAME"
 
-      # The URL itself (pr-<n>-data-science-pack.<domain>) is identical on every run, so
-      # without a timestamp the sticky comment would post byte-identical
-      # text each redeploy and look like it never updated.
-      # ISO timestamps feed <relative-time> in the comment below -- GitHub's
-      # own web component (used all over its UI for "3 minutes ago") that
-      # ticks live client-side once rendered, confirmed via `gh api /markdown`
-      # to survive comment sanitization unstripped. Beats a static UTC
-      # string the reader has to convert to their own timezone by hand, and
-      # unlike re-editing the comment every minute, needs no extra CI runs.
-      # The plain UTC strings are the fallback text shown before JS
-      # hydrates <relative-time>.
+      # ISO feeds <relative-time> in the comment (GitHub's own live-ticking
+      # component) -- no timezone math, no re-editing needed to stay current.
       - name: Compute deployment timestamps
         id: timestamps
         run: |
@@ -485,38 +268,23 @@ jobs:
           echo "deployed_at_iso=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
           echo "expires_at_iso=$(date -u -d '+20 minutes' +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
-      # A GitHub Deployment/Environment, not just the comment below: GitHub
-      # renders this as its own "View deployment" box pinned near the top
-      # of the PR (like Vercel's bot), so the latest link + status is
-      # visible without scrolling into the comment thread -- unlike the
-      # sticky comment, which is an in-place edit of a comment created on
-      # the PR's first deploy, so it doesn't move and is easy to miss.
-      # `required_contexts: []` skips gating this on other checks for the
-      # same commit (e.g. lint/test workflows still running) -- this is a
-      # preview link, not a merge gate. auto_inactive (default true on the
-      # status call) marks any prior deployment to this same per-PR
-      # environment inactive, so redeploys don't leave stale green boxes.
+      # GitHub Deployment box (like Vercel), separate from the comment
+      # thread which doesn't move on redeploy. required_contexts:[] skips
+      # gating this preview link on unrelated checks (lint/test/etc).
       - name: Create GitHub deployment
         run: |
           python -m scripts.preview.github_api create-and-activate \
-            --repo "${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" \
-            --ref "${{ github.event.pull_request.head.sha }}" \
-            --environment "pr-${{ github.event.pull_request.number }}-preview" \
-            --task "deploy:preview" --description "K8s stack preview" \
-            --environment-url "${{ steps.cf_dns.outputs.url }}" \
-            --log-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --status-description "Live for 20 minutes"
+            --repo "${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" --ref "${{ github.event.pull_request.head.sha }}" \
+            --environment "pr-${{ github.event.pull_request.number }}-preview" --task "deploy:preview" --description "K8s stack preview" \
+            --environment-url "${{ steps.cf_dns.outputs.url }}" --status-description "Live for 20 minutes" --log-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Render the ready-preview comment body
         id: render_ready
         run: |
-          python -m scripts.preview.comment render-ready \
+          python -m scripts.preview.comment render-ready ${{ github.event.pull_request.head.repo.fork && '--fork' || '' }} \
             --url "${{ steps.cf_dns.outputs.url }}" --keycloak-url "${{ steps.cf_dns.outputs.keycloak_url }}" \
-            --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" \
-            --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}" \
-            --expires-at "${{ steps.timestamps.outputs.expires_at }}" \
-            --expires-at-iso "${{ steps.timestamps.outputs.expires_at_iso }}" \
-            ${{ github.event.pull_request.head.repo.fork && '--fork' || '' }}
+            --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}" \
+            --expires-at "${{ steps.timestamps.outputs.expires_at }}" --expires-at-iso "${{ steps.timestamps.outputs.expires_at_iso }}"
 
       - name: Comment preview link on PR
         id: comment_preview
@@ -526,40 +294,25 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           message: ${{ steps.render_ready.outputs.body }}
 
-      # Bounded to 20min by default so the live preview doesn't sit open
-      # (and burn CI minutes) indefinitely, and so this step ends itself
-      # well under the job's 90min timeout-minutes -- letting the job's own
-      # timeout kill this step instead makes GitHub mark the whole run
-      # "cancelled" with a "job has exceeded the maximum execution time"
-      # failure annotation, which looks like a real failure even though
-      # nothing broke -- the preview is *meant* to expire eventually.
-      # Extend the deadline any time before then via the extend-preview
-      # label; see scripts/preview/tunnel.py.
+      # 20min default so it self-ends before the job's 90min timeout (else
+      # GitHub shows a false "cancelled" failure for an expected expiry).
+      # Extend via the extend-preview label; see scripts/preview/tunnel.py.
       - name: Run tunnel until it times out (extend via the extend-preview label)
         run: |
-          python -m scripts.preview.tunnel run \
-            --cloudflared /tmp/cloudflared --token "${TUNNEL_TOKEN}" \
-            --repo "${{ github.repository }}" --pr "${{ github.event.pull_request.number }}" \
-            --github-token "${{ secrets.GITHUB_TOKEN }}" \
+          python -m scripts.preview.tunnel run ${{ github.event.pull_request.head.repo.fork && '--fork' || '' }} \
+            --cloudflared /tmp/cloudflared --token "${TUNNEL_TOKEN}" --repo "${{ github.repository }}" --pr "${{ github.event.pull_request.number }}" --github-token "${{ secrets.GITHUB_TOKEN }}" \
             --url "${{ steps.cf_dns.outputs.url }}" --keycloak-url "${{ steps.cf_dns.outputs.keycloak_url }}" \
-            --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" \
-            --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}" \
-            ${{ github.event.pull_request.head.repo.fork && '--fork' || '' }} \
-            --initial-seconds 1200 --poll-seconds 15 --extend-seconds 1200
+            --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}"
 
-      # Runs once the tunnel step above ends (its own timeout, cloudflared
-      # exiting, or a manual cancel), so this captures anything logged in
-      # response to real traffic during the tunnel's lifetime -- unlike the
-      # earlier startup-time log dump.
+      # Captures logs from real traffic during the tunnel's life, not
+      # just the earlier startup-time dump.
       - name: Dump hub logs after tunnel closes
         if: always()
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: kubectl -n pr-preview logs deployment/hub --tail=1000 || true
 
-      # The URL in the deployment box above is dead once the tunnel closes
-      # -- mark it inactive so the box reflects that instead of still
-      # showing green with a link that no longer resolves.
+      # The deployment URL is dead once the tunnel closes -- reflect that.
       - name: Mark GitHub deployment inactive
         if: always()
         run: |
@@ -567,15 +320,9 @@ jobs:
             --repo "${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" \
             --deployment-id "${DEPLOYMENT_ID:-}" --description "Preview expired"
 
-      # The comment above still says "Ready" / "Expires in N minutes" once
-      # the tunnel closes -- it was only ever written once, at deploy time,
-      # and <relative-time> only keeps the clock ticking, not the
-      # surrounding wording or status. Edit it again now that the run is
-      # actually tearing down, so a reader doesn't see a green "Ready" row
-      # next to a relative time that has flipped to the past. Only do this
-      # when the first post succeeded (skip if the run failed before ever
-      # reaching that step, since there is no live-preview comment to
-      # correct in that case).
+      # The ready comment is only rendered once; extending pushes the real
+      # deadline but not this text. Re-render now so it doesn't say Ready
+      # next to a past time. Skip if the first post never happened.
       - name: Render the expired-preview comment body
         id: render_expired
         if: always() && steps.comment_preview.outcome == 'success'
