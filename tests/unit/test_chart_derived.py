@@ -148,3 +148,10 @@ def test_get_chart_config_explicit_override_wins(rendered_chart_derived):
     )
     got = ns["get_chart_config"]("external-url")
     assert got == "explicit.example.com"
+
+
+def test_shared_memory_defaults_are_available_to_spawner(rendered_chart_derived):
+    ns = _exec_chart_derived(rendered_chart_derived, z2jh_values={})
+
+    assert ns["get_chart_config"]("shared-memory-enabled") is True
+    assert ns["get_chart_config"]("shared-memory-size-limit") == "8Gi"

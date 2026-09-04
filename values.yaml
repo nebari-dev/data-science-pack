@@ -145,6 +145,16 @@ nebariapp:
 # NetworkPolicy and unioned with the subchart's policy (Kubernetes
 # NetworkPolicy semantics).
 singleuser:
+  # Mount a memory-backed emptyDir at /dev/shm in every JupyterLab pod. This
+  # avoids the container runtime's 64 MiB default, which can make Ray fall back
+  # to disk and can crash multiprocessing PyTorch DataLoader workers.
+  sharedMemory:
+    enabled: true
+    # This is a consumption cap, not a reservation. Used tmpfs pages count
+    # against the pod's memory limit. Size it for the workload and keep total
+    # pod memory high enough for both shared memory and application processes.
+    # Ray commonly targets about 30% of available memory for its object store.
+    sizeLimit: "8Gi"
   networkPolicy:
     # Lets singleuser pods reach the Nebari gateway pod (Envoy Gateway proxy)
     # in its own namespace. Required on Hetzner k3s + any cluster where
@@ -493,6 +503,8 @@ jupyterhub:
     #     kubespawner_override:
     #       extra_resource_limits:
     #         nvidia.com/gpu: 1
+    #       # Optional per-profile override for the /dev/shm emptyDir above.
+    #       shm_size_limit: "16Gi"
     # NOTE: when bumping singleuser.image.tag below, also bump — in EACH
     # profile — the outer ``kubespawner_override.image``, the ``image: ...``
     # line inside profile_options.image.choices.default, and that choice's
