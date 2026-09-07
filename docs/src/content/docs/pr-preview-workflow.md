@@ -111,9 +111,14 @@ automatically once the tag exists; no action is needed either way.
 - **Namespace label**: the Operator refuses to reconcile a `NebariApp` in
   any namespace missing `nebari.dev/managed=true`, a deliberate opt-in gate
   since the Operator has cluster-wide RBAC to provision public routing and
-  OIDC clients. In a real deployment ArgoCD sets this label itself
-  (`managedNamespaceMetadata`) when it creates the namespace; this workflow
-  bypasses ArgoCD entirely, so it has to label the namespace by hand.
+  OIDC clients. Production deploys this chart as an ArgoCD `Application`
+  (see `data-science-pack.yaml` in the cluster's GitOps repo), which sets
+  this label itself via `managedNamespaceMetadata` when it creates the
+  namespace. This workflow deploys with a direct `helm upgrade --install`
+  instead and has to label the namespace by hand; moving it onto
+  `action-nebari-sandbox`'s `add-software-pack` sub-action, so it deploys
+  through the same ArgoCD path as production and this manual step goes
+  away, is planned.
 - **Keycloak hostname patch**: ArgoCD's `selfHeal` reverts a direct `kubectl
   patch`, and Keycloak's own hostname must match the public tunnel route
   before login works. `scripts/preview/keycloak_gitops.py` rewrites the
