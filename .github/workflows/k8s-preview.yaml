@@ -11,6 +11,7 @@ concurrency:
 
 env:
   PREVIEW_LABEL: deploy-preview
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
   PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}-data-science-pack.${{ vars.PREVIEW_DOMAIN }}
   KEYCLOAK_HOSTNAME: keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ vars.PREVIEW_DOMAIN }}
@@ -36,11 +37,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Ensure the extend-preview label exists
-        run: |
-          python -m scripts.preview.github_api ensure-label-exists \
-            --repo "${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" \
-            --name extend-preview --color BFD4F2 \
-            --description "Push this preview's expiry back 20 minutes"
+        run: gh label create extend-preview -R ${{ github.repository }} --color BFD4F2 --description "Push this preview's expiry back 20 minutes" --force
 
       - name: Install kind
         uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
@@ -217,10 +214,10 @@ jobs:
 
       - name: Create GitHub deployment
         run: |
-          python -m scripts.preview.github_api create-and-activate \
-            --repo "${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" --ref "${{ github.event.pull_request.head.sha }}" \
-            --environment "pr-${{ github.event.pull_request.number }}-preview" --task "deploy:preview" --description "K8s stack preview" \
-            --environment-url "${{ steps.cf_dns.outputs.url }}" --status-description "Live for 20 minutes" --log-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          id=$(gh api repos/${{ github.repository }}/deployments --jq .id --input - <<< '{"ref":"${{ github.event.pull_request.head.sha }}","environment":"pr-${{ github.event.pull_request.number }}-preview","task":"deploy:preview","description":"K8s stack preview","auto_merge":false,"transient_environment":true,"production_environment":false,"required_contexts":[]}')
+          echo "DEPLOYMENT_ID=$id" >> "$GITHUB_ENV"
+          gh api repos/${{ github.repository }}/deployments/$id/statuses -f state=success -f description="Live for 20 minutes" \
+            -f environment_url="${{ steps.cf_dns.outputs.url }}" -f log_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Render the ready-preview comment body
         id: render_ready
@@ -252,11 +249,8 @@ jobs:
         run: kubectl -n pr-preview logs deployment/hub --tail=1000 || true
 
       - name: Mark GitHub deployment inactive
-        if: always()
-        run: |
-          python -m scripts.preview.github_api mark-inactive \
-            --repo "${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" \
-            --deployment-id "${DEPLOYMENT_ID:-}" --description "Preview expired"
+        if: always() && env.DEPLOYMENT_ID != ''
+        run: gh api repos/${{ github.repository }}/deployments/$DEPLOYMENT_ID/statuses -f state=inactive -f description="Preview expired"
 
       - name: Render the expired-preview comment body
         id: render_expired
@@ -306,16 +300,14 @@ jobs:
 
       - name: Cancel the in-flight preview run for this PR
         run: |
-          python -m scripts.preview.github_api cancel-in-flight-run \
-            --repo "${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" \
-            --workflow-name "K8s Stack Preview" --pr "${{ github.event.pull_request.number }}"
+          gh api "repos/${{ github.repository }}/actions/runs?event=pull_request&status=in_progress" \
+            --jq '.workflow_runs[] | select(.name == "K8s Stack Preview" and any(.pull_requests[]; .number == ${{ github.event.pull_request.number }})) | .id' \
+            | xargs -r -I{} gh api -X POST repos/${{ github.repository }}/actions/runs/{}/cancel
 
       - name: Mark GitHub deployment inactive
         run: |
-          python -m scripts.preview.github_api mark-latest-inactive \
-            --repo "${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" \
-            --environment "pr-${{ github.event.pull_request.number }}-preview" \
-            --description "Preview stopped (label removed)"
+          id=$(gh api "repos/${{ github.repository }}/deployments?environment=pr-${{ github.event.pull_request.number }}-preview&per_page=1" --jq '.[0].id // empty')
+          [ -z "$id" ] || gh api repos/${{ github.repository }}/deployments/$id/statuses -f state=inactive -f description="Preview stopped (label removed)"
 
       - name: Render the stopped-preview comment body
         id: render_stopped

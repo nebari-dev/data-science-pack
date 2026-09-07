@@ -23,9 +23,7 @@ Usage:
     python -m scripts.preview.tunnel run --cloudflared PATH --token TOKEN \\
         --repo OWNER/REPO --pr N --github-token TOKEN \\
         --url URL --keycloak-url URL \\
-        --deployed-at STR --deployed-at-iso ISO [--fork] \\
-        [--initial-seconds 1200] [--poll-seconds 15] [--extend-seconds 1200] \\
-        [--extend-label extend-preview]
+        --deployed-at STR --deployed-at-iso ISO [--fork]
 """
 
 from __future__ import annotations
@@ -139,8 +137,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
         args.cloudflared, args.token, args.repo, args.pr, args.github_token,
         args.url, args.keycloak_url, args.deployed_at, args.deployed_at_iso,
         is_fork=args.fork,
-        initial_seconds=args.initial_seconds, poll_seconds=args.poll_seconds,
-        extend_seconds=args.extend_seconds, extend_label=args.extend_label,
     )
 
 
@@ -159,10 +155,6 @@ def main(argv: list[str]) -> int:
     p.add_argument("--deployed-at", required=True)
     p.add_argument("--deployed-at-iso", required=True)
     p.add_argument("--fork", action="store_true")
-    p.add_argument("--initial-seconds", type=int, default=1200)
-    p.add_argument("--poll-seconds", type=int, default=15)
-    p.add_argument("--extend-seconds", type=int, default=1200)
-    p.add_argument("--extend-label", default="extend-preview")
     p.set_defaults(func=_cmd_run)
 
     args = parser.parse_args(argv[1:])
