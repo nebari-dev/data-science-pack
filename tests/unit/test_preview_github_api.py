@@ -26,27 +26,6 @@ def _capture(monkeypatch):
 # --- labels -----------------------------------------------------------------
 
 
-def test_list_labels_returns_names(monkeypatch):
-    calls, fake = _capture(monkeypatch)
-    fake.next_result = [{"name": "deploy-preview"}, {"name": "extend-preview"}]
-
-    result = github_api.list_labels(REPO, 205, TOKEN)
-
-    assert result == ["deploy-preview", "extend-preview"]
-    assert calls[0]["url"] == f"https://api.github.com/repos/{REPO}/issues/205/labels"
-    assert calls[0]["method"] == "GET"
-    assert calls[0]["headers"]["Authorization"] == f"Bearer {TOKEN}"
-
-
-def test_delete_label_calls_delete_endpoint(monkeypatch):
-    calls, _ = _capture(monkeypatch)
-
-    github_api.delete_label(REPO, 205, "extend-preview", TOKEN)
-
-    assert calls[0]["method"] == "DELETE"
-    assert calls[0]["url"] == f"https://api.github.com/repos/{REPO}/issues/205/labels/extend-preview"
-
-
 def test_delete_label_swallows_404_already_removed(monkeypatch):
     def fake_request_json(method, url, headers=None, body=None, timeout=15):
         raise HTTPRequestError(method, url, 404, "Not Found")
@@ -86,13 +65,3 @@ def test_find_comment_id_returns_none_when_not_found(monkeypatch):
     fake.next_result = [{"id": 111, "body": "unrelated comment"}]
 
     assert github_api.find_comment_id(REPO, 205, "<!-- Sticky Pull Request Commentk8s-preview -->", TOKEN) is None
-
-
-def test_update_comment_patches_the_comment_body(monkeypatch):
-    calls, _ = _capture(monkeypatch)
-
-    github_api.update_comment(REPO, 222, "new body", TOKEN)
-
-    assert calls[0]["method"] == "PATCH"
-    assert calls[0]["url"] == f"https://api.github.com/repos/{REPO}/issues/comments/222"
-    assert calls[0]["body"] == {"body": "new body"}

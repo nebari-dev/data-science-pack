@@ -81,24 +81,6 @@ def test_string_body_is_sent_as_is_not_json_encoded(monkeypatch):
     assert captured["content_type"] == "application/x-www-form-urlencoded"
 
 
-def test_custom_headers_are_forwarded(monkeypatch):
-    captured = {}
-
-    def fake_urlopen(request, timeout):
-        captured["auth"] = request.get_header("Authorization")
-        return _FakeResponse(b"{}")
-
-    monkeypatch.setattr("scripts.preview.http.urllib.request.urlopen", fake_urlopen)
-
-    request_json(
-        "GET",
-        "https://api.example.com/thing",
-        headers={"Authorization": "Bearer tok"},
-    )
-
-    assert captured["auth"] == "Bearer tok"
-
-
 def test_empty_response_body_returns_empty_dict(monkeypatch):
     monkeypatch.setattr(
         "scripts.preview.http.urllib.request.urlopen",

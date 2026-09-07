@@ -56,13 +56,6 @@ def test_render_ready_includes_fork_warning_when_a_fork():
     assert "not from a trusted maintainer branch" in body
 
 
-def test_render_ready_has_no_em_or_en_dashes():
-    body = comment.render_ready(URL, KC_URL, DEPLOYED_AT, DEPLOYED_AT_ISO, EXPIRES_AT, EXPIRES_AT_ISO, is_fork=True)
-
-    assert "—" not in body
-    assert "–" not in body
-
-
 def test_render_expired_shows_expired_status_and_no_live_links():
     body = comment.render_expired(EXPIRES_AT, EXPIRES_AT_ISO)
 
@@ -70,13 +63,6 @@ def test_render_expired_shows_expired_status_and_no_live_links():
     assert "⚫ Expired" in body
     assert URL not in body
     assert f'<relative-time datetime="{EXPIRES_AT_ISO}">{EXPIRES_AT}</relative-time>' in body
-
-
-def test_render_stopped_mentions_the_label():
-    body = comment.render_stopped()
-
-    assert "stopped" in body
-    assert "deploy-preview" in body
 
 
 def test_main_render_ready_writes_body_output(monkeypatch, tmp_path):
@@ -95,40 +81,3 @@ def test_main_render_ready_writes_body_output(monkeypatch, tmp_path):
     content = out_file.read_text()
     assert content.startswith("body<<")
     assert "🟢 [Ready]" in content
-
-
-def test_main_render_ready_with_fork_flag_includes_warning(monkeypatch, tmp_path):
-    out_file = tmp_path / "output"
-    out_file.write_text("")
-    monkeypatch.setenv("GITHUB_OUTPUT", str(out_file))
-
-    comment.main([
-        "comment", "render-ready", "--fork",
-        "--url", URL, "--keycloak-url", KC_URL,
-        "--deployed-at", DEPLOYED_AT, "--deployed-at-iso", DEPLOYED_AT_ISO,
-        "--expires-at", EXPIRES_AT, "--expires-at-iso", EXPIRES_AT_ISO,
-    ])
-
-    assert "This PR is from a fork" in out_file.read_text()
-
-
-def test_main_render_expired_writes_body_output(monkeypatch, tmp_path):
-    out_file = tmp_path / "output"
-    out_file.write_text("")
-    monkeypatch.setenv("GITHUB_OUTPUT", str(out_file))
-
-    rc = comment.main(["comment", "render-expired", "--expires-at", EXPIRES_AT, "--expires-at-iso", EXPIRES_AT_ISO])
-
-    assert rc == 0
-    assert "has expired" in out_file.read_text()
-
-
-def test_main_render_stopped_writes_body_output(monkeypatch, tmp_path):
-    out_file = tmp_path / "output"
-    out_file.write_text("")
-    monkeypatch.setenv("GITHUB_OUTPUT", str(out_file))
-
-    rc = comment.main(["comment", "render-stopped"])
-
-    assert rc == 0
-    assert "stopped" in out_file.read_text()

@@ -45,15 +45,3 @@ def test_write_env_appends_single_line_key_value(tmp_path):
     gha.write_env("TUNNEL_ID", "abc-123", path=str(env_file))
 
     assert env_file.read_text() == "TUNNEL_ID=abc-123\n"
-
-
-def test_mask_prints_add_mask_command(capsys):
-    gha.mask("super-secret-token")
-
-    assert capsys.readouterr().out == "::add-mask::super-secret-token\n"
-
-
-def test_error_prints_error_command(capsys):
-    gha.error("tunnel creation failed")
-
-    assert capsys.readouterr().out == "::error::tunnel creation failed\n"

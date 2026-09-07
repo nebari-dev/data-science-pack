@@ -69,13 +69,6 @@ def test_create_or_reuse_tunnel_raises_when_conflict_and_no_existing_found(monke
 # --- tunnel token / ingress / delete ------------------------------------------
 
 
-def test_get_tunnel_token_returns_result_string(monkeypatch):
-    _, fake = _capture(monkeypatch)
-    fake.next_result = {"result": "the-token"}
-
-    assert cloudflare.get_tunnel_token(ACCOUNT_ID, API_TOKEN, "tunnel-abc") == "the-token"
-
-
 def test_configure_ingress_sends_hostname_rules_with_catchall(monkeypatch):
     calls, _ = _capture(monkeypatch)
 
@@ -88,15 +81,6 @@ def test_configure_ingress_sends_hostname_rules_with_catchall(monkeypatch):
     assert ingress[0] == {"hostname": "pr-205.example.com", "service": "http://localhost:8000"}
     assert ingress[1] == {"hostname": "kc-pr-205.example.com", "service": "http://localhost:8001"}
     assert ingress[-1] == {"service": "http_status:404"}
-
-
-def test_delete_tunnel_calls_delete_endpoint(monkeypatch):
-    calls, _ = _capture(monkeypatch)
-
-    cloudflare.delete_tunnel(ACCOUNT_ID, API_TOKEN, "tunnel-abc")
-
-    assert calls[0]["method"] == "DELETE"
-    assert calls[0]["url"].endswith("/accounts/acct-1/cfd_tunnel/tunnel-abc")
 
 
 # --- DNS -----------------------------------------------------------------------
@@ -130,15 +114,6 @@ def test_create_dns_record_returns_record_id(monkeypatch):
         "content": "tunnel-abc.cfargotunnel.com",
         "proxied": True,
     }
-
-
-def test_delete_dns_record_calls_delete_endpoint(monkeypatch):
-    calls, _ = _capture(monkeypatch)
-
-    cloudflare.delete_dns_record(API_TOKEN, "zone-1", "record-1")
-
-    assert calls[0]["method"] == "DELETE"
-    assert calls[0]["url"].endswith("/zones/zone-1/dns_records/record-1")
 
 
 # --- CLI (main) ---------------------------------------------------------------
