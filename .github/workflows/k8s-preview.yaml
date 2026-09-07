@@ -162,12 +162,6 @@ jobs:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: kubectl -n pr-preview logs deployment/hub --tail=500
 
-      - name: Debug pod/job status on deploy failure
-        if: failure()
-        env:
-          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
-        run: bash scripts/preview-debug-dump.sh
-
       - name: Debug via tmate SSH on deploy failure
         if: failure()
         uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
