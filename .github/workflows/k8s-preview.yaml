@@ -63,7 +63,7 @@ jobs:
       deployments: write
     steps:
       - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # So it's a pickable label in the PR's label picker.
       - name: Ensure the extend-preview label exists
@@ -75,7 +75,7 @@ jobs:
 
       # v0.32.0+: older kind can't parse the sandbox's containerd v4 config.
       - name: Install kind
-        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
         with:
           version: v0.33.0
           install_only: true
@@ -362,7 +362,7 @@ jobs:
       deployments: write
     steps:
       - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Cancel the in-flight preview run for this PR
         run: |
