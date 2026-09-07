@@ -78,6 +78,7 @@ jobs:
           kubectl create namespace pr-preview --dry-run=client -o yaml | kubectl apply -f -
           kubectl label namespace pr-preview nebari.dev/managed=true --overwrite
 
+      # The sandbox boots Keycloak on its stock local hostname; browser login needs the public one.
       - name: Point Keycloak's own hostname at the public tunnel route
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}

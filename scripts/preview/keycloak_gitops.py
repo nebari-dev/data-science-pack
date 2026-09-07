@@ -1,5 +1,8 @@
 """Repoint Keycloak's own hostname via NIC's local GitOps repo.
 
+Needed because the sandbox boots the platform with no input for a public
+Keycloak hostname; browser login needs the tunnel hostname instead.
+
 Keycloak's own KC_HOSTNAME (codecentric/keycloakx, via NIC's
 values/keycloak/base.yaml) is fixed to NIC's internal keycloak.nebari.local
 by default -- every self-referencing URL Keycloak renders (login form
