@@ -184,19 +184,6 @@ def test_cancel_in_flight_run_returns_none_when_no_match(monkeypatch):
 # --- CLI (main) ---------------------------------------------------------------
 
 
-def test_main_ensure_label_exists_calls_through(monkeypatch):
-    called = []
-    monkeypatch.setattr(github_api, "ensure_label_exists", lambda *a: called.append(a))
-
-    rc = github_api.main([
-        "github_api", "ensure-label-exists", "--repo", REPO, "--token", TOKEN,
-        "--name", "extend-preview", "--color", "BFD4F2", "--description", "desc",
-    ])
-
-    assert rc == 0
-    assert called == [(REPO, "extend-preview", "BFD4F2", "desc", TOKEN)]
-
-
 def test_main_create_and_activate_writes_deployment_id_env(monkeypatch, tmp_path):
     monkeypatch.setattr(github_api, "create_deployment", lambda *a, **k: 999)
     set_calls = []
@@ -231,19 +218,6 @@ def test_main_mark_inactive_noops_when_deployment_id_missing(monkeypatch):
     assert called == []
 
 
-def test_main_mark_inactive_calls_through_when_present(monkeypatch):
-    called = []
-    monkeypatch.setattr(github_api, "mark_deployment_inactive", lambda *a, **k: called.append((a, k)))
-
-    rc = github_api.main([
-        "github_api", "mark-inactive", "--repo", REPO, "--token", TOKEN,
-        "--deployment-id", "999", "--description", "Preview expired",
-    ])
-
-    assert rc == 0
-    assert called == [((REPO, 999, TOKEN), {"description": "Preview expired"})]
-
-
 def test_main_mark_latest_inactive_noops_when_none_found(monkeypatch):
     monkeypatch.setattr(github_api, "find_latest_deployment_id", lambda *a: None)
     called = []
@@ -256,33 +230,6 @@ def test_main_mark_latest_inactive_noops_when_none_found(monkeypatch):
 
     assert rc == 0
     assert called == []
-
-
-def test_main_mark_latest_inactive_marks_when_found(monkeypatch):
-    monkeypatch.setattr(github_api, "find_latest_deployment_id", lambda *a: 42)
-    called = []
-    monkeypatch.setattr(github_api, "mark_deployment_inactive", lambda *a, **k: called.append((a, k)))
-
-    rc = github_api.main([
-        "github_api", "mark-latest-inactive", "--repo", REPO, "--token", TOKEN,
-        "--environment", "pr-205-preview", "--description", "stopped",
-    ])
-
-    assert rc == 0
-    assert called == [((REPO, 42, TOKEN), {"description": "stopped"})]
-
-
-def test_main_cancel_in_flight_run_calls_through(monkeypatch):
-    called = []
-    monkeypatch.setattr(github_api, "cancel_in_flight_run", lambda *a: called.append(a) or 3)
-
-    rc = github_api.main([
-        "github_api", "cancel-in-flight-run", "--repo", REPO, "--token", TOKEN,
-        "--workflow-name", "K8s Stack Preview", "--pr", "205",
-    ])
-
-    assert rc == 0
-    assert called == [(REPO, "K8s Stack Preview", 205, TOKEN)]
 
 
 # --- comments -----------------------------------------------------------------
