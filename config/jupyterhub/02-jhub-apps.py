@@ -9,22 +9,10 @@ from jhub_apps.configuration import install_jhub_apps
 from kubespawner import KubeSpawner
 from z2jh import get_config
 
-# jhub-apps runs inside hub's pod, but hub_connect_ip="hub" (needed for
-# KubeSpawner pods on other nodes) makes z2jh inject JUPYTERHUB_API_URL
-# as the `hub` Service even for same-pod traffic. That DNATs back to the
-# sender pod, needing bridge hairpin mode -- kindnet has none (ptp veth +
-# routes, no bridge), so it times out (httpcore.ConnectTimeout) on kind.
-#
-# This can't be fixed by precomputing the target URL here in Python:
-# os.environ has no JUPYTERHUB_API_URL at config-load time in the hub
-# container's own process -- JupyterHub only computes and injects that
-# value into a service's environment at spawn time (confirmed live: an
-# earlier version of this fix read os.environ.get("JUPYTERHUB_API_URL")
-# here and it was always empty, so the rewrite never applied). Instead,
-# wrap the service's own command with a shell snippet that rewrites
-# $JUPYTERHUB_API_URL to localhost (keeping port/path) at the one point
-# where the real value exists: the moment the subprocess itself execs,
-# using whatever JupyterHub just put in its environment.
+# z2jh's hub_connect_url points JUPYTERHUB_API_URL at the hub Service,
+# even for jhub-apps in hub's own pod. That DNATs back to itself,
+# needing bridge hairpin -- kindnet has none, so it times out on kind.
+# Rewritten to localhost when the subprocess execs.
 _REWRITE_HUB_API_URL_TO_LOCALHOST = (
     'export JUPYTERHUB_API_URL="$(printf %s "$JUPYTERHUB_API_URL" | '
     "sed -E 's#^(https?://)[^/:]+#\\1localhost#')\""
