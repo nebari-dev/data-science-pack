@@ -156,21 +156,6 @@ jobs:
           curl -sS -o /tmp/japps-root.html -w 'japps HTTP %{http_code}\n' http://localhost:8000/services/japps/ || true; head -c 2000 /tmp/japps-root.html || true
           kubectl -n pr-preview exec deploy/hub -- ps aux | grep -i "uvicorn\|japps" || true
 
-      - name: Dump hub logs (jhub-apps startup)
-        if: always()
-        env:
-          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
-        run: kubectl -n pr-preview logs deployment/hub --tail=500
-
-      - name: Debug via tmate SSH on deploy failure
-        if: failure()
-        uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
-        timeout-minutes: 20
-        env:
-          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
-        with:
-          limit-access-to-actor: true
-
       - name: Install cloudflared
         run: |
           curl -fsSL -o /tmp/cloudflared \
@@ -235,12 +220,6 @@ jobs:
             --cloudflared /tmp/cloudflared --token "${TUNNEL_TOKEN}" --repo "${{ github.repository }}" --pr "${{ github.event.pull_request.number }}" \
             --url "${{ steps.cf_dns.outputs.url }}" --keycloak-url "${{ steps.cf_dns.outputs.keycloak_url }}" \
             --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}"
-
-      - name: Dump hub logs after tunnel closes
-        if: always()
-        env:
-          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
-        run: kubectl -n pr-preview logs deployment/hub --tail=1000 || true
 
       - name: Mark GitHub deployment inactive
         if: always() && env.DEPLOYMENT_ID != ''
