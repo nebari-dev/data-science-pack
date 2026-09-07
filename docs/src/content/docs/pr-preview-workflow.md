@@ -8,8 +8,7 @@ The `k8s-preview` GitHub Actions workflow
 ephemeral kind cluster running the full Nebari platform stack (Keycloak +
 Nebari Operator + Envoy Gateway, via `nebari-dev/action-nebari-sandbox`),
 then exposes it through a per-PR Cloudflare Tunnel behind Cloudflare Access
-(GitHub SSO). All business logic lives in `scripts/preview/`, a tested
-Python package; the workflow itself is thin orchestration.
+(GitHub SSO).
 
 ## How it works
 
