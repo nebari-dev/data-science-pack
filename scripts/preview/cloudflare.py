@@ -143,7 +143,6 @@ def _cmd_create_tunnel(args: argparse.Namespace) -> int:
         gha.error(f"Cloudflare Tunnel setup failed: {exc}")
         return 1
     gha.mask(token)
-    gha.write_output("tunnel_id", tunnel_id)
     gha.write_env("TUNNEL_ID", tunnel_id)
     gha.write_env("TUNNEL_TOKEN", token)
     return 0

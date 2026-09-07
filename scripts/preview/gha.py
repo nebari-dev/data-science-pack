@@ -1,8 +1,4 @@
-"""Helpers for writing GitHub Actions step outputs/env vars/masks/errors.
-
-``path`` defaults to the real ``$GITHUB_OUTPUT``/``$GITHUB_ENV`` files GitHub
-Actions provides at runtime; tests pass an explicit path instead.
-"""
+"""GitHub Actions step outputs, env vars, log masks and error annotations."""
 
 from __future__ import annotations
 
@@ -20,12 +16,12 @@ def _write_kv(path: str, name: str, value: str) -> None:
         f.write(block)
 
 
-def write_output(name: str, value: str, path: str | None = None) -> None:
-    _write_kv(path or os.environ["GITHUB_OUTPUT"], name, value)
+def write_output(name: str, value: str) -> None:
+    _write_kv(os.environ["GITHUB_OUTPUT"], name, value)
 
 
-def write_env(name: str, value: str, path: str | None = None) -> None:
-    _write_kv(path or os.environ["GITHUB_ENV"], name, value)
+def write_env(name: str, value: str) -> None:
+    _write_kv(os.environ["GITHUB_ENV"], name, value)
 
 
 def mask(value: str) -> None:

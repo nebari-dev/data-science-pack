@@ -10,7 +10,6 @@ concurrency:
   cancel-in-progress: ${{ !(github.event.action == 'labeled' && github.event.label.name == 'extend-preview') }}
 
 env:
-  PREVIEW_LABEL: deploy-preview
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
   PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}-data-science-pack.${{ vars.PREVIEW_DOMAIN }}
