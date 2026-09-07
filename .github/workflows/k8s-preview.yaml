@@ -237,7 +237,7 @@ jobs:
       - name: Run tunnel until it times out (extend via the extend-preview label)
         run: |
           python -m scripts.preview.tunnel run ${{ github.event.pull_request.head.repo.fork && '--fork' || '' }} \
-            --cloudflared /tmp/cloudflared --token "${TUNNEL_TOKEN}" --repo "${{ github.repository }}" --pr "${{ github.event.pull_request.number }}" --github-token "${{ secrets.GITHUB_TOKEN }}" \
+            --cloudflared /tmp/cloudflared --token "${TUNNEL_TOKEN}" --repo "${{ github.repository }}" --pr "${{ github.event.pull_request.number }}" \
             --url "${{ steps.cf_dns.outputs.url }}" --keycloak-url "${{ steps.cf_dns.outputs.keycloak_url }}" \
             --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}"
 

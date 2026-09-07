@@ -81,10 +81,10 @@ wildcard level.
 
 `nebariapp.enabled=true` routes login through a real Operator-provisioned
 Keycloak client, the same auth path production deployments use. A test
-reviewer account is created directly in Keycloak so a reviewer can sign in
-without a real SSO identity; Cloudflare Access in front of the tunnel is the
-actual security boundary, so a simple known password for that account is
-acceptable.
+reviewer account, `reviewer` / `admin`, is created directly in Keycloak so
+a reviewer can sign in without a real SSO identity; Cloudflare Access in
+front of the tunnel is the actual security boundary, so a simple known
+password for that account is acceptable.
 
 ## JupyterLab image
 

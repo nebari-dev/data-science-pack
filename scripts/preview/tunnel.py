@@ -4,7 +4,7 @@ Each extend re-renders the PR comment's expiry (best-effort).
 
 Usage:
     python -m scripts.preview.tunnel run --cloudflared PATH --token TOKEN \\
-        --repo OWNER/REPO --pr N --github-token TOKEN \\
+        --repo OWNER/REPO --pr N \\
         --url URL --keycloak-url URL \\
         --deployed-at STR --deployed-at-iso ISO [--fork]
 """
@@ -17,13 +17,17 @@ import sys
 import time
 
 from .comment import render_ready
-from .github_api import delete_label, find_comment_id, list_labels, update_comment
 
 STICKY_MARKER = "<!-- Sticky Pull Request Commentk8s-preview -->"
 INITIAL_SECONDS = 1200
 EXTEND_SECONDS = 1200
 POLL_SECONDS = 15
 EXTEND_LABEL = "extend-preview"
+
+
+def _gh(*args: str) -> str:
+    """Run gh (auth via GH_TOKEN) and return its trimmed stdout."""
+    return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
 def next_deadline(now: float, current_deadline: float, label_present: bool, extend_seconds: int) -> float:
@@ -52,7 +56,6 @@ def run(
     tunnel_token: str,
     repo: str,
     pr_number: int,
-    github_token: str,
     url: str,
     keycloak_url: str,
     deployed_at: str,
@@ -81,20 +84,21 @@ def run(
                 proc.wait()
             return 0
 
-        if EXTEND_LABEL in list_labels(repo, pr_number, github_token):
+        if EXTEND_LABEL in _gh("pr", "view", str(pr_number), "-R", repo, "--json", "labels", "--jq", ".labels[].name").split():
             deadline = next_deadline(now, deadline, True, EXTEND_SECONDS)
-            delete_label(repo, pr_number, EXTEND_LABEL, github_token)
+            _gh("pr", "edit", str(pr_number), "-R", repo, "--remove-label", EXTEND_LABEL)
             # deadline is monotonic, not epoch; convert via the remaining duration.
             expires_at, expires_at_iso = format_deadline(time.time() + (deadline - now))
             print(f"{EXTEND_LABEL} seen -- new deadline: {expires_at}")
             try:
-                comment_id = find_comment_id(repo, pr_number, STICKY_MARKER, github_token)
-                if comment_id is not None:
+                comment_id = _gh("api", f"repos/{repo}/issues/{pr_number}/comments?per_page=100",
+                                 "--jq", f'[.[] | select(.body | contains("{STICKY_MARKER}")) | .id] | first // empty')
+                if comment_id:
                     body = (
                         render_ready(url, keycloak_url, deployed_at, deployed_at_iso, expires_at, expires_at_iso, is_fork)
                         + "\n" + STICKY_MARKER
                     )
-                    update_comment(repo, comment_id, body, github_token)
+                    _gh("api", "-X", "PATCH", f"repos/{repo}/issues/comments/{comment_id}", "-f", f"body={body}")
             except Exception as exc:  # noqa: BLE001 - the tunnel staying up matters more than the comment being exact
                 print(f"warning: failed to update the PR comment after extend: {exc}")
 
@@ -103,7 +107,7 @@ def run(
 
 def _cmd_run(args: argparse.Namespace) -> int:
     return run(
-        args.cloudflared, args.token, args.repo, args.pr, args.github_token,
+        args.cloudflared, args.token, args.repo, args.pr,
         args.url, args.keycloak_url, args.deployed_at, args.deployed_at_iso,
         is_fork=args.fork,
     )
@@ -118,7 +122,6 @@ def main(argv: list[str]) -> int:
     p.add_argument("--token", required=True)
     p.add_argument("--repo", required=True)
     p.add_argument("--pr", required=True, type=int)
-    p.add_argument("--github-token", required=True)
     p.add_argument("--url", required=True)
     p.add_argument("--keycloak-url", required=True)
     p.add_argument("--deployed-at", required=True)
