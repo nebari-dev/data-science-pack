@@ -7,15 +7,10 @@ routes, no bridge), so it times out (httpcore.ConnectTimeout) on kind.
 Rewriting the host to localhost (same port/path) sidesteps hairpin NAT
 entirely.
 
-The rewrite can't be precomputed in Python at config-load time: the hub
-container's own os.environ has no JUPYTERHUB_API_URL there (JupyterHub
-only computes and injects that value into a service's own environment
-at spawn time) -- confirmed live, an earlier version of this fix that
-read os.environ.get("JUPYTERHUB_API_URL") here always got "", so the
-rewrite never applied and jhub-apps kept timing out against the `hub`
-Service. So the command is wrapped with a shell snippet that rewrites
-$JUPYTERHUB_API_URL to localhost at the moment the subprocess execs,
-using whatever JupyterHub has actually put in its environment by then.
+JupyterHub only injects the real JUPYTERHUB_API_URL into the subprocess's
+own environment at spawn time, not at config-load time -- confirmed live,
+an earlier os.environ.get() read here always got "". So the command is
+wrapped in a shell snippet that rewrites it to localhost at exec time.
 
 02-jhub-apps.py isn't independently importable: it needs `jhub_apps`
 and `z2jh` (real chart-image dependencies, not installed in the unit
