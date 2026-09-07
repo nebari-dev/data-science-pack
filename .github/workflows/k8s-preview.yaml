@@ -10,8 +10,8 @@ name: K8s Stack Preview
 # operator-provisioned Keycloak client, same auth path as production.
 #
 # Live 20min by default (tunnel step's own timeout); extend-preview
-# label resets it to 20min from that moment (not cumulative), reusable
-# any number of times. Only runs when
+# label resets it to 20min from that moment, reusable any number of
+# times. Only runs when
 # deploy-preview is added (GitHub gates who can label a PR); a labeled
 # fork PR still runs its own code, so the comment flags that.
 #
