@@ -11,6 +11,44 @@ then exposes it through a per-PR Cloudflare Tunnel behind Cloudflare Access
 (GitHub SSO). All business logic lives in `scripts/preview/`, a tested
 Python package; the workflow itself is thin orchestration.
 
+## How it works
+
+```mermaid
+flowchart TB
+    Label(["deploy-preview label added"]) --> Runner
+    subgraph Runner["GitHub Actions runner"]
+        Build["Build hub image\nfrom this PR"] --> Kind["kind cluster +\nKeycloak, Operator, Envoy Gateway"]
+        Kind --> Deploy["helm install\nthis PR's chart"]
+        Deploy --> PF["port-forward hub + Keycloak\nto runner localhost"]
+        PF --> Tunnel["cloudflared tunnel"]
+    end
+    Tunnel --> DNS["Cloudflare DNS record\npr-&lt;n&gt;-....&lt;domain&gt;"]
+    DNS --> Access["Cloudflare Access\n(GitHub SSO gate)"]
+    Runner -. posts .-> Comment["PR comment +\nGitHub Deployment"]
+    Reviewer(["Reviewer's browser"]) -->|opens the link| Access --> Tunnel
+```
+
+1. Labeling the PR `deploy-preview` starts the `deploy-preview` job.
+2. It builds the hub image from this PR and boots a kind cluster running
+   Keycloak, the Nebari Operator, and Envoy Gateway
+   (`nebari-dev/action-nebari-sandbox`), then side-loads the built image
+   into it.
+3. It installs this PR's chart with `helm upgrade --install`, patches
+   Keycloak's own hostname to match the public route, and waits for the
+   Operator to finish provisioning the OIDC client.
+4. It port-forwards the hub and Keycloak services from the cluster to the
+   runner's `localhost`, starts a `cloudflared` tunnel mapping the public
+   preview hostnames to those local ports, and points a Cloudflare DNS
+   record at the tunnel.
+5. It posts the preview URL as a GitHub Deployment and a PR comment.
+6. A reviewer opening the link authenticates through Cloudflare Access
+   (GitHub SSO) before any request reaches the tunnel. Past Access, traffic
+   flows tunnel -> runner port-forward -> cluster service -> pod, and the
+   hub runs its own OAuth flow against Keycloak so it knows who signed in.
+7. After 20 minutes (or on `extend-preview`/label removal), the tunnel
+   closes, the DNS record and tunnel are deleted, and the runner (with its
+   kind cluster) is torn down when the job ends.
+
 ## Triggering it
 
 Add the `deploy-preview` label to a PR. That label gates who can trigger a
@@ -47,11 +85,10 @@ without a real SSO identity; Cloudflare Access in front of the tunnel is the
 actual security boundary, so a simple known password for that account is
 acceptable.
 
-## Deploy steps
+## Implementation notes
 
-- **Sandbox cluster**: kind (pinned to v0.32.0+; older kind can't parse the
-  sandbox action's containerd v4 config) plus the full platform stack via
-  `action-nebari-sandbox`.
+- **Sandbox cluster**: kind is pinned to v0.32.0+; older kind can't parse
+  the sandbox action's containerd v4 config.
 - **Namespace label**: the Operator only reconciles `NebariApp` resources in
   namespaces carrying `nebari.dev/managed=true`; missing it blocks
   reconciliation permanently.
@@ -85,13 +122,6 @@ acceptable.
 - **On expiry**: the deployment is marked inactive and, if a "ready"
   comment was posted, it's re-rendered to the expired state.
 
-## Debugging a failed run
-
-On deploy failure, the workflow dumps ArgoCD/pod/job status
-(`scripts/preview-debug-dump.sh`) and opens a `tmate` SSH session into the
-runner, scoped to the triggering actor and bounded to 20 minutes so it
-can't hang the job indefinitely.
-
 ## One-time Cloudflare setup
 
 Configured once in the Cloudflare Zero Trust dashboard for this repository:
@@ -106,9 +136,27 @@ Configured once in the Cloudflare Zero Trust dashboard for this repository:
   separate from `CLOUDFLARE_API_TOKEN`, which belongs to the Pages account
   used by `docs.yml`.
 
-## Security notes
+## Security model
 
-- kind shares the runner's Docker daemon and `kindnet` doesn't enforce
-  `NetworkPolicy`; `GITHUB_TOKEN` permissions are scoped minimally per job.
-- The `cloudflared` binary is pinned by version and a matching published
-  `sha256`, updated together in the workflow's `env:` block.
+- **Public exposure is gated before it reaches the cluster**: Cloudflare
+  Access sits in front of the tunnel and requires a GitHub SSO login plus
+  an org policy match before any request reaches `cloudflared`. Nothing in
+  the preview cluster is reachable without passing that gate.
+- **The preview cluster has no internal network isolation**: `kindnet`
+  doesn't enforce `NetworkPolicy`, so any pod in the cluster can reach any
+  other pod in it. Treat the whole cluster as one trust domain, not a
+  boundary between services.
+- **kind shares the runner's Docker daemon**: a container escaping its pod
+  gets host-level Docker access on that ephemeral runner only, not on any
+  shared or production infrastructure, and the runner is destroyed with
+  the job.
+- **A labeled fork PR deploys the fork's own code**: it gets the same
+  Cloudflare Access gate, but the hub image built and running is
+  unreviewed. The PR comment flags this on every fork deploy.
+- **Token scope**: `GITHUB_TOKEN` is limited to `contents:read`,
+  `pull-requests:write`, `issues:write`, `deployments:write` for this job.
+  The Cloudflare API token can only edit Tunnels and DNS and read the zone,
+  scoped to the single `PREVIEW_DOMAIN` zone, not account-wide.
+- **Nothing outlives the run**: the tunnel, its DNS record, the Keycloak
+  reviewer account, and the kind cluster all exist only for the job's
+  lifetime, or until the preview expires or is stopped early.
