@@ -5,6 +5,12 @@ jupyterhub:
     image:
       name: nebari-data-science-pack-jupyterhub
       tag: preview
+  # Blocks install on pre-pulling the singleuser image; the PR's
+  # jupyterlab tag may not exist yet -- disable so deploy doesn't fail
+  # outright, image pulls lazily on spawn instead.
+  prePuller:
+    hook:
+      enabled: false
     # jupyterhub.hub.extraVolumes in values.yaml hardcodes secretName for
     # a "data-science-pack" release; override for this release ("preview").
     extraVolumes:
