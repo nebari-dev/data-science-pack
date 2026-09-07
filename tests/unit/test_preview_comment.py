@@ -31,6 +31,18 @@ def test_render_ready_contains_the_status_row_and_links():
     assert "deploy-preview" in body
 
 
+def test_render_ready_extend_wording_is_not_cumulative():
+    # Real user confusion this guards against: extend-preview resets the
+    # deadline to 20 minutes from whenever it's added (see tunnel.py's
+    # next_deadline), it does not stack on top of time already remaining.
+    # "for 20 more minutes" reads as additive/cumulative; wording must
+    # say it resets to a fresh 20 minutes instead.
+    body = comment.render_ready(URL, KC_URL, DEPLOYED_AT, DEPLOYED_AT_ISO, EXPIRES_AT, EXPIRES_AT_ISO, is_fork=False)
+
+    assert "20 more minutes" not in body
+    assert "reset" in body.lower()
+
+
 def test_render_ready_omits_fork_warning_when_not_a_fork():
     body = comment.render_ready(URL, KC_URL, DEPLOYED_AT, DEPLOYED_AT_ISO, EXPIRES_AT, EXPIRES_AT_ISO, is_fork=False)
 

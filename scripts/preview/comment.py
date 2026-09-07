@@ -50,7 +50,7 @@ def render_ready(
         f'<relative-time datetime="{deployed_at_iso}">{deployed_at}</relative-time> |'
         f"{fork_warning}\n\n"
         f'Expires <relative-time datetime="{expires_at_iso}">{expires_at}</relative-time>. '
-        "Add the `extend-preview` label any time before then for 20 more minutes, "
+        "Add the `extend-preview` label any time before then to reset it to 20 minutes from that moment, "
         "or push a new commit or re-add `deploy-preview` to redeploy from scratch."
     )
 
