@@ -595,6 +595,10 @@ jupyterhub:
       #                          # here to add more or replace the default.
       # startup_apps: []
   hub:
+    # jhub-apps runs inside the hub pod and calls the hub API through the
+    # hub Service; the hub NetworkPolicy only admits pods with this label.
+    labels:
+      hub.jupyter.org/network-access-hub: "true"
     # Custom Nebari hub image with jhub-apps pre-installed.
     # Tag below is the PR-53 merge-commit SHA at the moment of pinning; the
     # corresponding immutable digest is
