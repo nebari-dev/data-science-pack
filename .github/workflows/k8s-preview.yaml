@@ -90,6 +90,12 @@ jobs:
             --gitops-dir "$HOME/.nic/gitops/${{ steps.sandbox.outputs.cluster-name }}" \
             --kc-public-url "https://$KEYCLOAK_HOSTNAME"
 
+      - name: Point the preview at this PR's own JupyterLab image build
+        if: github.event.pull_request.head.repo.fork == false
+        run: |
+          pip install --no-cache-dir "ruamel.yaml==0.19.1"
+          python -m scripts.preview.pr_image set-tag --tag "pr-${{ github.event.pull_request.number }}"
+
       - name: Deploy chart
         id: deploy
         env:

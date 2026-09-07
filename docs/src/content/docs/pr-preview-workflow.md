@@ -32,9 +32,11 @@ flowchart TB
    Keycloak, the Nebari Operator, and Envoy Gateway
    (`nebari-dev/action-nebari-sandbox`), then side-loads the built image
    into it.
-3. It installs this PR's chart with `helm upgrade --install`, patches
-   Keycloak's own hostname to match the public route, and waits for the
-   Operator to finish provisioning the OIDC client.
+3. For a non-fork PR, it points the chart's JupyterLab image at this PR's
+   own build (see "JupyterLab image" below), then installs the chart with
+   `helm upgrade --install`, patches Keycloak's own hostname to match the
+   public route, and waits for the Operator to finish provisioning the
+   OIDC client.
 4. It port-forwards the hub and Keycloak services from the cluster to the
    runner's `localhost`, starts a `cloudflared` tunnel mapping the public
    preview hostnames to those local ports, and points a Cloudflare DNS
@@ -83,6 +85,24 @@ reviewer account is created directly in Keycloak so a reviewer can sign in
 without a real SSO identity; Cloudflare Access in front of the tunnel is the
 actual security boundary, so a simple known password for that account is
 acceptable.
+
+## JupyterLab image
+
+The hub image is built and side-loaded locally by this workflow, but the
+JupyterLab image users actually spawn is built separately by
+`build-images.yaml` (multi-arch, pushed to ghcr.io/quay.io on the same PR
+trigger). For a non-fork PR, `scripts/preview/pr_image.py` rewrites
+`values.yaml`'s singleuser and per-profile image refs, in the ephemeral
+checkout only, to that PR's `pr-<number>` tag before the chart deploys.
+
+Fork PRs are skipped: `build-images.yaml` never pushes images for a fork
+(no credentials to do so), so the preview keeps the chart's default pinned
+JupyterLab image instead of pointing at a tag that doesn't exist.
+
+The two builds aren't ordered against each other. A pod only pulls the
+image when a reviewer actually spawns a server, by which point
+`build-images.yaml` has usually finished; if not, kubelet retries the pull
+automatically once the tag exists; no action is needed either way.
 
 ## Implementation notes
 
