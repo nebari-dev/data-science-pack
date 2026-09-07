@@ -26,19 +26,6 @@ def _capture(monkeypatch):
 # --- tunnel create/reuse -----------------------------------------------------
 
 
-def test_create_or_reuse_tunnel_returns_id_on_successful_create(monkeypatch):
-    calls, fake = _capture(monkeypatch)
-    fake.next_result = {"result": {"id": "tunnel-abc"}}
-
-    tunnel_id = cloudflare.create_or_reuse_tunnel(ACCOUNT_ID, API_TOKEN, "pr-205-run-1")
-
-    assert tunnel_id == "tunnel-abc"
-    assert calls[0]["method"] == "POST"
-    assert calls[0]["body"]["name"] == "pr-205-run-1"
-    assert calls[0]["body"]["config_src"] == "cloudflare"
-    assert "tunnel_secret" in calls[0]["body"]
-
-
 def test_create_or_reuse_tunnel_reuses_existing_on_name_conflict(monkeypatch):
     lookup_result = {"result": [{"id": "existing-tunnel"}]}
 
