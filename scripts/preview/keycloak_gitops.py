@@ -66,8 +66,6 @@ def wait_until_both_match(
     expected: str,
     timeout_s: int = 120,
     poll_interval_s: int = 5,
-    clock: Callable[[], float] = time.monotonic,
-    sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[bool, tuple[str, str]]:
     """Poll ``get_values()`` until both returned values equal ``expected``.
 
@@ -76,13 +74,13 @@ def wait_until_both_match(
     point of view) -- poll for the live values to actually change before
     trusting rollout status to mean anything.
     """
-    deadline = clock() + timeout_s
+    deadline = time.monotonic() + timeout_s
     values = ("", "")
-    while clock() < deadline:
+    while time.monotonic() < deadline:
         values = get_values()
         if values[0] == expected and values[1] == expected:
             return True, values
-        sleep(poll_interval_s)
+        time.sleep(poll_interval_s)
     return False, values
 
 

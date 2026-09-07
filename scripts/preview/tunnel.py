@@ -1,23 +1,6 @@
-"""Runs cloudflared and lets an extend-preview label push its deadline back.
-
-Bounded to `initial_seconds` by default so the live preview doesn't sit
-open (and burn CI minutes) indefinitely. Polls for the `extend_label` on
-the PR between checks; each occurrence resets the deadline to
-now + extend_seconds (not a cumulative add onto whatever's left) and is
-consumed by removing the label, so it can be reused any number of times
-before expiry. Still ultimately bounded by the calling job's own
-timeout-minutes regardless of how many times it's extended.
-
-The PR comment's "Expires" text is otherwise only ever rendered once, at
-deploy time (see comment.py + the "Comment preview link on PR" workflow
-step) -- extending the tunnel's internal deadline alone does nothing to
-it, confirmed live: the comment kept showing the original 20-minute mark
-after two real extends. On every successful extend, this module now
-re-renders the ready comment with the new expiry and PATCHes it directly
-via the GitHub API (the sticky-comment action only runs at fixed workflow
-steps, not from inside this loop, so it can't be reused here). That side
-effect is best-effort: any failure updating the comment is logged and
-swallowed, never allowed to take down the tunnel itself.
+"""Runs cloudflared for INITIAL_SECONDS; an extend-preview label on the PR
+resets the deadline to now + EXTEND_SECONDS and is removed once consumed.
+Each extend re-renders the PR comment's expiry (best-effort).
 
 Usage:
     python -m scripts.preview.tunnel run --cloudflared PATH --token TOKEN \\
@@ -32,12 +15,15 @@ import argparse
 import subprocess
 import sys
 import time
-from collections.abc import Callable
 
 from .comment import render_ready
 from .github_api import delete_label, find_comment_id, list_labels, update_comment
 
 STICKY_MARKER = "<!-- Sticky Pull Request Commentk8s-preview -->"
+INITIAL_SECONDS = 1200
+EXTEND_SECONDS = 1200
+POLL_SECONDS = 15
+EXTEND_LABEL = "extend-preview"
 
 
 def next_deadline(now: float, current_deadline: float, label_present: bool, extend_seconds: int) -> float:
@@ -72,30 +58,18 @@ def run(
     deployed_at: str,
     deployed_at_iso: str,
     is_fork: bool = False,
-    initial_seconds: int = 1200,
-    poll_seconds: int = 15,
-    extend_seconds: int = 1200,
-    extend_label: str = "extend-preview",
-    popen: Callable[..., subprocess.Popen] = subprocess.Popen,
-    clock: Callable[[], float] = time.monotonic,
-    wall_clock: Callable[[], float] = time.time,
-    sleep: Callable[[float], None] = time.sleep,
-    list_labels_fn: Callable[[str, int, str], list[str]] = list_labels,
-    delete_label_fn: Callable[[str, int, str, str], None] = delete_label,
-    find_comment_id_fn: Callable[[str, int, str, str], int | None] = find_comment_id,
-    update_comment_fn: Callable[[str, int, str, str], None] = update_comment,
 ) -> int:
     """Run cloudflared until its deadline, or until it exits on its own.
 
     Returns cloudflared's real exit code if it exited on its own (a
     genuine crash), or 0 if we closed it ourselves (deadline reached).
     """
-    proc = popen([cloudflared_path, "tunnel", "--no-autoupdate", "run", "--token", tunnel_token])
-    deadline = clock() + initial_seconds
+    proc = subprocess.Popen([cloudflared_path, "tunnel", "--no-autoupdate", "run", "--token", tunnel_token])
+    deadline = time.monotonic() + INITIAL_SECONDS
 
     while True:
         alive = proc.poll() is None
-        now = clock()
+        now = time.monotonic()
         if should_stop(alive, now, deadline):
             if not alive:
                 return proc.returncode
@@ -107,29 +81,24 @@ def run(
                 proc.wait()
             return 0
 
-        if extend_label in list_labels_fn(repo, pr_number, github_token):
-            deadline = next_deadline(now, deadline, True, extend_seconds)
-            delete_label_fn(repo, pr_number, extend_label, github_token)
-            # `deadline` lives in `clock`'s namespace (time.monotonic() by
-            # default), which has no relationship to the real calendar --
-            # feeding it straight into format_deadline() produced garbage
-            # like "1970-01-01" (confirmed live). Convert the remaining
-            # duration into a real timestamp via `wall_clock` instead.
-            seconds_remaining = deadline - now
-            expires_at, expires_at_iso = format_deadline(wall_clock() + seconds_remaining)
-            print(f"{extend_label} seen -- new deadline: {expires_at}")
+        if EXTEND_LABEL in list_labels(repo, pr_number, github_token):
+            deadline = next_deadline(now, deadline, True, EXTEND_SECONDS)
+            delete_label(repo, pr_number, EXTEND_LABEL, github_token)
+            # deadline is monotonic, not epoch; convert via the remaining duration.
+            expires_at, expires_at_iso = format_deadline(time.time() + (deadline - now))
+            print(f"{EXTEND_LABEL} seen -- new deadline: {expires_at}")
             try:
-                comment_id = find_comment_id_fn(repo, pr_number, STICKY_MARKER, github_token)
+                comment_id = find_comment_id(repo, pr_number, STICKY_MARKER, github_token)
                 if comment_id is not None:
                     body = (
                         render_ready(url, keycloak_url, deployed_at, deployed_at_iso, expires_at, expires_at_iso, is_fork)
                         + "\n" + STICKY_MARKER
                     )
-                    update_comment_fn(repo, comment_id, body, github_token)
+                    update_comment(repo, comment_id, body, github_token)
             except Exception as exc:  # noqa: BLE001 - the tunnel staying up matters more than the comment being exact
                 print(f"warning: failed to update the PR comment after extend: {exc}")
 
-        sleep(poll_seconds)
+        time.sleep(POLL_SECONDS)
 
 
 def _cmd_run(args: argparse.Namespace) -> int:

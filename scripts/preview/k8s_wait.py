@@ -22,8 +22,6 @@ def wait_for_secret_key(
     get_value: Callable[[], str],
     timeout_s: int = 180,
     poll_interval_s: int = 5,
-    clock: Callable[[], float] = time.monotonic,
-    sleep: Callable[[float], None] = time.sleep,
 ) -> bool:
     """Poll ``get_value()`` until it returns a non-empty string, or timeout.
 
@@ -33,11 +31,11 @@ def wait_for_secret_key(
     right after its first appearance still crashes on the not-yet-populated
     key.
     """
-    deadline = clock() + timeout_s
-    while clock() < deadline:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
         if get_value():
             return True
-        sleep(poll_interval_s)
+        time.sleep(poll_interval_s)
     return False
 
 
