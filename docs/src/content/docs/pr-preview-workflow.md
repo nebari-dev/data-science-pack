@@ -169,10 +169,6 @@ Configured once in the Cloudflare Zero Trust dashboard for this repository:
   Access sits in front of the tunnel and requires a GitHub SSO login plus
   an org policy match before any request reaches `cloudflared`. Nothing in
   the preview cluster is reachable without passing that gate.
-- **The preview cluster has no internal network isolation**: `kindnet`
-  doesn't enforce `NetworkPolicy`, so any pod in the cluster can reach any
-  other pod in it. Treat the whole cluster as one trust domain, not a
-  boundary between services.
 - **kind shares the runner's Docker daemon**: a container escaping its pod
   gets host-level Docker access on that ephemeral runner only, not on any
   shared or production infrastructure, and the runner is destroyed with

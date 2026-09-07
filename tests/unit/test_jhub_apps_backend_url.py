@@ -1,11 +1,10 @@
 """jhub-apps' own hub-API base URL wiring in 02-jhub-apps.py.
 
 jhub-apps runs inside hub's pod, but z2jh injects JUPYTERHUB_API_URL as
-the `hub` Service even for same-pod traffic. That DNATs back to the
-sender pod, needing bridge hairpin mode -- kindnet has none (ptp veth +
-routes, no bridge), so it times out (httpcore.ConnectTimeout) on kind.
-Rewriting the host to localhost (same port/path) sidesteps hairpin NAT
-entirely.
+the `hub` Service. The chart's hub NetworkPolicy only admits pods labeled
+hub.jupyter.org/network-access-hub, which hub itself isn't, so the call
+is dropped. Rewriting the host to localhost (same port/path) skips the
+Service entirely.
 
 JupyterHub only injects the real JUPYTERHUB_API_URL into the subprocess's
 own environment at spawn time, not at config-load time -- confirmed live,

@@ -10,9 +10,9 @@ from kubespawner import KubeSpawner
 from z2jh import get_config
 
 # z2jh's hub_connect_url points JUPYTERHUB_API_URL at the hub Service,
-# even for jhub-apps in hub's own pod. That DNATs back to itself,
-# needing bridge hairpin -- kindnet has none, so it times out on kind.
-# Rewritten to localhost when the subprocess execs.
+# even for jhub-apps in hub's own pod. The chart's hub NetworkPolicy only
+# admits pods labeled hub.jupyter.org/network-access-hub, which hub itself
+# isn't, so the call is dropped. Rewritten to localhost at exec.
 _REWRITE_HUB_API_URL_TO_LOCALHOST = (
     'export JUPYTERHUB_API_URL="$(printf %s "$JUPYTERHUB_API_URL" | '
     "sed -E 's#^(https?://)[^/:]+#\\1localhost#')\""
