@@ -108,9 +108,12 @@ automatically once the tag exists; no action is needed either way.
 
 - **Sandbox cluster**: kind is pinned to v0.32.0+; older kind can't parse
   the sandbox action's containerd v4 config.
-- **Namespace label**: the Operator only reconciles `NebariApp` resources in
-  namespaces carrying `nebari.dev/managed=true`; missing it blocks
-  reconciliation permanently.
+- **Namespace label**: the Operator refuses to reconcile a `NebariApp` in
+  any namespace missing `nebari.dev/managed=true`, a deliberate opt-in gate
+  since the Operator has cluster-wide RBAC to provision public routing and
+  OIDC clients. In a real deployment ArgoCD sets this label itself
+  (`managedNamespaceMetadata`) when it creates the namespace; this workflow
+  bypasses ArgoCD entirely, so it has to label the namespace by hand.
 - **Keycloak hostname patch**: ArgoCD's `selfHeal` reverts a direct `kubectl
   patch`, and Keycloak's own hostname must match the public tunnel route
   before login works. `scripts/preview/keycloak_gitops.py` rewrites the
