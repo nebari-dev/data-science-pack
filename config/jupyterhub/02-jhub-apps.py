@@ -9,18 +9,11 @@ from jhub_apps.configuration import install_jhub_apps
 from kubespawner import KubeSpawner
 from z2jh import get_config
 
-# jhub-apps runs as a managed-service subprocess inside the SAME pod as
-# hub, but z2jh's hub_connect_ip="hub" (needed so KubeSpawner pods on other
-# nodes can reach the hub) makes JupyterHub inject JUPYTERHUB_API_URL
-# pointing at the `hub` Service (ClusterIP self-reference) for every
-# service, same-pod ones included. A Service is a DNAT rule to one of its
-# backend pods; when that backend is the same pod that sent the request,
-# the reply has to loop back out the exact virtual interface it came in
-# on, which a Linux bridge refuses by default (loop prevention) unless the
-# CNI explicitly enables hairpin mode on that port. kindnet wires pods
-# with plain point-to-point veth pairs and netlink routes, not a Linux
-# bridge, so there's no bridge port to enable hairpin on -- confirmed to
-# time out (httpcore.ConnectTimeout) on a kind/kindnet cluster.
+# jhub-apps runs inside hub's pod, but hub_connect_ip="hub" (needed for
+# KubeSpawner pods on other nodes) makes z2jh inject JUPYTERHUB_API_URL
+# as the `hub` Service even for same-pod traffic. That DNATs back to the
+# sender pod, needing bridge hairpin mode -- kindnet has none (ptp veth +
+# routes, no bridge), so it times out (httpcore.ConnectTimeout) on kind.
 #
 # This can't be fixed by precomputing the target URL here in Python:
 # os.environ has no JUPYTERHUB_API_URL at config-load time in the hub

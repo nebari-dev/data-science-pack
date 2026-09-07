@@ -1,17 +1,11 @@
 """jhub-apps' own hub-API base URL wiring in 02-jhub-apps.py.
 
-jhub-apps runs as a managed-service subprocess inside the SAME pod as
-hub, but z2jh injects JUPYTERHUB_API_URL pointing at the `hub` Service
-(ClusterIP self-reference). A Service is a DNAT rule to one of its
-backend pods; when that backend is the same pod that sent the request,
-the reply has to loop back out the exact virtual interface it came in
-on, which a Linux bridge refuses by default unless the CNI explicitly
-enables hairpin mode on that port. kindnet wires pods with plain
-point-to-point veth pairs and netlink routes, not a Linux bridge, so
-there's no bridge port to enable hairpin on -- confirmed to time out
-(httpcore.ConnectTimeout) on a kind/kindnet cluster. Rewriting the host
-to localhost (same port/path) is always reliable for same-pod traffic
-and doesn't depend on hairpin NAT support.
+jhub-apps runs inside hub's pod, but z2jh injects JUPYTERHUB_API_URL as
+the `hub` Service even for same-pod traffic. That DNATs back to the
+sender pod, needing bridge hairpin mode -- kindnet has none (ptp veth +
+routes, no bridge), so it times out (httpcore.ConnectTimeout) on kind.
+Rewriting the host to localhost (same port/path) sidesteps hairpin NAT
+entirely.
 
 The rewrite can't be precomputed in Python at config-load time: the hub
 container's own os.environ has no JUPYTERHUB_API_URL there (JupyterHub
