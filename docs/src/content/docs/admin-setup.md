@@ -53,8 +53,16 @@ ArgoCD repo-server image, not the one on your workstation:
 | 2.14.x | 3.16.3 | No |
 | 3.0.0 and newer | 3.17.1 and newer | Yes |
 
-If ArgoCD reports `function "toYamlPretty" not defined` on sync, upgrade ArgoCD
-to 3.0 or newer rather than changing chart values.
+**On a NIC-managed cluster this is already satisfied and needs no action.** NIC
+installs the `argo-cd` chart pinned in `nebari-infrastructure-core`
+(`pkg/argocd/config.go`), currently 9.7.1, which installs ArgoCD v3.4.4 with
+Helm 3.19.4. That pin is also held at v3.4 or later for an unrelated reason (the
+`helm.valueFiles` glob expansion the overlay seam depends on), so it will not
+drift below the floor this chart needs.
+
+The table matters when you run ArgoCD yourself, or install the chart with your
+own `helm` binary. If ArgoCD reports `function "toYamlPretty" not defined` on
+sync, upgrade ArgoCD to 3.0 or newer rather than changing chart values.
 
 ## One required field
 
