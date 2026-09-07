@@ -1,8 +1,7 @@
 name: K8s Stack Preview
 # Deploys Nebari (Keycloak + nic-operator + Envoy Gateway) plus this PR's
 # chart into an ephemeral kind cluster, exposed via a per-PR Cloudflare
-# Tunnel behind Cloudflare Access (GitHub SSO) -- the PR comment only
-# ever holds a URL, never a bypassable secret.
+# Tunnel behind Cloudflare Access (GitHub SSO); the PR comment holds a URL.
 #
 # Hostnames stay single-level (pr-<n>-data-science-pack.<domain>): free
 # Cloudflare Universal SSL only covers the zone + one wildcard level.
@@ -15,7 +14,7 @@ name: K8s Stack Preview
 # deploy-preview is added (GitHub gates who can label a PR); a labeled
 # fork PR still runs its own code, so the comment flags that.
 #
-# One-time setup (Cloudflare Zero Trust dashboard, not scripted here):
+# One-time manual setup, Cloudflare Zero Trust dashboard:
 #   - Variable PREVIEW_DOMAIN: the zone name (e.g. openteams.app).
 #   - Access app for *.<PREVIEW_DOMAIN>, GitHub IdP, policy for this org.
 #   - Secret CLOUDFLARE_TUNNEL_ACCOUNT_ID: that Cloudflare account's id.
@@ -46,9 +45,8 @@ env:
   CLOUDFLARED_SHA256: "9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17"
 
 jobs:
-  # labeled fires for ANY label, not just deploy-preview. Scope triggers
-  # to deploy-preview itself; extend-preview is polled by the already
-  # running tunnel step, not by starting a new run.
+  # labeled fires for any label add. Trigger scoped to deploy-preview
+  # itself; extend-preview is polled by the already running tunnel step.
   deploy-preview:
     if: >-
       contains(github.event.pull_request.labels.*.name, 'deploy-preview') &&
@@ -66,7 +64,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      # So it's a pickable label, not something to freehand-type.
+      # So it's a pickable label in the PR's label picker.
       - name: Ensure the extend-preview label exists
         run: |
           python -m scripts.preview.github_api ensure-label-exists \
@@ -90,8 +88,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
-      # GHA cache (type=gha) reuses pixi/apt layers instead of rebuilding
-      # from scratch on every run's fresh Docker daemon.
+      # GHA cache (type=gha) reuses pixi/apt layers across runs.
       - name: Build hub image from this PR
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -106,14 +103,14 @@ jobs:
         run: kind load docker-image nebari-data-science-pack-jupyterhub:preview --name ${{ steps.sandbox.outputs.cluster-name }}
 
       # charts/ is gitignored; needed before helm can find the jupyterhub
-      # subchart. Pinned to the committed Chart.lock, not a new version.
+      # subchart. Version pinned by the committed Chart.lock.
       - name: Fetch chart dependencies
         run: |
           helm repo add jupyterhub https://hub.jupyter.org/helm-chart/
           helm dependency build .
 
       # nic-operator only reconciles NebariApps in nebari.dev/managed=true
-      # namespaces -- a permanent gate without this, not a slow race.
+      # namespaces. Missing this label blocks reconciliation permanently.
       - name: Create + label the preview namespace for the operator
         env:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
@@ -132,7 +129,7 @@ jobs:
             --kc-public-url "https://$KEYCLOAK_HOSTNAME"
 
       # No --wait: hub crash-loops until the operator's Keycloak Secret
-      # exists (async); polled separately below instead of blocking helm.
+      # exists (async). Polled separately below.
       - name: Deploy chart
         id: deploy
         env:
@@ -218,8 +215,8 @@ jobs:
           KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: bash scripts/preview-debug-dump.sh
 
-      # Live SSH into the runner instead of guessing from static logs.
-      # Scoped to the triggering actor; bounded so it can't eat the job.
+      # Live SSH into the runner. Scoped to the triggering actor; bounded
+      # so it can't eat the job.
       - name: Debug via tmate SSH on deploy failure
         if: failure()
         uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
@@ -236,8 +233,7 @@ jobs:
           echo "${CLOUDFLARED_SHA256}  /tmp/cloudflared" | sha256sum -c -
           chmod +x /tmp/cloudflared
 
-      # Named Tunnel (not quick-tunnel) so it can sit behind Access and
-      # each PR gets its own hostname.
+      # Named Tunnel: sits behind Access, each PR gets its own hostname.
       - name: Create Cloudflare Tunnel for this PR
         id: cf_tunnel
         env:
@@ -304,8 +300,7 @@ jobs:
             --url "${{ steps.cf_dns.outputs.url }}" --keycloak-url "${{ steps.cf_dns.outputs.keycloak_url }}" \
             --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}"
 
-      # Captures logs from real traffic during the tunnel's life, not
-      # just the earlier startup-time dump.
+      # Captures logs from real traffic during the tunnel's life.
       - name: Dump hub logs after tunnel closes
         if: always()
         env:
@@ -320,9 +315,8 @@ jobs:
             --repo "${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" \
             --deployment-id "${DEPLOYMENT_ID:-}" --description "Preview expired"
 
-      # The ready comment is only rendered once; extending pushes the real
-      # deadline but not this text. Re-render now so it doesn't say Ready
-      # next to a past time. Skip if the first post never happened.
+      # The ready comment doesn't update on extend. Re-render with the
+      # expired state now. Skip if never posted.
       - name: Render the expired-preview comment body
         id: render_expired
         if: always() && steps.comment_preview.outcome == 'success'
