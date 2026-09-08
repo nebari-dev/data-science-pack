@@ -80,11 +80,12 @@ wildcard level.
 ## Authentication
 
 `nebariapp.enabled=true` routes login through a real Operator-provisioned
-Keycloak client, the same auth path production deployments use. A test
-reviewer account, `reviewer` / `admin`, is created directly in Keycloak so
-a reviewer can sign in without a real SSO identity; Cloudflare Access in
-front of the tunnel is the actual security boundary, so a simple known
-password for that account is acceptable.
+Keycloak client, the same auth path production deployments use. The preview
+Keycloak is a fresh realm with no users and no link to any external identity
+provider, so the workflow seeds one account, `reviewer` / `admin`, for the
+hub login. Cloudflare Access (GitHub sign-in) in front of the tunnel is the
+actual security boundary, so a simple known password for that account is
+acceptable.
 
 ## JupyterLab image
 
@@ -103,37 +104,6 @@ The two builds aren't ordered against each other. A pod only pulls the
 image when a reviewer actually spawns a server, by which point
 `build-images.yaml` has usually finished; if not, kubelet retries the pull
 automatically once the tag exists; no action is needed either way.
-
-## Implementation notes
-
-- **Sandbox cluster**: kind is pinned to v0.32.0+; older kind can't parse
-  the sandbox action's containerd v4 config.
-- **Namespace label**: the Operator refuses to reconcile a `NebariApp` in
-  any namespace missing `nebari.dev/managed=true`, a deliberate opt-in gate
-  since the Operator has cluster-wide RBAC to provision public routing and
-  OIDC clients. Production deploys this chart as an ArgoCD `Application`
-  (see `data-science-pack.yaml` in the cluster's GitOps repo), which sets
-  this label itself via `managedNamespaceMetadata` when it creates the
-  namespace. This workflow deploys with a direct `helm upgrade --install`
-  instead and has to label the namespace by hand; moving it onto
-  `action-nebari-sandbox`'s `add-software-pack` sub-action, so it deploys
-  through the same ArgoCD path as production and this manual step goes
-  away, is planned.
-- **Keycloak hostname patch**: ArgoCD's `selfHeal` reverts a direct `kubectl
-  patch`, and Keycloak's own hostname must match the public tunnel route
-  before login works. `scripts/preview/keycloak_gitops.py` rewrites the
-  GitOps source file instead, so ArgoCD applies and keeps the change.
-- **Chart deploy**: runs without `helm --wait`; the hub crash-loops until
-  the Operator's Keycloak client `Secret` exists, which happens
-  asynchronously. Readiness is polled separately afterward.
-- **Secret + restart polling**: the `Secret` existing isn't enough, since
-  the Operator populates `issuer-url` on a later reconcile pass, and a
-  single hub restart afterward isn't reliable either (kubelet caches
-  mounted `Secret` volumes). `scripts/preview/k8s_wait.py` polls for the
-  key, then restarts the hub until the value is actually picked up.
-- **jhub-apps smoke test**: jhub-apps runs as a subprocess inside the hub
-  pod, so a crash there doesn't fail `helm --wait`, it only surfaces later
-  as a 502. The workflow checks it directly right after deploy.
 
 ## Tunnel and GitHub visibility
 
