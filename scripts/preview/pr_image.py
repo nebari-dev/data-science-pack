@@ -25,7 +25,11 @@ DEFAULT_VALUES = REPO_ROOT / "values.yaml"
 
 
 def set_tag(values_path: Path, tag: str) -> bool:
-    """Rewrite every jupyterlab image ref in ``values_path`` to ``tag``."""
+    """Rewrite every jupyterlab image ref in ``values_path`` to ``tag``.
+
+    Each profile's image selector keeps the pinned image as a second
+    choice, so a reviewer can spawn either this PR's build or main's.
+    """
     if not tag or any(c.isspace() for c in tag):
         raise ValueError(f"refusing to write empty/whitespace tag: {tag!r}")
 
@@ -36,9 +40,20 @@ def set_tag(values_path: Path, tag: str) -> bool:
 
     data = yaml.load(values_path)
     singleuser = data["jupyterhub"]["singleuser"]["image"]
+    pinned_ref = f'{singleuser["name"]}:{singleuser["tag"]}'
     changed = singleuser["tag"] != tag
     singleuser["tag"] = tag
     changed = _bump_profile_list(data, tag) | changed
+
+    for profile in data["jupyterhub"]["custom"]["profiles"]:
+        choices = profile.get("profile_options", {}).get("image", {}).get("choices", {})
+        if choices and "main" not in choices:
+            choices["main"] = {
+                "display_name": f"{pinned_ref.rsplit('/', 1)[-1]} (main)",
+                "kubespawner_override": {"image": pinned_ref},
+            }
+            changed = True
+
     if changed:
         yaml.dump(data, values_path)
     return changed
