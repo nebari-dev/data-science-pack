@@ -4,7 +4,7 @@ Each extend re-renders the PR comment's expiry (best-effort).
 
 Usage:
     python -m scripts.preview.tunnel run --cloudflared PATH --token TOKEN \\
-        --repo OWNER/REPO --pr N \\
+        --repo OWNER/REPO --pr N --run-url URL --kc-admin-password PW \\
         --url URL --keycloak-url URL \\
         --deployed-at STR --deployed-at-iso ISO [--fork]
 """
@@ -58,6 +58,8 @@ def run(
     pr_number: int,
     url: str,
     keycloak_url: str,
+    run_url: str,
+    kc_admin_password: str,
     deployed_at: str,
     deployed_at_iso: str,
     is_fork: bool = False,
@@ -95,7 +97,7 @@ def run(
                                  "--jq", f'[.[] | select(.body | contains("{STICKY_MARKER}")) | .id] | first // empty')
                 if comment_id:
                     body = (
-                        render_ready(url, keycloak_url, deployed_at, deployed_at_iso, expires_at, expires_at_iso, is_fork)
+                        render_ready(url, keycloak_url, run_url, kc_admin_password, deployed_at, deployed_at_iso, expires_at, expires_at_iso, is_fork)
                         + "\n" + STICKY_MARKER
                     )
                     _gh("api", "-X", "PATCH", f"repos/{repo}/issues/comments/{comment_id}", "-f", f"body={body}")
@@ -108,7 +110,8 @@ def run(
 def _cmd_run(args: argparse.Namespace) -> int:
     return run(
         args.cloudflared, args.token, args.repo, args.pr,
-        args.url, args.keycloak_url, args.deployed_at, args.deployed_at_iso,
+        args.url, args.keycloak_url, args.run_url, args.kc_admin_password,
+        args.deployed_at, args.deployed_at_iso,
         is_fork=args.fork,
     )
 
@@ -124,6 +127,8 @@ def main(argv: list[str]) -> int:
     p.add_argument("--pr", required=True, type=int)
     p.add_argument("--url", required=True)
     p.add_argument("--keycloak-url", required=True)
+    p.add_argument("--run-url", required=True)
+    p.add_argument("--kc-admin-password", required=True)
     p.add_argument("--deployed-at", required=True)
     p.add_argument("--deployed-at-iso", required=True)
     p.add_argument("--fork", action="store_true")

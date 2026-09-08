@@ -9,8 +9,10 @@ by hand -- confirmed via `gh api /markdown` to survive comment sanitization
 unstripped.
 
 Usage:
+    python -m scripts.preview.comment render-deploying --run-url URL
     python -m scripts.preview.comment render-ready --url URL \\
-        --keycloak-url URL --deployed-at STR --deployed-at-iso ISO \\
+        --keycloak-url URL --run-url URL --kc-admin-password PW \\
+        --deployed-at STR --deployed-at-iso ISO \\
         --expires-at STR --expires-at-iso ISO [--fork]
     python -m scripts.preview.comment render-expired \\
         --expires-at STR --expires-at-iso ISO
@@ -21,15 +23,31 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 
 from . import gha
 
 PROJECT = "nebari-data-science-pack"
 
 
+def render_deploying(run_url: str) -> str:
+    now = time.gmtime()
+    human = time.strftime("%Y-%m-%d %H:%M UTC", now)
+    iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", now)
+    return (
+        "The latest K8s stack preview for this PR.\n\n"
+        "| Project | Deployment | Actions | Updated |\n"
+        "| --- | --- | --- | --- |\n"
+        f"| `{PROJECT}` | 🟡 [Deploying]({run_url}) | [CI run]({run_url}) | "
+        f'<relative-time datetime="{iso}">{human}</relative-time> |'
+    )
+
+
 def render_ready(
     url: str,
     keycloak_url: str,
+    run_url: str,
+    kc_admin_password: str,
     deployed_at: str,
     deployed_at_iso: str,
     expires_at: str,
@@ -46,10 +64,10 @@ def render_ready(
         "The latest K8s stack preview for this PR.\n\n"
         "| Project | Deployment | Actions | Updated |\n"
         "| --- | --- | --- | --- |\n"
-        f"| `{PROJECT}` | 🟢 [Ready]({url}) | [Preview]({url}) · [Keycloak]({keycloak_url}) | "
+        f"| `{PROJECT}` | 🟢 [Ready]({url}) | [Preview]({url}) · [Keycloak]({keycloak_url}) · [CI run]({run_url}) | "
         f'<relative-time datetime="{deployed_at_iso}">{deployed_at}</relative-time> |'
         f"{fork_warning}\n\n"
-        "Sign in with `reviewer` / `admin`.\n\n"
+        f"Sign in with `reviewer` / `admin`. Keycloak admin: `admin` / `{kc_admin_password}`.\n\n"
         f'Expires <relative-time datetime="{expires_at_iso}">{expires_at}</relative-time>. '
         "Add the `extend-preview` label any time before then to reset it to 20 minutes from that moment, "
         "or push a new commit or re-add `deploy-preview` to redeploy from scratch."
@@ -74,9 +92,15 @@ def render_stopped() -> str:
     )
 
 
+def _cmd_render_deploying(args: argparse.Namespace) -> int:
+    gha.write_output("body", render_deploying(args.run_url))
+    return 0
+
+
 def _cmd_render_ready(args: argparse.Namespace) -> int:
     body = render_ready(
-        args.url, args.keycloak_url, args.deployed_at, args.deployed_at_iso,
+        args.url, args.keycloak_url, args.run_url, args.kc_admin_password,
+        args.deployed_at, args.deployed_at_iso,
         args.expires_at, args.expires_at_iso, args.fork,
     )
     gha.write_output("body", body)
@@ -97,9 +121,15 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="comment")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p = sub.add_parser("render-deploying")
+    p.add_argument("--run-url", required=True)
+    p.set_defaults(func=_cmd_render_deploying)
+
     p = sub.add_parser("render-ready")
     p.add_argument("--url", required=True)
     p.add_argument("--keycloak-url", required=True)
+    p.add_argument("--run-url", required=True)
+    p.add_argument("--kc-admin-password", required=True)
     p.add_argument("--deployed-at", required=True)
     p.add_argument("--deployed-at-iso", required=True)
     p.add_argument("--expires-at", required=True)
