@@ -5,14 +5,19 @@ allow-listed accounts reach the tunnel at all), so a simple, known password
 for the Keycloak-side login is fine -- reviewers don't need to hunt for real
 credentials on a throwaway cluster.
 
+The master-realm admin password is read from the KC_ADMIN_PASSWORD
+environment variable, never argv: NIC generates it as URL-safe base64, so it
+can start with '-', which argparse would take for a flag.
+
 Usage:
-    python -m scripts.preview.keycloak create-reviewer-user --base-url URL \\
-        --realm REALM --admin-password PASSWORD
+    KC_ADMIN_PASSWORD=... python -m scripts.preview.keycloak create-reviewer-user \\
+        --base-url URL --realm REALM
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from urllib.parse import urlencode
 
@@ -22,6 +27,14 @@ from .http import request_json
 
 class KeycloakAuthError(RuntimeError):
     pass
+
+
+def admin_password_from_env() -> str:
+    """Master-realm admin password from KC_ADMIN_PASSWORD; fails loudly if unset or empty."""
+    value = os.environ.get("KC_ADMIN_PASSWORD", "")
+    if not value:
+        raise KeycloakAuthError("KC_ADMIN_PASSWORD is unset or empty")
+    return value
 
 
 def get_admin_token(base_url: str, admin_password: str) -> str:
@@ -64,7 +77,7 @@ def create_reviewer_user(base_url: str, realm: str, admin_token: str) -> None:
 
 def _cmd_create_reviewer_user(args: argparse.Namespace) -> int:
     try:
-        token = get_admin_token(args.base_url, args.admin_password)
+        token = get_admin_token(args.base_url, admin_password_from_env())
         create_reviewer_user(args.base_url, args.realm, token)
     except Exception as exc:  # noqa: BLE001 - report and fail the step either way
         gha.error(f"Failed to create the Keycloak reviewer user: {exc}")
@@ -79,7 +92,6 @@ def main(argv: list[str]) -> int:
     p = sub.add_parser("create-reviewer-user")
     p.add_argument("--base-url", required=True)
     p.add_argument("--realm", required=True)
-    p.add_argument("--admin-password", required=True)
     p.set_defaults(func=_cmd_create_reviewer_user)
 
     args = parser.parse_args(argv[1:])

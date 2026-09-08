@@ -118,6 +118,9 @@ automatically once the tag exists; no action is needed either way.
   manual timezone math or re-editing needed.
 - **On expiry**: the deployment is marked inactive and, if a "ready"
   comment was posted, it's re-rendered to the expired state.
+- **On failure**: if the deploy dies before a "ready" comment exists, the
+  "deploying" comment is re-rendered to a failed state linking the run,
+  instead of pointing at a failed run as "Deploying" forever.
 
 ## One-time Cloudflare setup
 

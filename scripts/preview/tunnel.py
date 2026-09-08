@@ -3,10 +3,14 @@ resets the deadline to now + EXTEND_SECONDS and is removed once consumed.
 Each extend re-renders the PR comment's expiry (best-effort).
 
 Usage:
-    python -m scripts.preview.tunnel run --cloudflared PATH --token TOKEN \\
-        --repo OWNER/REPO --pr N --run-url URL --kc-admin-password PW \\
+    KC_ADMIN_PASSWORD=... python -m scripts.preview.tunnel run \\
+        --cloudflared PATH --token TOKEN \\
+        --repo OWNER/REPO --pr N --run-url URL \\
         --url URL --keycloak-url URL \\
         --deployed-at STR --deployed-at-iso ISO [--fork]
+
+The Keycloak admin password (re-rendered into the PR comment on each extend)
+comes from KC_ADMIN_PASSWORD, not argv; see keycloak.admin_password_from_env.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ import time
 
 from .comment import render_ready
 from .http import request_json
+from .keycloak import admin_password_from_env
 
 STICKY_MARKER = "<!-- Sticky Pull Request Commentk8s-preview -->"
 INITIAL_SECONDS = 1200
@@ -72,7 +77,7 @@ def _refresh_comment_expiry(args: argparse.Namespace, seconds_remaining: float) 
         comment_id = _sticky_comment_id(args.repo, args.pr)
         if comment_id is not None:
             body = render_ready(
-                args.url, args.keycloak_url, args.run_url, args.kc_admin_password,
+                args.url, args.keycloak_url, args.run_url, admin_password_from_env(),
                 args.deployed_at, args.deployed_at_iso, expires_at, expires_at_iso, args.fork,
             )
             _update_comment(args.repo, comment_id, body + "\n" + STICKY_MARKER)
@@ -111,7 +116,6 @@ def main(argv: list[str]) -> int:
     p.add_argument("--repo", required=True)
     p.add_argument("--pr", required=True, type=int)
     p.add_argument("--run-url", required=True)
-    p.add_argument("--kc-admin-password", required=True)
     p.add_argument("--url", required=True)
     p.add_argument("--keycloak-url", required=True)
     p.add_argument("--deployed-at", required=True)

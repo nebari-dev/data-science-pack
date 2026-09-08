@@ -10,13 +10,17 @@ unstripped.
 
 Usage:
     python -m scripts.preview.comment render-deploying --run-url URL
-    python -m scripts.preview.comment render-ready --url URL \\
-        --keycloak-url URL --run-url URL --kc-admin-password PW \\
+    KC_ADMIN_PASSWORD=... python -m scripts.preview.comment render-ready --url URL \\
+        --keycloak-url URL --run-url URL \\
         --deployed-at STR --deployed-at-iso ISO \\
         --expires-at STR --expires-at-iso ISO [--fork]
     python -m scripts.preview.comment render-expired \\
         --expires-at STR --expires-at-iso ISO
+    python -m scripts.preview.comment render-failed --run-url URL
     python -m scripts.preview.comment render-stopped
+
+render-ready takes the Keycloak admin password from KC_ADMIN_PASSWORD (see
+keycloak.admin_password_from_env for why it is not an argv flag).
 """
 
 from __future__ import annotations
@@ -26,21 +30,35 @@ import sys
 import time
 
 from . import gha
+from .keycloak import admin_password_from_env
 
 PROJECT = "nebari-data-science-pack"
 
 
-def render_deploying(run_url: str) -> str:
+def _now_relative_time() -> str:
     now = time.gmtime()
     human = time.strftime("%Y-%m-%d %H:%M UTC", now)
     iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", now)
+    return f'<relative-time datetime="{iso}">{human}</relative-time>'
+
+
+def render_deploying(run_url: str) -> str:
     return (
         "The latest preview for this PR.\n\n"
         "| Project | Deployment | Actions | Updated |\n"
         "| --- | --- | --- | --- |\n"
-        f"| `{PROJECT}` | 🟡 [Deploying]({run_url}) | [CI run]({run_url}) | "
-        f'<relative-time datetime="{iso}">{human}</relative-time> |\n\n'
+        f"| `{PROJECT}` | 🟡 [Deploying]({run_url}) | [CI run]({run_url}) | {_now_relative_time()} |\n\n"
         "Should be ready in a few minutes."
+    )
+
+
+def render_failed(run_url: str) -> str:
+    return (
+        "The preview for this PR failed to deploy.\n\n"
+        "| Project | Deployment | Actions | Updated |\n"
+        "| --- | --- | --- | --- |\n"
+        f"| `{PROJECT}` | 🔴 [Failed]({run_url}) | [CI run]({run_url}) | {_now_relative_time()} |\n\n"
+        "Re-add the `deploy-preview` label to retry."
     )
 
 
@@ -100,7 +118,7 @@ def _cmd_render_deploying(args: argparse.Namespace) -> int:
 
 def _cmd_render_ready(args: argparse.Namespace) -> int:
     body = render_ready(
-        args.url, args.keycloak_url, args.run_url, args.kc_admin_password,
+        args.url, args.keycloak_url, args.run_url, admin_password_from_env(),
         args.deployed_at, args.deployed_at_iso,
         args.expires_at, args.expires_at_iso, args.fork,
     )
@@ -110,6 +128,11 @@ def _cmd_render_ready(args: argparse.Namespace) -> int:
 
 def _cmd_render_expired(args: argparse.Namespace) -> int:
     gha.write_output("body", render_expired(args.expires_at, args.expires_at_iso))
+    return 0
+
+
+def _cmd_render_failed(args: argparse.Namespace) -> int:
+    gha.write_output("body", render_failed(args.run_url))
     return 0
 
 
@@ -130,7 +153,6 @@ def main(argv: list[str]) -> int:
     p.add_argument("--url", required=True)
     p.add_argument("--keycloak-url", required=True)
     p.add_argument("--run-url", required=True)
-    p.add_argument("--kc-admin-password", required=True)
     p.add_argument("--deployed-at", required=True)
     p.add_argument("--deployed-at-iso", required=True)
     p.add_argument("--expires-at", required=True)
@@ -142,6 +164,10 @@ def main(argv: list[str]) -> int:
     p.add_argument("--expires-at", required=True)
     p.add_argument("--expires-at-iso", required=True)
     p.set_defaults(func=_cmd_render_expired)
+
+    p = sub.add_parser("render-failed")
+    p.add_argument("--run-url", required=True)
+    p.set_defaults(func=_cmd_render_failed)
 
     p = sub.add_parser("render-stopped")
     p.set_defaults(func=_cmd_render_stopped)
