@@ -73,9 +73,12 @@ profile knows, so it lives in Python where both inputs are available.
   for the reason above: it is an API surface we cannot drop without a
   deprecation cycle, and the string key costs nothing extra.
 * **Deriving in Helm (`_CHART_DERIVED["gpu-image"]`).** Also the first
-  draft. Works for one hardcoded variant but cannot be generic — Helm does
-  not see the profile list the z2jh subchart consumes, so it cannot know
-  which variant names are in use.
+  draft. Works for one hardcoded variant but cannot be generic. Helm *can*
+  read the profile list (`jupyterhub` is a subchart and `_helpers.tpl`
+  already indexes `.Values.jupyterhub.custom`), but `_CHART_DERIVED` carries
+  scalars only — its `""`-means-unset sentinel has no map equivalent, so a
+  variant map cannot round-trip through it: there is no way to tell
+  "deployer set `{}`" from "chart baked `{}`".
 * **Injecting into `profile_options.image.choices` too.** Choices always
   carry an explicit image (that is their purpose), so injecting there
   would overwrite explicit deployer values and contradict "explicit wins".

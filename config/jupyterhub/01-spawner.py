@@ -463,18 +463,35 @@ def _resolve_image_variants(profiles, base_name, base_tag, overrides):
       3. ``<base_name>-<variant>:<base_tag>`` — derived
       4. nothing — ``base_name``/``base_tag`` empty (schema-valid in z2jh);
          the profile falls back to the CPU default image and the hub warns.
+    An empty ``image-variant:`` value is stripped without injecting anything
+    and warns, since it is almost certainly a mistake.
 
     The ``image-variant`` key is stripped whatever its value — KubeSpawner
-    must never see it. Returns new dicts; the input list is left untouched.
+    must never see it. Variant profiles are rebuilt as new dicts; the rest pass
+    through by reference. Nothing is mutated — the input list and its dicts are
+    left untouched.
 
-    Two cases only warn, because raising here would break hub startup (and
-    therefore login) for every user: the empty-ref fallback above, and a
-    profile that also declares ``profile_options.image`` — KubeSpawner applies
-    the selected choice's ``kubespawner_override`` AFTER the profile-level one
-    and replaces rather than merges, so the choice's image silently wins over
-    the injected one at spawn time (while jhub-apps still displays the
-    injected one).
+    Every degraded path only warns, because raising here would break hub
+    startup (and therefore login) for every user. Besides the empty-ref
+    fallback above, this covers: ``custom.image-variants`` that is not a
+    mapping, or maps a variant to something other than a non-empty string
+    (both ignored); an ``image-variants`` key no profile claims (a likely typo
+    that would otherwise silently hand the mirrored-registry deployer the
+    derived ref); and a profile that also declares ``profile_options.image`` —
+    KubeSpawner applies the selected choice's ``kubespawner_override`` AFTER
+    the profile-level one and replaces rather than merges, so the choice's
+    image silently wins over the injected one at spawn time (while jhub-apps
+    still displays the injected one).
     """
+    if overrides and not isinstance(overrides, dict):
+        log.warning(
+            "profiles: custom.image-variants is %s, expected a mapping of "
+            "variant -> image ref — ignoring it",
+            type(overrides).__name__,
+        )
+        overrides = {}
+    overrides = overrides or {}
+    claimed_variants = set()
     resolved = []
     for profile in profiles:
         if "image-variant" not in profile:
@@ -484,11 +501,20 @@ def _resolve_image_variants(profiles, base_name, base_tag, overrides):
         variant = profile["image-variant"]
         profile = {k: v for k, v in profile.items() if k != "image-variant"}
         if not variant:
+            log.warning("profiles: %r has an empty image-variant — no image injected", name)
             resolved.append(profile)
             continue
+        claimed_variants.add(variant)
         override = dict(profile.get("kubespawner_override") or {})
         if not override.get("image"):
-            image = (overrides or {}).get(variant)
+            image = overrides.get(variant)
+            if image and not isinstance(image, str):
+                log.warning(
+                    "profiles: custom.image-variants.%s is %r, expected an image ref "
+                    "string — ignoring it",
+                    variant, image,
+                )
+                image = None
             if not image and base_name and base_tag:
                 image = f"{base_name}-{variant}:{base_tag}"
             if image:
@@ -510,6 +536,12 @@ def _resolve_image_variants(profiles, base_name, base_tag, overrides):
             )
         profile["kubespawner_override"] = override
         resolved.append(profile)
+    for unclaimed in sorted(set(overrides) - claimed_variants, key=str):
+        log.warning(
+            "profiles: custom.image-variants.%s matches no profile's image-variant "
+            "(typo?) — variant profiles use the derived ref instead",
+            unclaimed,
+        )
     return resolved
 
 
@@ -517,7 +549,7 @@ _profiles = _resolve_image_variants(
     get_config("custom.profiles", []),
     get_config("singleuser.image.name", ""),
     get_config("singleuser.image.tag", ""),
-    get_config("custom.image-variants", {}) or {},
+    get_config("custom.image-variants", {}),
 )
 if _profiles:
     c.KubeSpawner.profile_list = _render_profile_list

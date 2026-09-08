@@ -401,6 +401,11 @@ jupyterhub:
     # mirror the ``-gpu`` image too or map it here — the derived ref is not
     # validated at install time, so a missing mirror only shows up as
     # ImagePullBackOff on the first GPU spawn.
+    # Must be a mapping of variant name -> full image ref. The hub warns at
+    # startup (and falls back to the derived ref) if it is not, if a value is
+    # not a string, or if a key here matches no profile's ``image-variant``
+    # (e.g. ``gpus:`` against ``image-variant: gpu``) — check
+    # ``kubectl logs deploy/hub | grep image-variants`` after changing it.
     #   image-variants:
     #     gpu: 123456789012.dkr.ecr.us-east-1.amazonaws.com/lab-gpu:sha-abc1234
     image-variants: {}

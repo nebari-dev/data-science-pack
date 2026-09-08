@@ -369,7 +369,12 @@ def test_variant_without_base_image_falls_back_to_default(caplog):
     raising would break hub startup and therefore login."""
     mod, _ = _load()
 
-    profiles = [{"slug": "gpu", "image-variant": "gpu", "kubespawner_override": {"cpu_limit": 4}}]
+    # No slug: the warning must fall back to display_name, and the name is
+    # deliberately distinct from the variant so the assertion cannot be
+    # satisfied by the variant token alone.
+    profiles = [
+        {"display_name": "GPU Large", "image-variant": "gpu", "kubespawner_override": {"cpu_limit": 4}}
+    ]
     with caplog.at_level("WARNING"):
         resolved = _resolve(mod, profiles, base_name="", base_tag=BASE_TAG)
 
@@ -378,7 +383,7 @@ def test_variant_without_base_image_falls_back_to_default(caplog):
         "no image should be injected when the ref cannot be derived"
     )
     warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
-    assert any("gpu" in w and "image-variants" in w for w in warnings), (
+    assert any("GPU Large" in w and "image-variants" in w for w in warnings), (
         f"expected a warning naming the profile and custom.image-variants, got {warnings!r}"
     )
 
@@ -389,9 +394,11 @@ def test_variant_profile_with_image_choices_warns(caplog):
     image choice silently defeats the injection. The hub must say so."""
     mod, _ = _load()
 
+    # Slug deliberately distinct from the variant so "gpu" in the message
+    # cannot be satisfied by the variant token alone.
     profiles = [
         {
-            "slug": "gpu",
+            "slug": "gpu-large",
             "image-variant": "gpu",
             "profile_options": {
                 "image": {
@@ -411,8 +418,8 @@ def test_variant_profile_with_image_choices_warns(caplog):
         _resolve(mod, profiles)
 
     warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
-    assert any("profile_options" in w and "gpu" in w for w in warnings), (
-        f"expected a warning that profile_options.image overrides the variant image, got {warnings!r}"
+    assert any("profile_options" in w and "gpu-large" in w for w in warnings), (
+        f"expected a warning naming the profile and profile_options.image, got {warnings!r}"
     )
 
 
@@ -420,6 +427,7 @@ def test_variant_profile_without_image_choices_does_not_warn(caplog):
     """The choices warning is specific: a plain variant profile (or one with
     non-image profile_options) stays quiet."""
     mod, _ = _load()
+    caplog.clear()  # drop anything the module import logged; only the resolve counts
 
     profiles = [
         {"slug": "gpu", "image-variant": "gpu"},
@@ -430,6 +438,119 @@ def test_variant_profile_without_image_choices_does_not_warn(caplog):
 
     warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
     assert warnings == [], f"unexpected warnings: {warnings!r}"
+
+
+def test_empty_image_variant_warns(caplog):
+    """``image-variant:`` with an empty value is stripped without injecting,
+    like precedence case 4 — but unlike case 4 nothing else would flag it, so
+    the hub warns that no image was injected."""
+    mod, _ = _load()
+    caplog.clear()
+
+    with caplog.at_level("WARNING"):
+        resolved = _resolve(mod, [{"slug": "gpu-large", "image-variant": ""}])
+
+    assert resolved == [{"slug": "gpu-large"}], f"empty variant must be stripped, got {resolved!r}"
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("gpu-large" in w and "empty image-variant" in w for w in warnings), (
+        f"expected a warning naming the profile with the empty variant, got {warnings!r}"
+    )
+
+
+def test_non_mapping_image_variants_is_ignored_with_warning(caplog):
+    """A mistyped ``custom.image-variants: gpu`` (a string, not a map) clears
+    z2jh's schema and lands in the hub Secret verbatim. It must not raise —
+    that would CrashLoop the hub and block every login — but warn and fall
+    back to the derived ref."""
+    mod, _ = _load()
+    caplog.clear()
+
+    with caplog.at_level("WARNING"):
+        resolved = _resolve(mod, [{"slug": "gpu", "image-variant": "gpu"}], overrides="notamap")
+
+    assert resolved[0]["kubespawner_override"]["image"] == GPU_IMAGE, (
+        f"non-mapping overrides should fall back to derivation, got {resolved!r}"
+    )
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("image-variants" in w and "str" in w for w in warnings), (
+        f"expected a warning naming the bad type of custom.image-variants, got {warnings!r}"
+    )
+
+
+def test_null_image_variants_does_not_warn(caplog):
+    """A bare ``image-variants:`` (YAML null) is a perfectly fine "unset" and
+    must not trip the non-mapping warning."""
+    mod, _ = _load()
+    caplog.clear()
+
+    with caplog.at_level("WARNING"):
+        resolved = mod._resolve_image_variants(
+            [{"slug": "gpu", "image-variant": "gpu"}], BASE_NAME, BASE_TAG, None
+        )
+
+    assert resolved[0]["kubespawner_override"]["image"] == GPU_IMAGE
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings == [], f"null overrides must be silent, got {warnings!r}"
+
+
+def test_non_string_image_variant_value_is_ignored_with_warning(caplog):
+    """``image-variants: {gpu: 123}`` must not inject ``image: 123`` (which
+    would only surface as a traitlets error at spawn) — warn at load and use
+    the derived ref instead."""
+    mod, _ = _load()
+    caplog.clear()
+
+    with caplog.at_level("WARNING"):
+        resolved = _resolve(mod, [{"slug": "gpu", "image-variant": "gpu"}], overrides={"gpu": 123})
+
+    assert resolved[0]["kubespawner_override"]["image"] == GPU_IMAGE, (
+        f"a non-string override should fall back to derivation, got {resolved!r}"
+    )
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("image-variants.gpu" in w and "123" in w for w in warnings), (
+        f"expected a warning naming the bad override value, got {warnings!r}"
+    )
+
+
+def test_unclaimed_image_variants_key_warns(caplog):
+    """``image-variants: {gpus: ...}`` against an ``image-variant: gpu``
+    profile never matches, so the deployer's explicit mirror ref is silently
+    replaced by the derived one. The hub must call out the unclaimed key."""
+    mod, _ = _load()
+    caplog.clear()
+
+    with caplog.at_level("WARNING"):
+        resolved = _resolve(
+            mod,
+            [{"slug": "gpu", "image-variant": "gpu"}],
+            overrides={"gpus": "mirror.example.com/lab-gpu:v1"},
+        )
+
+    assert resolved[0]["kubespawner_override"]["image"] == GPU_IMAGE, (
+        f"an unmatched key must not affect the injected image, got {resolved!r}"
+    )
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("image-variants.gpus" in w and "no profile" in w for w in warnings), (
+        f"expected a warning naming the unclaimed key, got {warnings!r}"
+    )
+
+
+def test_claimed_image_variants_key_does_not_warn(caplog):
+    """The unclaimed-key warning is specific: a key some variant profile uses
+    — even one whose explicit image means the override is not applied — stays
+    quiet."""
+    mod, _ = _load()
+    caplog.clear()
+
+    with caplog.at_level("WARNING"):
+        _resolve(
+            mod,
+            [{"slug": "gpu", "image-variant": "gpu", "kubespawner_override": {"image": "custom:1"}}],
+            overrides={"gpu": "mirror.example.com/lab-gpu:v1"},
+        )
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings == [], f"a claimed key must not warn, got {warnings!r}"
 
 
 def test_variant_resolution_does_not_mutate_input_profiles():
@@ -483,6 +604,22 @@ def test_variant_override_map_applied_at_load_time():
 
     got = mod._profiles[0]["kubespawner_override"]["image"]
     assert got == "mirror.example.com/lab-gpu:v1", f"override map ignored at load, got {got!r}"
+
+
+def test_non_mapping_image_variants_does_not_break_hub_startup(caplog):
+    """The blocker: ``custom.image-variants: gpu`` in values.yaml reaches
+    module import as a str. Import must succeed (a raise here CrashLoops the
+    hub) and the profile must still get the derived image."""
+    with caplog.at_level("WARNING"):
+        mod, _ = _load_with_variant_profile(overrides="gpu")
+
+    assert mod._profiles[0]["kubespawner_override"]["image"] == GPU_IMAGE, (
+        f"derived image expected when image-variants is not a mapping, got {mod._profiles!r}"
+    )
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("image-variants" in w and "mapping" in w for w in warnings), (
+        f"expected a load-time warning about custom.image-variants, got {warnings!r}"
+    )
 
 
 def test_load_log_names_the_injected_variant_image(caplog):

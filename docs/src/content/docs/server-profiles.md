@@ -198,6 +198,12 @@ or map it under `jupyterhub.custom.image-variants`:
 ```
 
 The `-gpu` image is built for `linux/amd64` only; the CPU image is multi-arch.
+
+The same applies to a misspelled variant: unlike a typo in a gating key, which fails closed,
+`image-variant: gup` does not fail at all. It derives `<name>-gup:<tag>`, which the startup log
+shows and the first spawn rejects with `ImagePullBackOff`. A misspelled key under
+`image-variants` (say `gpus:`) is different: it matches no profile, so the derived ref is used
+instead of your override, and the hub logs a warning naming the unclaimed key.
 :::
 
 Two things override the injection:
