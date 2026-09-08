@@ -98,9 +98,10 @@ def configure_ingress(
 
 
 def delete_tunnel(account_id: str, api_token: str, tunnel_id: str) -> None:
+    # cascade: drop lingering connections from the just-terminated cloudflared, else the delete is refused.
     request_json(
         "DELETE",
-        f"{API_ROOT}/accounts/{account_id}/cfd_tunnel/{tunnel_id}",
+        f"{API_ROOT}/accounts/{account_id}/cfd_tunnel/{tunnel_id}?cascade=true",
         headers=_headers(api_token),
     )
 
@@ -173,8 +174,9 @@ def _cmd_delete_dns(args: argparse.Namespace) -> int:
             continue
         try:
             delete_dns_record(args.api_token, args.zone_id, record_id)
-        except HTTPRequestError:
-            pass
+            print(f"deleted DNS record {record_id}")
+        except HTTPRequestError as exc:
+            print(f"::warning::DNS record {record_id} not deleted: {exc}")
     return 0
 
 
@@ -184,8 +186,9 @@ def _cmd_delete_tunnel(args: argparse.Namespace) -> int:
         return 0
     try:
         delete_tunnel(args.account_id, args.api_token, args.tunnel_id)
-    except HTTPRequestError:
-        pass
+        print(f"deleted tunnel {args.tunnel_id}")
+    except HTTPRequestError as exc:
+        print(f"::warning::tunnel {args.tunnel_id} not deleted: {exc}")
     return 0
 
 
