@@ -20,6 +20,7 @@ Every derived value can still be overridden explicitly. Values under
 | `nebi` | The companion Nebi service — image, external/internal URLs, namespace, release name |
 | `rbac.bootstrap` | One-shot Keycloak Job that adds the groups-claim mapper and the shared-mount client role |
 | `jupyterhub` | Passed through verbatim to the `jupyterhub` subchart (proxy, hub, singleuser images, auth, etc.) |
+| Jupyter Gallery | Curated tutorial tiles in JupyterLab, configured via `jupyterhub.singleuser.extraFiles`. See [Jupyter Gallery](/gallery/) |
 
 For the full set of fields and their defaults, read
 [`values.yaml`](https://github.com/nebari-dev/data-science-pack/blob/main/values.yaml)
