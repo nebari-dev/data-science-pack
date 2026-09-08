@@ -101,7 +101,7 @@ jobs:
 
       - name: Point the preview at this PR's own JupyterLab image build
         if: github.event.pull_request.head.repo.fork == false
-        run: PYTHONPATH=. pipx run scripts/preview/pr_image.py set-tag --tag "pr-${{ github.event.pull_request.number }}"
+        run: pipx run scripts/preview/pr_image.py set-tag --tag "pr-${{ github.event.pull_request.number }}"
 
       - name: Deploy chart
         id: deploy

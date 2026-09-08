@@ -7,7 +7,7 @@ tag in place; nothing here is committed, it only affects this ephemeral
 k8s-preview deploy.
 
 Usage:
-    PYTHONPATH=. pipx run scripts/preview/pr_image.py set-tag --tag pr-205 [values.yaml]
+    pipx run scripts/preview/pr_image.py set-tag --tag pr-205 [values.yaml]
 """
 
 # /// script
@@ -22,9 +22,9 @@ from pathlib import Path
 
 from ruamel.yaml import YAML
 
-from scripts.bump_image_tags import _bump_profile_list
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))  # run as a file by pipx, so the repo isn't on sys.path
+from scripts.bump_image_tags import _bump_profile_list  # noqa: I001
 DEFAULT_VALUES = REPO_ROOT / "values.yaml"
 
 
