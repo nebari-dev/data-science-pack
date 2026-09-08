@@ -35,7 +35,7 @@ def render_deploying(run_url: str) -> str:
     human = time.strftime("%Y-%m-%d %H:%M UTC", now)
     iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", now)
     return (
-        "The latest K8s stack preview for this PR.\n\n"
+        "The latest preview for this PR.\n\n"
         "| Project | Deployment | Actions | Updated |\n"
         "| --- | --- | --- | --- |\n"
         f"| `{PROJECT}` | 🟡 [Deploying]({run_url}) | [CI run]({run_url}) | "
@@ -62,7 +62,7 @@ def render_ready(
         else ""
     )
     return (
-        "The latest K8s stack preview for this PR.\n\n"
+        "The latest preview for this PR.\n\n"
         "| Project | Deployment | Actions | Updated |\n"
         "| --- | --- | --- | --- |\n"
         f"| `{PROJECT}` | 🟢 [Ready]({url}) | [Preview]({url}) · [Keycloak]({keycloak_url}) · [CI run]({run_url}) | "
@@ -77,7 +77,7 @@ def render_ready(
 
 def render_expired(expires_at: str, expires_at_iso: str) -> str:
     return (
-        "The K8s stack preview for this PR has expired.\n\n"
+        "The preview for this PR has expired.\n\n"
         "| Project | Deployment | Actions | Updated |\n"
         "| --- | --- | --- | --- |\n"
         f"| `{PROJECT}` | ⚫ Expired | - | "
@@ -88,7 +88,7 @@ def render_expired(expires_at: str, expires_at_iso: str) -> str:
 
 def render_stopped() -> str:
     return (
-        "**K8s stack preview** stopped: the `deploy-preview` label was removed.\n\n"
+        "**Preview** stopped: the `deploy-preview` label was removed.\n\n"
         "Add it again to redeploy."
     )
 

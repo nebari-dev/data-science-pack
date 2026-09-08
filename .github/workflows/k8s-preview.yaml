@@ -1,4 +1,4 @@
-name: K8s Stack Preview
+name: Deploy Preview
 # See docs: docs/src/content/docs/pr-preview-workflow.md
 
 on:
@@ -206,7 +206,7 @@ jobs:
 
       - name: Create GitHub deployment
         run: |
-          id=$(gh api repos/${{ github.repository }}/deployments --jq .id --input - <<< '{"ref":"${{ github.event.pull_request.head.sha }}","environment":"pr-${{ github.event.pull_request.number }}-preview","task":"deploy:preview","description":"K8s stack preview","auto_merge":false,"transient_environment":true,"production_environment":false,"required_contexts":[]}')
+          id=$(gh api repos/${{ github.repository }}/deployments --jq .id --input - <<< '{"ref":"${{ github.event.pull_request.head.sha }}","environment":"pr-${{ github.event.pull_request.number }}-preview","task":"deploy:preview","description":"PR preview","auto_merge":false,"transient_environment":true,"production_environment":false,"required_contexts":[]}')
           echo "DEPLOYMENT_ID=$id" >> "$GITHUB_ENV"
           gh api repos/${{ github.repository }}/deployments/$id/statuses -f state=success -f description="Live for 20 minutes" \
             -f environment_url="${{ steps.cf_dns.outputs.url }}" -f log_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -291,7 +291,7 @@ jobs:
       - name: Cancel the in-flight preview run for this PR
         run: |
           gh api "repos/${{ github.repository }}/actions/runs?event=pull_request&status=in_progress" \
-            --jq '.workflow_runs[] | select(.name == "K8s Stack Preview" and any(.pull_requests[]; .number == ${{ github.event.pull_request.number }})) | .id' \
+            --jq '.workflow_runs[] | select(.name == "Deploy Preview" and any(.pull_requests[]; .number == ${{ github.event.pull_request.number }})) | .id' \
             | xargs -r -I{} gh api -X POST repos/${{ github.repository }}/actions/runs/{}/cancel
 
       - name: Mark GitHub deployment inactive
