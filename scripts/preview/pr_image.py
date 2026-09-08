@@ -7,8 +7,12 @@ tag in place; nothing here is committed, it only affects this ephemeral
 k8s-preview deploy.
 
 Usage:
-    python -m scripts.preview.pr_image set-tag --tag pr-205 [values.yaml]
+    PYTHONPATH=. pipx run scripts/preview/pr_image.py set-tag --tag pr-205 [values.yaml]
 """
+
+# /// script
+# dependencies = ["ruamel.yaml==0.19.1"]
+# ///
 
 from __future__ import annotations
 
