@@ -7,7 +7,13 @@ description: Install the Data Science Pack and access JupyterHub.
 
 On a NIC-managed cluster, the [Nebari Operator](https://github.com/nebari-dev/nebari-operator)
 and ArgoCD install this chart for you — you don't run `helm` commands
-yourself. The values most deployers adjust:
+yourself.
+
+This requires ArgoCD 3.0 or newer, whose bundled Helm is 3.17+. Earlier ArgoCD
+releases ship Helm 3.16 or older and cannot render the chart. See
+[Helm version](/admin-setup/#helm-version).
+
+The values most deployers adjust:
 
 ```yaml
 keycloak:
@@ -37,6 +43,8 @@ helm install data-science-pack oci://quay.io/nebari/charts/nebari-data-science-p
 ```
 
 ## Install from source
+
+Requires Helm 3.17 or newer. See [Helm version](/admin-setup/#helm-version).
 
 ```bash
 git clone https://github.com/nebari-dev/data-science-pack.git

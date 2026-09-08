@@ -47,6 +47,18 @@ validator keyed to the browser-facing issuer rejects them.
 Rendered into the `NebariApp` CRD. Semantics of each CRD field are in
 [NebariApp Integration](/nebariapp-integration/).
 
+Every key under `nebariapp` except `enabled` is forwarded verbatim as the `spec`
+of the `NebariApp` resource. The authoritative schema is the operator's
+`NebariAppSpec`, not this chart, so the table below is **not** an exhaustive list
+of what you may set: it lists the fields this chart ships defaults for. Any other
+field the CRD accepts can be set here and will reach the resource. See
+[Pass-through and validation](/nebariapp-integration/#pass-through-and-validation)
+for what happens when a key is not one the CRD recognises.
+
+`nebariapp.enabled` is the one key in this section that is not a CRD field. It
+gates both the `NebariApp` resource and the Keycloak bootstrap Job, and it is
+stripped before the rest of the section is forwarded.
+
 | Field | Default | What it does |
 |---|---|---|
 | `nebariapp.enabled` | `true` | Render the `NebariApp`. False outside Nebari. |
@@ -142,7 +154,7 @@ Admin guide: [Nebi integration](/nebi-integration/).
 | Field | Default | What it does |
 |---|---|---|
 | `nebi.image.repository` | `quay.io/nebari/nebi` | Binary copied into user pods by an init container. |
-| `nebi.image.tag` | `sha-bd25921` | Pinned per chart release. Empty disables the init container. |
+| `nebi.image.tag` | `sha-5ca877a` | Pinned per chart release. Must be ≥ v0.15 for `jupyterlab-launchpad` (≥ 1.1.1) to receive `nebi:job-completed`; older nebi never sends it and kernel refresh silently falls back to the ~61s poll. Empty disables the init container. |
 | `nebi.image.pullPolicy` | `IfNotPresent` | — |
 | `nebi.remoteURL` | `""` *(derived)* | Browser-facing Nebi URL, used for the OIDC redirect. |
 | `nebi.internalURL` | `""` *(derived)* | In-cluster URL for the token-exchange path. |
