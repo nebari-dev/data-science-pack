@@ -82,7 +82,7 @@ def render_expired(expires_at: str, expires_at_iso: str) -> str:
         "| --- | --- | --- | --- |\n"
         f"| `{PROJECT}` | ⚫ Expired | - | "
         f'<relative-time datetime="{expires_at_iso}">{expires_at}</relative-time> |\n\n'
-        "Push a new commit or re-add the `deploy-preview` label to redeploy."
+        "Re-add the `deploy-preview` label to redeploy."
     )
 
 

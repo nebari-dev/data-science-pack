@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: k8s-preview-${{ github.event.pull_request.number }}
-  cancel-in-progress: ${{ !(github.event.action == 'labeled' && github.event.label.name == 'extend-preview') }}
+  cancel-in-progress: ${{ !(github.event.action == 'labeled' && github.event.label.name == 'extend-preview') && !(github.event.action == 'unlabeled' && github.event.sender.login == 'github-actions[bot]') }}
 
 env:
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -272,8 +272,12 @@ jobs:
           python -m scripts.preview.cloudflare delete-tunnel \
             --account-id "$CF_ACCOUNT_ID" --api-token "$CF_API_TOKEN" --tunnel-id "${TUNNEL_ID:-}"
 
+      - name: Remove the deploy-preview label now the preview is gone
+        if: always()
+        run: gh api -X DELETE "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/deploy-preview" || true
+
   cleanup-preview:
-    if: github.event.action == 'unlabeled' && github.event.label.name == 'deploy-preview'
+    if: github.event.action == 'unlabeled' && github.event.label.name == 'deploy-preview' && github.event.sender.login != 'github-actions[bot]'
     name: Stop preview
     runs-on: ubuntu-latest
     permissions:
