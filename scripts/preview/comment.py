@@ -39,7 +39,8 @@ def render_deploying(run_url: str) -> str:
         "| Project | Deployment | Actions | Updated |\n"
         "| --- | --- | --- | --- |\n"
         f"| `{PROJECT}` | 🟡 [Deploying]({run_url}) | [CI run]({run_url}) | "
-        f'<relative-time datetime="{iso}">{human}</relative-time> |'
+        f'<relative-time datetime="{iso}">{human}</relative-time> |\n\n'
+        "Should be ready in a few minutes."
     )
 
 
