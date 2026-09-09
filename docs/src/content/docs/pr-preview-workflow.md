@@ -95,7 +95,9 @@ JupyterLab image users actually spawn is built separately by
 `build-images.yaml` (multi-arch, pushed to ghcr.io/quay.io on the same PR
 trigger). `scripts/preview/pr_image.py` rewrites `values.yaml`'s
 singleuser and per-profile image refs, in the ephemeral checkout only, to
-that PR's `pr-<number>` tag before the chart deploys.
+that PR's `pr-<number>` tag before the chart deploys. If no such tag exists
+on the registry, `values.yaml` is left as is and the preview runs the
+pinned image.
 
 The two builds aren't ordered against each other. A pod only pulls the
 image when a reviewer actually spawns a server, by which point
