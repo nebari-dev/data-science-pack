@@ -32,8 +32,8 @@ flowchart TB
    Keycloak, the Nebari Operator, and Envoy Gateway
    (`nebari-dev/action-nebari-sandbox`), then side-loads the built image
    into it.
-3. For a non-fork PR, it points the chart's JupyterLab image at this PR's
-   own build (see "JupyterLab image" below), then installs the chart with
+3. It points the chart's JupyterLab image at this PR's own build (see
+   "JupyterLab image" below), then installs the chart with
    `helm upgrade --install`, patches Keycloak's own hostname to match the
    public route, and waits for the Operator to finish provisioning the
    OIDC client.
@@ -53,10 +53,13 @@ flowchart TB
 ## Triggering it
 
 Add the `deploy-preview` label to a PR. That label gates who can trigger a
-deploy (GitHub label permissions), so a labeled fork PR still runs, using
-that fork's own code. Removing the label runs the `cleanup-preview` job,
-which cancels any in-flight deploy for that PR, marks the GitHub deployment
-inactive, and posts a "stopped" comment.
+deploy (GitHub label permissions). Fork PRs are not supported: GitHub gives
+a fork's `pull_request` run no repository secrets and a read-only
+`GITHUB_TOKEN`, so the tunnel and PR comment steps could never run. The job
+skips itself for fork PRs instead of failing partway through. Removing the
+label runs the `cleanup-preview` job, which cancels any in-flight deploy
+for that PR, marks the GitHub deployment inactive, and posts a "stopped"
+comment.
 
 ## Lifetime and the `extend-preview` label
 
@@ -92,13 +95,9 @@ acceptable.
 The hub image is built and side-loaded locally by this workflow, but the
 JupyterLab image users actually spawn is built separately by
 `build-images.yaml` (multi-arch, pushed to ghcr.io/quay.io on the same PR
-trigger). For a non-fork PR, `scripts/preview/pr_image.py` rewrites
-`values.yaml`'s singleuser and per-profile image refs, in the ephemeral
-checkout only, to that PR's `pr-<number>` tag before the chart deploys.
-
-Fork PRs are skipped: `build-images.yaml` never pushes images for a fork
-(no credentials to do so), so the preview keeps the chart's default pinned
-JupyterLab image instead of pointing at a tag that doesn't exist.
+trigger). `scripts/preview/pr_image.py` rewrites `values.yaml`'s
+singleuser and per-profile image refs, in the ephemeral checkout only, to
+that PR's `pr-<number>` tag before the chart deploys.
 
 The two builds aren't ordered against each other. A pod only pulls the
 image when a reviewer actually spawns a server, by which point
@@ -146,9 +145,9 @@ Configured once in the Cloudflare Zero Trust dashboard for this repository:
   gets host-level Docker access on that ephemeral runner only, not on any
   shared or production infrastructure, and the runner is destroyed with
   the job.
-- **A labeled fork PR deploys the fork's own code**: it gets the same
-  Cloudflare Access gate, but the hub image built and running is
-  unreviewed. The PR comment flags this on every fork deploy.
+- **Fork PRs never deploy**: the job is gated on the PR head living in
+  this repo, so only code from branches maintainers control gets built
+  and exposed (see "Triggering it").
 - **Token scope**: `GITHUB_TOKEN` is limited to `contents:read`,
   `pull-requests:write`, `issues:write`, `deployments:write` for this job.
   The Cloudflare API token can only edit Tunnels and DNS and read the zone,

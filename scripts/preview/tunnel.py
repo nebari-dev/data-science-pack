@@ -7,7 +7,7 @@ Usage:
         --cloudflared PATH --token TOKEN \\
         --repo OWNER/REPO --pr N --run-url URL \\
         --url URL --keycloak-url URL \\
-        --deployed-at STR --deployed-at-iso ISO [--fork]
+        --deployed-at STR --deployed-at-iso ISO
 
 The Keycloak admin password (re-rendered into the PR comment on each extend)
 comes from KC_ADMIN_PASSWORD, not argv; see keycloak.admin_password_from_env.
@@ -78,7 +78,7 @@ def _refresh_comment_expiry(args: argparse.Namespace, seconds_remaining: float) 
         if comment_id is not None:
             body = render_ready(
                 args.url, args.keycloak_url, args.run_url, admin_password_from_env(),
-                args.deployed_at, args.deployed_at_iso, expires_at, expires_at_iso, args.fork,
+                args.deployed_at, args.deployed_at_iso, expires_at, expires_at_iso,
             )
             _update_comment(args.repo, comment_id, body + "\n" + STICKY_MARKER)
     except Exception as exc:  # noqa: BLE001 - the tunnel staying up matters more than the comment being exact
@@ -120,7 +120,6 @@ def main(argv: list[str]) -> int:
     p.add_argument("--keycloak-url", required=True)
     p.add_argument("--deployed-at", required=True)
     p.add_argument("--deployed-at-iso", required=True)
-    p.add_argument("--fork", action="store_true")
     p.set_defaults(func=run)
 
     args = parser.parse_args(argv[1:])

@@ -13,7 +13,7 @@ Usage:
     KC_ADMIN_PASSWORD=... python -m scripts.preview.comment render-ready --url URL \\
         --keycloak-url URL --run-url URL \\
         --deployed-at STR --deployed-at-iso ISO \\
-        --expires-at STR --expires-at-iso ISO [--fork]
+        --expires-at STR --expires-at-iso ISO
     python -m scripts.preview.comment render-expired \\
         --expires-at STR --expires-at-iso ISO
     python -m scripts.preview.comment render-failed --run-url URL
@@ -71,21 +71,13 @@ def render_ready(
     deployed_at_iso: str,
     expires_at: str,
     expires_at_iso: str,
-    is_fork: bool,
 ) -> str:
-    fork_warning = (
-        "\n\n⚠️ **This PR is from a fork**: the code running in this preview "
-        "is not from a trusted maintainer branch."
-        if is_fork
-        else ""
-    )
     return (
         "The latest preview for this PR.\n\n"
         "| Project | Deployment | Actions | Updated |\n"
         "| --- | --- | --- | --- |\n"
         f"| `{PROJECT}` | 🟢 [Ready]({url}) | [Preview]({url}) · [Keycloak]({keycloak_url}) · [CI run]({run_url}) | "
-        f'<relative-time datetime="{deployed_at_iso}">{deployed_at}</relative-time> |'
-        f"{fork_warning}\n\n"
+        f'<relative-time datetime="{deployed_at_iso}">{deployed_at}</relative-time> |\n\n'
         f"Sign in with `reviewer` / `admin`. Keycloak admin: `admin` / `{kc_admin_password}`.\n\n"
         f'Expires <relative-time datetime="{expires_at_iso}">{expires_at}</relative-time>. '
         "Add the `extend-preview` label any time before then to reset it to 20 minutes from that moment, "
@@ -120,7 +112,7 @@ def _cmd_render_ready(args: argparse.Namespace) -> int:
     body = render_ready(
         args.url, args.keycloak_url, args.run_url, admin_password_from_env(),
         args.deployed_at, args.deployed_at_iso,
-        args.expires_at, args.expires_at_iso, args.fork,
+        args.expires_at, args.expires_at_iso,
     )
     gha.write_output("body", body)
     return 0
@@ -157,7 +149,6 @@ def main(argv: list[str]) -> int:
     p.add_argument("--deployed-at-iso", required=True)
     p.add_argument("--expires-at", required=True)
     p.add_argument("--expires-at-iso", required=True)
-    p.add_argument("--fork", action="store_true")
     p.set_defaults(func=_cmd_render_ready)
 
     p = sub.add_parser("render-expired")

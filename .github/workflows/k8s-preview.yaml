@@ -20,7 +20,11 @@ env:
 
 jobs:
   deploy-preview:
+    # Fork PRs are skipped outright: GitHub gives a fork's pull_request run no
+    # repository secrets and a read-only GITHUB_TOKEN, so the tunnel and PR
+    # comment steps could never succeed.
     if: >-
+      github.event.pull_request.head.repo.fork == false &&
       contains(github.event.pull_request.labels.*.name, 'deploy-preview') &&
       github.event.action != 'unlabeled' &&
       (github.event.action != 'labeled' || github.event.label.name == 'deploy-preview')
@@ -100,7 +104,6 @@ jobs:
             --kc-public-url "https://$KEYCLOAK_HOSTNAME"
 
       - name: Point the preview at this PR's own JupyterLab image build
-        if: github.event.pull_request.head.repo.fork == false
         run: pipx run scripts/preview/pr_image.py set-tag --tag "pr-${{ github.event.pull_request.number }}"
 
       - name: Deploy chart
@@ -212,7 +215,7 @@ jobs:
       - name: Render the ready-preview comment body
         id: render_ready
         run: |
-          python -m scripts.preview.comment render-ready ${{ github.event.pull_request.head.repo.fork && '--fork' || '' }} \
+          python -m scripts.preview.comment render-ready \
             --url "${{ steps.cf_dns.outputs.url }}" --keycloak-url "${{ steps.cf_dns.outputs.keycloak_url }}" --run-url "$RUN_URL" \
             --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}" \
             --expires-at "${{ steps.timestamps.outputs.expires_at }}" --expires-at-iso "${{ steps.timestamps.outputs.expires_at_iso }}"
@@ -227,7 +230,7 @@ jobs:
 
       - name: Run tunnel until it times out (extend via the extend-preview label)
         run: |
-          python -m scripts.preview.tunnel run ${{ github.event.pull_request.head.repo.fork && '--fork' || '' }} \
+          python -m scripts.preview.tunnel run \
             --cloudflared /tmp/cloudflared --token "${TUNNEL_TOKEN}" --repo "${{ github.repository }}" --pr "${{ github.event.pull_request.number }}" \
             --url "${{ steps.cf_dns.outputs.url }}" --keycloak-url "${{ steps.cf_dns.outputs.keycloak_url }}" --run-url "$RUN_URL" \
             --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}"
@@ -291,7 +294,7 @@ jobs:
         run: gh api -X DELETE "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/deploy-preview" || true
 
   cleanup-preview:
-    if: github.event.action == 'unlabeled' && github.event.label.name == 'deploy-preview' && github.event.sender.login != 'github-actions[bot]'
+    if: github.event.pull_request.head.repo.fork == false && github.event.action == 'unlabeled' && github.event.label.name == 'deploy-preview' && github.event.sender.login != 'github-actions[bot]'
     name: Stop preview
     runs-on: ubuntu-latest
     permissions:
