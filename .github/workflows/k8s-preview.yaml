@@ -20,8 +20,8 @@ env:
 
 jobs:
   deploy-preview:
-    # Fork PRs are skipped: with the exception of GITHUB_TOKEN, secrets are not
-    # passed to the runner when a workflow is triggered from a forked repository.
+    # Fork PRs are skipped: workflow runs from forked repositories do not
+    # receive repository secrets.
     if: >-
       github.event.pull_request.head.repo.fork == false &&
       contains(github.event.pull_request.labels.*.name, 'deploy-preview') &&

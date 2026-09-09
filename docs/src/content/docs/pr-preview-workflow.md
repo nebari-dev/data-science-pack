@@ -53,11 +53,11 @@ flowchart TB
 ## Triggering it
 
 Add the `deploy-preview` label to a PR. That label gates who can trigger a
-deploy (GitHub label permissions). Fork PRs are skipped: with the exception
-of `GITHUB_TOKEN`, secrets are not passed to the runner when a workflow is
-triggered from a forked repository. Removing the label runs the
-`cleanup-preview` job, which cancels any in-flight deploy for that PR,
-marks the GitHub deployment inactive, and posts a "stopped" comment.
+deploy (GitHub label permissions). Fork PRs are skipped: workflow runs
+from forked repositories do not receive repository secrets. Removing the
+label runs the `cleanup-preview` job, which cancels any in-flight deploy
+for that PR, marks the GitHub deployment inactive, and posts a "stopped"
+comment.
 
 ## Lifetime and the `extend-preview` label
 
@@ -142,9 +142,8 @@ Configured once in the Cloudflare Zero Trust dashboard for this repository:
   gets host-level Docker access on that ephemeral runner only, not on any
   shared or production infrastructure, and the runner is destroyed with
   the job.
-- **Fork PRs are skipped**: with the exception of `GITHUB_TOKEN`, secrets
-  are not passed to the runner when a workflow is triggered from a forked
-  repository.
+- **Fork PRs are skipped**: workflow runs from forked repositories do not
+  receive repository secrets.
 - **Token scope**: `GITHUB_TOKEN` is limited to `contents:read`,
   `pull-requests:write`, `issues:write`, `deployments:write` for this job.
   The Cloudflare API token can only edit Tunnels and DNS and read the zone,
