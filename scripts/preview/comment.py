@@ -62,6 +62,16 @@ def render_failed(run_url: str) -> str:
     )
 
 
+def render_cancelled(run_url: str) -> str:
+    return (
+        "The preview for this PR was cancelled.\n\n"
+        "| Project | Deployment | Actions | Updated |\n"
+        "| --- | --- | --- | --- |\n"
+        f"| `{PROJECT}` | ⚫ [Cancelled]({run_url}) | [CI run]({run_url}) | {_now_relative_time()} |\n\n"
+        "Re-add the `deploy-preview` label to redeploy."
+    )
+
+
 def render_ready(
     url: str,
     keycloak_url: str,
@@ -128,6 +138,11 @@ def _cmd_render_failed(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_render_cancelled(args: argparse.Namespace) -> int:
+    gha.write_output("body", render_cancelled(args.run_url))
+    return 0
+
+
 def _cmd_render_stopped(args: argparse.Namespace) -> int:
     gha.write_output("body", render_stopped())
     return 0
@@ -159,6 +174,10 @@ def main(argv: list[str]) -> int:
     p = sub.add_parser("render-failed")
     p.add_argument("--run-url", required=True)
     p.set_defaults(func=_cmd_render_failed)
+
+    p = sub.add_parser("render-cancelled")
+    p.add_argument("--run-url", required=True)
+    p.set_defaults(func=_cmd_render_cancelled)
 
     p = sub.add_parser("render-stopped")
     p.set_defaults(func=_cmd_render_stopped)

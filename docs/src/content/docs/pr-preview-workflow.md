@@ -58,6 +58,10 @@ from forked repositories do not receive repository secrets. Removing the
 label runs the `cleanup-preview` job, which cancels any in-flight deploy
 for that PR, marks the GitHub deployment inactive, and posts a "stopped"
 comment.
+Pushing a new commit while the label is on cancels the in-flight deploy
+and starts a fresh one; the label stays and the comment follows the new
+run. A deploy cancelled any other way posts a "cancelled" comment and
+drops the label.
 
 ## Lifetime and the `extend-preview` label
 

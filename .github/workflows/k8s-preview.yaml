@@ -235,20 +235,34 @@ jobs:
             --url "${{ steps.cf_dns.outputs.url }}" --keycloak-url "${{ steps.cf_dns.outputs.keycloak_url }}" --run-url "$RUN_URL" \
             --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}"
 
+      # A newer run for this PR (new commit, label re-added) cancels this one
+      # and takes over the comment and the label, and once the label is gone
+      # the "Stop preview" job owns the comment. Only touch either when
+      # neither applies.
+      - name: Check whether this run still owns the preview comment and label
+        id: owner
+        if: always()
+        run: |
+          newer=$(gh api "repos/${{ github.repository }}/actions/workflows/k8s-preview.yaml/runs?branch=${{ github.head_ref }}&event=pull_request&per_page=10" \
+            --jq '[.workflow_runs[] | select(.id != ${{ github.run_id }} and (.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending" or .status == "requested"))] | length')
+          labeled=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" --jq '[.[].name] | index("deploy-preview") != null')
+          echo "newer in-flight runs: $newer, deploy-preview label present: $labeled"
+          if [ "$newer" -eq 0 ] && [ "$labeled" = "true" ]; then echo "owner=true"; else echo "owner=false"; fi >> "$GITHUB_OUTPUT"
+
       - name: Mark GitHub deployment inactive
         if: always() && env.DEPLOYMENT_ID != ''
         run: gh api repos/${{ github.repository }}/deployments/$DEPLOYMENT_ID/statuses -f state=inactive -f description="Preview expired"
 
       - name: Render the expired-preview comment body
         id: render_expired
-        if: always() && steps.comment_preview.outcome == 'success'
+        if: always() && steps.comment_preview.outcome == 'success' && steps.owner.outputs.owner == 'true'
         run: |
           python -m scripts.preview.comment render-expired \
             --expires-at "${{ steps.timestamps.outputs.expires_at }}" \
             --expires-at-iso "${{ steps.timestamps.outputs.expires_at_iso }}"
 
       - name: Comment that the preview expired
-        if: always() && steps.comment_preview.outcome == 'success'
+        if: always() && steps.comment_preview.outcome == 'success' && steps.owner.outputs.owner == 'true'
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
           header: k8s-preview
@@ -257,16 +271,29 @@ jobs:
 
       - name: Render the failed-preview comment body
         id: render_failed
-        if: failure() && steps.comment_preview.outcome != 'success'
+        if: failure() && steps.comment_preview.outcome != 'success' && steps.owner.outputs.owner == 'true'
         run: python -m scripts.preview.comment render-failed --run-url "$RUN_URL"
 
       - name: Comment that the preview failed
-        if: failure() && steps.comment_preview.outcome != 'success'
+        if: failure() && steps.comment_preview.outcome != 'success' && steps.owner.outputs.owner == 'true'
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
           header: k8s-preview
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           message: ${{ steps.render_failed.outputs.body }}
+
+      - name: Render the cancelled-preview comment body
+        id: render_cancelled
+        if: cancelled() && steps.comment_preview.outcome != 'success' && steps.owner.outputs.owner == 'true'
+        run: python -m scripts.preview.comment render-cancelled --run-url "$RUN_URL"
+
+      - name: Comment that the preview was cancelled
+        if: cancelled() && steps.comment_preview.outcome != 'success' && steps.owner.outputs.owner == 'true'
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: k8s-preview
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          message: ${{ steps.render_cancelled.outputs.body }}
 
       - name: Delete DNS record
         if: always()
@@ -287,7 +314,7 @@ jobs:
             --account-id "$CF_ACCOUNT_ID" --api-token "$CF_API_TOKEN" --tunnel-id "${TUNNEL_ID:-}"
 
       - name: Remove the deploy-preview label now the preview is gone
-        if: always()
+        if: always() && steps.owner.outputs.owner == 'true'
         run: gh api -X DELETE "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/deploy-preview" || true
 
   cleanup-preview:
