@@ -20,9 +20,8 @@ env:
 
 jobs:
   deploy-preview:
-    # Fork PRs are skipped outright: GitHub gives a fork's pull_request run no
-    # repository secrets and a read-only GITHUB_TOKEN, so the tunnel and PR
-    # comment steps could never succeed.
+    # Fork PRs are skipped: with the exception of GITHUB_TOKEN, secrets are not
+    # passed to the runner when a workflow is triggered from a forked repository.
     if: >-
       github.event.pull_request.head.repo.fork == false &&
       contains(github.event.pull_request.labels.*.name, 'deploy-preview') &&
@@ -255,9 +254,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           message: ${{ steps.render_expired.outputs.body }}
 
-      # The expired/stopped rewrites above only run once the ready comment
-      # exists; a deploy that dies before then would leave "Deploying" pointing
-      # at a failed run forever.
       - name: Render the failed-preview comment body
         id: render_failed
         if: failure() && steps.comment_preview.outcome != 'success'

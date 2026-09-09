@@ -53,13 +53,11 @@ flowchart TB
 ## Triggering it
 
 Add the `deploy-preview` label to a PR. That label gates who can trigger a
-deploy (GitHub label permissions). Fork PRs are not supported: GitHub gives
-a fork's `pull_request` run no repository secrets and a read-only
-`GITHUB_TOKEN`, so the tunnel and PR comment steps could never run. The job
-skips itself for fork PRs instead of failing partway through. Removing the
-label runs the `cleanup-preview` job, which cancels any in-flight deploy
-for that PR, marks the GitHub deployment inactive, and posts a "stopped"
-comment.
+deploy (GitHub label permissions). Fork PRs are skipped: with the exception
+of `GITHUB_TOKEN`, secrets are not passed to the runner when a workflow is
+triggered from a forked repository. Removing the label runs the
+`cleanup-preview` job, which cancels any in-flight deploy for that PR,
+marks the GitHub deployment inactive, and posts a "stopped" comment.
 
 ## Lifetime and the `extend-preview` label
 
@@ -118,8 +116,7 @@ automatically once the tag exists; no action is needed either way.
 - **On expiry**: the deployment is marked inactive and, if a "ready"
   comment was posted, it's re-rendered to the expired state.
 - **On failure**: if the deploy dies before a "ready" comment exists, the
-  "deploying" comment is re-rendered to a failed state linking the run,
-  instead of pointing at a failed run as "Deploying" forever.
+  "deploying" comment is re-rendered to a failed state linking the run.
 
 ## One-time Cloudflare setup
 
@@ -145,9 +142,9 @@ Configured once in the Cloudflare Zero Trust dashboard for this repository:
   gets host-level Docker access on that ephemeral runner only, not on any
   shared or production infrastructure, and the runner is destroyed with
   the job.
-- **Fork PRs never deploy**: the job is gated on the PR head living in
-  this repo, so only code from branches maintainers control gets built
-  and exposed (see "Triggering it").
+- **Fork PRs are skipped**: with the exception of `GITHUB_TOKEN`, secrets
+  are not passed to the runner when a workflow is triggered from a forked
+  repository.
 - **Token scope**: `GITHUB_TOKEN` is limited to `contents:read`,
   `pull-requests:write`, `issues:write`, `deployments:write` for this job.
   The Cloudflare API token can only edit Tunnels and DNS and read the zone,
