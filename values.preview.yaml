@@ -35,7 +35,7 @@ jupyterhub:
         default: true
         kubespawner_override:
           cpu_limit: 0.5
-          cpu_guarantee: 0.1
+          cpu_guarantee: 0.25
           mem_limit: "1G"
           mem_guarantee: "512M"
       - slug: small-instance
@@ -43,7 +43,7 @@ jupyterhub:
         description: "1 CPU / 2 GB RAM"
         kubespawner_override:
           cpu_limit: 1
-          cpu_guarantee: 0.25
+          cpu_guarantee: 0.5
           mem_limit: "2G"
           mem_guarantee: "1G"
 nebariapp:
