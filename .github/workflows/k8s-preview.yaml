@@ -64,6 +64,7 @@ jobs:
         uses: nebari-dev/action-nebari-sandbox@9ac369ebf87ac2ae217504dcbf824c77f70e429a # v3.0.0
         with:
           cluster-name: pr-preview-${{ github.event.pull_request.number }}
+          resource-summary: "true"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -102,7 +103,7 @@ jobs:
             --gitops-dir "$HOME/.nic/gitops/${{ steps.sandbox.outputs.cluster-name }}" \
             --kc-public-url "https://$KEYCLOAK_HOSTNAME"
 
-      - name: Point the preview at this PR's own JupyterLab image build
+      - name: Point the preview at this PR's own JupyterLab image build, if one exists
         run: pipx run scripts/preview/pr_image.py set-tag --tag "pr-${{ github.event.pull_request.number }}"
 
       - name: Deploy chart

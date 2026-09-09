@@ -27,6 +27,25 @@ jupyterhub:
   prePuller:
     hook:
       enabled: false
+  custom:
+    profiles:
+      - slug: micro-instance
+        display_name: "Micro Instance"
+        description: "0.1 CPU / 512 MB RAM guaranteed"
+        default: true
+        kubespawner_override:
+          cpu_limit: 1
+          cpu_guarantee: 0.1
+          mem_limit: "2G"
+          mem_guarantee: "512M"
+      - slug: small-instance
+        display_name: "Small Instance"
+        description: "0.25 CPU / 1 GB RAM guaranteed"
+        kubespawner_override:
+          cpu_limit: 2
+          cpu_guarantee: 0.25
+          mem_limit: "4G"
+          mem_guarantee: "1G"
 nebariapp:
   enabled: true
 keycloak:
