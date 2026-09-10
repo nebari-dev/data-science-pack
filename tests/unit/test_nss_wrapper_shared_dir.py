@@ -154,3 +154,32 @@ def test_groups_without_shared_storage_preserves_user_data_in_per_group_dirs():
     assert "mkdir -p /home/jovyan/shared" in cmd
     assert "mkdir -p /home/jovyan/shared/data" in cmd
     assert "mkdir -p /home/jovyan/shared/ml" in cmd
+
+
+def test_poststart_installs_activity_reporter_extension_nonfatally():
+    """Every spawn installs the bundled activity-reporter vsix into the
+    PVC-backed extensions dir (idempotent; --force handles upgrades). The
+    braces + `|| true` isolate the install: with a bare `a && b || true`,
+    a failure of the nss-wrapper printf commands would ALSO be masked,
+    and a failed install would CrashLoop the pod without the guard.
+
+    Two additional properties pinned here:
+      * `timeout 60` bounds the install's runtime so a hung
+        `code-server --install-extension` (e.g. a wedged extensions-dir
+        mount) cannot stall pod startup indefinitely.
+      * `${CODE_EXTENSIONSDIR:+--extensions-dir "$CODE_EXTENSIONSDIR"}`
+        mirrors the --extensions-dir flag the vscode proxy entry
+        (images/nebi/jupyter_server_config.py) passes when
+        CODE_EXTENSIONSDIR is set, so the extension is installed into the
+        SAME directory VS Code itself reads extensions from.
+    """
+    mod = _load_spawner_module(shared_storage_enabled=False)
+    spawner = FakeSpawner()
+    asyncio.run(mod._setup_nss_wrapper(spawner, "alice", []))
+    cmd = _poststart_cmd(spawner)
+    assert (
+        '{ timeout 60 code-server --install-extension '
+        '/opt/code-server-extensions/nebari-activity-reporter.vsix '
+        '${CODE_EXTENSIONSDIR:+--extensions-dir "$CODE_EXTENSIONSDIR"} '
+        '--force || true; }' in cmd
+    )

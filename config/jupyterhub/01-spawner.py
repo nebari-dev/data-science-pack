@@ -317,6 +317,41 @@ _hub_external_host = get_chart_config("external-url")
 if _hub_external_host:
     env["NEBI_SERVER_ALLOWED_ORIGINS"] = f"https://{_hub_external_host}"
 
+# code-server >= 4.106 exits this many seconds after its last browser
+# connection closes. Keyed to singleuserCuller.server.shutdownNoActivityTimeout
+# (via _CHART_DERIVED), NOT the hub-level cull.timeout: the hub culler never
+# fires while a tab is connected (CHP counts websocket data as route
+# activity), so the in-pod timeout is the schedule idle pods actually cull
+# on, and a lingering code-server child (tab closed, laptop asleep) should
+# die on that same clock (issue #208). Values <= 60 are rejected by
+# code-server at startup, so skip them rather than break every pod's VS
+# Code; 0 (in-pod culling disabled) lands there too, coherently disabling
+# this timer. The value is deployer-supplied and may not parse as an int
+# (bad YAML, a stray string); guard the conversion so a bad value just
+# disables this feature instead of raising and taking down the whole
+# spawner config file.
+try:
+    _vscode_idle_timeout = int(
+        get_chart_config("shutdown-no-activity-timeout", 0) or 0
+    )
+except (TypeError, ValueError):
+    _vscode_idle_timeout = 0
+if _vscode_idle_timeout > 60:
+    env["CODE_SERVER_IDLE_TIMEOUT_SECONDS"] = str(_vscode_idle_timeout)
+
+# Escape hatch for the interaction-based VS Code idle culling (issue #208).
+# The image defaults to the OLD behavior (counting raw proxied traffic as
+# activity) when this env var is absent, so chart/image skew fails safe
+# (pods over-spend, rather than culling active users with no reporter
+# installed). When vscodeActivity.enabled is true (the chart default),
+# actively opt the pod into the new behavior by setting the env var to
+# "false"; the image's jupyter_server_config.py reads it when building
+# c.ServerProxy.servers["vscode"]. When the deployer sets
+# vscodeActivity.enabled=false, set nothing so the image's fail-safe
+# default (True) applies.
+if get_chart_config("vscode-activity-enabled", True):
+    env["VSCODE_PROXY_UPDATE_LAST_ACTIVITY"] = "false"
+
 c.KubeSpawner.environment = env
 
 
@@ -1002,6 +1037,27 @@ async def _setup_nss_wrapper(spawner, username, groups):
         + " ".join(repr(line) for line in etc_group_lines)
         + " > /tmp/group",
     ]
+
+    # Install the bundled VS Code activity-reporter extension (issue #208)
+    # into the user's PVC-backed extensions dir. Runs every spawn:
+    # idempotent, and --force re-installs on image upgrades (new vsix
+    # version). Wrapped in { ... || true; } so an install failure neither
+    # CrashLoops the pod nor (via `&&`/`||` left-associativity) masks a
+    # failure of the preceding nss-wrapper commands. Silent breakage is
+    # covered by the e2e extension-installed test. `timeout 60` bounds a
+    # hung install (e.g. a wedged extensions-dir mount) so it can't stall
+    # pod startup; timeout(1) is coreutils, present in the ubuntu base
+    # image. `${CODE_EXTENSIONSDIR:+--extensions-dir "$CODE_EXTENSIONSDIR"}`
+    # mirrors the --extensions-dir flag the vscode proxy entry
+    # (images/nebi/jupyter_server_config.py) passes when CODE_EXTENSIONSDIR
+    # is set, keeping the install location in sync with where code-server
+    # actually reads extensions from.
+    nss_cmds.append(
+        '{ timeout 60 code-server --install-extension '
+        '/opt/code-server-extensions/nebari-activity-reporter.vsix '
+        '${CODE_EXTENSIONSDIR:+--extensions-dir "$CODE_EXTENSIONSDIR"} '
+        '--force || true; }'
+    )
 
     # Group membership changes between spawns (gain, lose, swap) are a
     # normal operational scenario. The home PVC persists, so the shape
