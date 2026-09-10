@@ -15,7 +15,14 @@ const http = require("http");
 const PING_INTERVAL_MS = 60 * 1000;
 
 let lastPingMs = 0;
-let busyExecutions = 0; // in-flight terminal shell executions
+// Terminals with an in-flight shell execution. Tracked per terminal (not
+// as a counter) because VS Code never fires onDidEndTerminalShellExecution
+// for a terminal disposed mid-command — a counter would stay >0 forever
+// and the busy timer would keep the pod alive (#208 through a different
+// door). The ext host keeps at most one execution per terminal (a nested
+// start ends the previous one first), so a Set is exactly equivalent, and
+// onDidCloseTerminal self-heals the disposal case.
+const busyTerminals = new Set();
 let output;
 
 function pingUrl() {
@@ -24,8 +31,6 @@ function pingUrl() {
     return null; // not running under JupyterHub — nothing to report to
   }
   try {
-    // Normalize IPv6 any-host (::) to bracketed form before URL parsing
-    base = base.replace("://:", "://[::]");
     const url = new URL(base);
     if (url.hostname === "0.0.0.0" || url.hostname === "[::]") {
       url.hostname = "127.0.0.1";
@@ -86,7 +91,15 @@ function activate(context) {
   on(vscode.window.onDidChangeTextEditorVisibleRanges, "scroll");
   on(vscode.window.onDidChangeWindowState, "focus");
   on(vscode.window.onDidOpenTerminal, "terminal-open");
-  on(vscode.window.onDidCloseTerminal, "terminal-close");
+  // Not via on(): the close handler needs the terminal argument to clear
+  // its busy bit — disposal is the one end-of-execution path that never
+  // reaches onDidEndTerminalShellExecution.
+  context.subscriptions.push(
+    vscode.window.onDidCloseTerminal((t) => {
+      busyTerminals.delete(t);
+      recordActivity("terminal-close");
+    }),
+  );
 
   // Busy = active: a running terminal command keeps the pod alive, like
   // cullBusy=false does for kernels. Requires shell integration (auto-
@@ -94,21 +107,21 @@ function activate(context) {
   // to feature-detect.
   if (vscode.window.onDidStartTerminalShellExecution) {
     context.subscriptions.push(
-      vscode.window.onDidStartTerminalShellExecution(() => {
-        busyExecutions += 1;
+      vscode.window.onDidStartTerminalShellExecution((e) => {
+        busyTerminals.add(e.terminal);
         recordActivity("exec-start");
       }),
     );
     context.subscriptions.push(
-      vscode.window.onDidEndTerminalShellExecution(() => {
-        busyExecutions = Math.max(0, busyExecutions - 1);
+      vscode.window.onDidEndTerminalShellExecution((e) => {
+        busyTerminals.delete(e.terminal);
         recordActivity("exec-end");
       }),
     );
   }
 
   const busyTimer = setInterval(() => {
-    if (busyExecutions > 0) {
+    if (busyTerminals.size > 0) {
       recordActivity("busy");
     }
   }, PING_INTERVAL_MS);

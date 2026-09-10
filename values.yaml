@@ -262,8 +262,12 @@ nebi:
     # Pinned manually per chart release (scripts/bump_image_tags.py only
     # handles the jupyterlab images); deployers can override to test a PR
     # build or roll forward. Leave non-empty so the init container is wired
-    # by default. sha-bd25921 == the nebi v0.14 tag commit.
-    tag: "sha-bd25921"
+    # by default. sha-5ca877a == the nebi v0.15 tag commit.
+    # Must be >= v0.15: jupyterlab-launchpad >= 1.1.1 (pinned in
+    # images/jupyterlab/pixi.toml) listens for `nebi:job-completed` from this
+    # binary. Older nebi sends nothing, so kernel refresh silently falls back
+    # to the ~61s KernelSpecManager poll — no error is logged anywhere.
+    tag: "sha-5ca877a"
     pullPolicy: IfNotPresent
   # External Nebi FQDN (browser-side, used for OIDC redirect).
   # If empty, derived from keycloak.hostname as
@@ -499,10 +503,13 @@ jupyterhub:
     #     kubespawner_override:
     #       extra_resource_limits:
     #         nvidia.com/gpu: 1
-    # NOTE: when bumping singleuser.image.tag below, also bump the
-    # ``image: ...`` lines inside each profile_options.image.choices.default
-    # entry so the profile selector shows the right tag. (z2jh values.yaml
-    # cannot reference other values, so the duplication is unavoidable.)
+    # NOTE: when bumping singleuser.image.tag below, also bump — in EACH
+    # profile — the outer ``kubespawner_override.image``, the ``image: ...``
+    # line inside profile_options.image.choices.default, and that choice's
+    # ``display_name`` (it embeds the tag the selector shows). (z2jh
+    # values.yaml cannot reference other values, so the duplication is
+    # unavoidable.) tests/unit/test_image_ref_sync.py fails if any of them
+    # drift from singleuser.image.
     profiles:
       - slug: small-instance
         display_name: "Small Instance"
@@ -615,6 +622,16 @@ jupyterhub:
         # Default authenticator for local development - any username/password works
         # For production, use GenericOAuthenticator with Keycloak (see below)
         authenticator_class: dummy
+
+      # Mirror each user's Keycloak groups into JupyterHub groups at login so
+      # groups can be jhub-apps share targets (#188) - without this the hub
+      # has no groups at all and the "Individuals and group access" dropdown
+      # can never list one. Standard oauthenticator trait (the pack's
+      # KeyCloakOAuthenticator subclasses GenericOAuthenticator); inert under
+      # the dummy authenticator. A group appears once one of its members
+      # logs in. Opt out by overriding to false.
+      KeyCloakOAuthenticator:
+        manage_groups: true
 
       # ============================================================
       # Optional: Keycloak/OAuth Configuration

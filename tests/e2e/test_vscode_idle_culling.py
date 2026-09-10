@@ -4,7 +4,11 @@ What e2e can and cannot cover: these tests exercise the proxy-activity
 plumbing, the extension delivery, and the reporting endpoint — via HTTP
 from inside the pod. Extension *activation* needs a real VS Code browser
 client, which this harness doesn't have; that path is validated by manual
-soak (see the design spec).
+soak (see the design spec). Soak must include: kill a terminal while a
+long command is still running, then leave the tab open — disposal never
+fires onDidEndTerminalShellExecution, so this is the scenario that would
+leak busy state and pin the pod alive if the extension regressed to
+counting executions instead of tracking terminals.
 
 These tests curl `127.0.0.1:8888` directly from inside the pod, bypassing
 configurable-http-proxy (CHP) entirely. That means they cannot observe

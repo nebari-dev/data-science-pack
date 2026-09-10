@@ -59,8 +59,11 @@ data:
         "vscode-activity-enabled": {{ ternary "True" "False" .Values.vscodeActivity.enabled }},
         # Drives CODE_SERVER_IDLE_TIMEOUT_SECONDS in 01-spawner.py: the
         # code-server exit timer mirrors the in-pod culler's schedule, the
-        # one that actually culls idle pods (issue #208).
-        "shutdown-no-activity-timeout": {{ .Values.singleuserCuller.server.shutdownNoActivityTimeout | quote }},
+        # one that actually culls idle pods (issue #208). The `default 0`
+        # is nil-safety: sprig's `quote` renders nil as nothing (a Python
+        # syntax error that CrashLoops the hub), not as "". A deployer's
+        # explicit 0 already means "disabled", so nothing real is swallowed.
+        "shutdown-no-activity-timeout": {{ .Values.singleuserCuller.server.shutdownNoActivityTimeout | default 0 | quote }},
     }
 
 
