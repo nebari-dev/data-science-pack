@@ -25,6 +25,7 @@ export default defineConfig({
           githubHref: 'https://github.com/nebari-dev/data-science-pack',
         }),
       ],
+      lastUpdated: true,
       sidebar: [
         {
           label: 'Overview',
