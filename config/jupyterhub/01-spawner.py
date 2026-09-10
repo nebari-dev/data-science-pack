@@ -2,6 +2,7 @@
 # ruff: noqa: F821 - `c` is a magic global provided by JupyterHub
 
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -32,6 +33,79 @@ log = logging.getLogger(__name__)
 # KubeSpawner (escaped slug) vs base Spawner traits like notebook_dir (raw username),
 # causing a path mismatch when usernames contain special characters (e.g. emails).
 # Each user still gets an isolated PVC via claim-{username}.
+
+_DSHM_NAME = "dshm"
+_DSHM_PATH = "/dev/shm"
+_MISSING_OVERRIDE = object()
+
+
+def _normalize_shared_memory_size_limit(value):
+    """Return a non-empty Kubernetes quantity string."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("shared-memory sizeLimit must be a non-empty string")
+    return value.strip()
+
+
+def _upsert_named(entries, addition):
+    """Return entries with exactly one item bearing ``addition``'s name."""
+    retained = [
+        entry
+        for entry in list(entries or [])
+        if entry.get("name") != addition["name"]
+    ]
+    return [*retained, addition]
+
+
+def _with_shared_memory_volume(volumes, size_limit):
+    return _upsert_named(
+        volumes,
+        {
+            "name": _DSHM_NAME,
+            "emptyDir": {"medium": "Memory", "sizeLimit": size_limit},
+        },
+    )
+
+
+def _with_shared_memory_mount(volume_mounts):
+    retained = [
+        mount
+        for mount in list(volume_mounts or [])
+        if mount.get("name") != _DSHM_NAME and mount.get("mountPath") != _DSHM_PATH
+    ]
+    return [*retained, {"name": _DSHM_NAME, "mountPath": _DSHM_PATH}]
+
+
+def _resolve_list_override(spawner, trait_name, configured):
+    if configured is _MISSING_OVERRIDE:
+        return getattr(spawner, trait_name, [])
+    if callable(configured):
+        return configured(spawner)
+    return configured
+
+
+def _profile_volumes_override(configured, size_limit):
+    def apply(spawner):
+        volumes = _resolve_list_override(spawner, "volumes", configured)
+        return _with_shared_memory_volume(volumes, size_limit)
+
+    return apply
+
+
+def _profile_volume_mounts_override(configured):
+    def apply(spawner):
+        mounts = _resolve_list_override(spawner, "volume_mounts", configured)
+        return _with_shared_memory_mount(mounts)
+
+    return apply
+
+
+_shared_memory_enabled = bool(get_chart_config("shared-memory-enabled", True))
+_shared_memory_size_limit = get_chart_config("shared-memory-size-limit", "8Gi")
+if _shared_memory_enabled:
+    _shared_memory_size_limit = _normalize_shared_memory_size_limit(
+        _shared_memory_size_limit
+    )
+
 c.KubeSpawner.storage_pvc_ensure = True
 c.KubeSpawner.storage_capacity = get_config("custom.storage-capacity", "20Gi")
 c.KubeSpawner.storage_access_modes = ["ReadWriteOnce"]
@@ -47,7 +121,8 @@ c.KubeSpawner.slug_scheme = "escape"
 # the template to `{username}` makes ensure + mount converge on the same
 # RWO claim, which the pod-affinity rule below keeps to a single node.
 c.KubeSpawner.pvc_name_template = "claim-{username}"
-c.KubeSpawner.volumes = [
+c.KubeSpawner.volumes = list(get_config("singleuser.extraVolumes", []) or [])
+for _volume in [
     {
         "name": "home",
         "persistentVolumeClaim": {
@@ -60,8 +135,11 @@ c.KubeSpawner.volumes = [
             "name": "__SINGLEUSER_CONFIG_CM__",  # replaced by Helm template
         },
     },
-]
-c.KubeSpawner.volume_mounts = [
+]:
+    c.KubeSpawner.volumes = _upsert_named(c.KubeSpawner.volumes, _volume)
+
+c.KubeSpawner.volume_mounts = list(get_config("singleuser.extraVolumeMounts", []) or [])
+for _volume_mount in [
     {
         "name": "home",
         "mountPath": "/home/jovyan",
@@ -71,7 +149,16 @@ c.KubeSpawner.volume_mounts = [
         "mountPath": "/etc/jupyter/jupyter_server_config.py",
         "subPath": "jupyter_server_config.py",
     },
-]
+]:
+    c.KubeSpawner.volume_mounts = _upsert_named(
+        c.KubeSpawner.volume_mounts, _volume_mount
+    )
+
+if _shared_memory_enabled:
+    c.KubeSpawner.volumes = _with_shared_memory_volume(
+        c.KubeSpawner.volumes, _shared_memory_size_limit
+    )
+    c.KubeSpawner.volume_mounts = _with_shared_memory_mount(c.KubeSpawner.volume_mounts)
 
 # ---------------------------------------------------------------------------
 # Admin-provisioned nebi config (OCI registries, default-registry seed flag).
@@ -334,6 +421,42 @@ c.KubeSpawner.environment = env
 _PROFILE_GATING_KEYS = ("access", "groups", "users")
 
 
+def _translate_profile_shared_memory(profile):
+    """Translate the chart-owned profile key into valid KubeSpawner traits."""
+    translated = copy.deepcopy(profile)
+    overrides = translated.get("kubespawner_override")
+    if not isinstance(overrides, dict):
+        return translated
+
+    requested_size = overrides.pop("shm_size_limit", _MISSING_OVERRIDE)
+    if not _shared_memory_enabled:
+        if requested_size is not _MISSING_OVERRIDE:
+            log.warning(
+                "profiles: ignoring shm_size_limit for %r because shared memory is disabled",
+                translated.get("slug") or translated.get("display_name"),
+            )
+        return translated
+
+    overrides_shared_memory = (
+        requested_size is not _MISSING_OVERRIDE
+        or "volumes" in overrides
+        or "volume_mounts" in overrides
+    )
+    if not overrides_shared_memory:
+        return translated
+
+    size_limit = (
+        _shared_memory_size_limit
+        if requested_size is _MISSING_OVERRIDE
+        else _normalize_shared_memory_size_limit(requested_size)
+    )
+    configured_volumes = overrides.get("volumes", _MISSING_OVERRIDE)
+    configured_mounts = overrides.get("volume_mounts", _MISSING_OVERRIDE)
+    overrides["volumes"] = _profile_volumes_override(configured_volumes, size_limit)
+    overrides["volume_mounts"] = _profile_volume_mounts_override(configured_mounts)
+    return translated
+
+
 def _get_profile_groups(auth_state):
     """Resolve the user's full Keycloak group list for profile gating.
 
@@ -417,7 +540,7 @@ def _filter_profiles(profiles, groups, username, keycloak_profile_slugs=()):
             )
             continue
         clean = {k: v for k, v in profile.items() if k not in _PROFILE_GATING_KEYS}
-        visible.append(clean)
+        visible.append(_translate_profile_shared_memory(clean))
     return visible
 
 
