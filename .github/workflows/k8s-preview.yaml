@@ -235,10 +235,10 @@ jobs:
             --url "${{ steps.cf_dns.outputs.url }}" --keycloak-url "${{ steps.cf_dns.outputs.keycloak_url }}" --run-url "$RUN_URL" \
             --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}"
 
-      # A newer run for this PR (new commit, label re-added) cancels this one
-      # and takes over the comment and the label, and once the label is gone
-      # the "Stop preview" job owns the comment. Only touch either when
-      # neither applies.
+      # The label means "a preview is deploying or live". A newer run for
+      # this PR (new commit, label re-added) cancels this one and takes
+      # over both the label and the comment; once the label is gone the
+      # "Stop preview" job owns the comment. Only touch either otherwise.
       - name: Check whether this run still owns the preview comment and label
         id: owner
         if: always()
@@ -247,7 +247,7 @@ jobs:
             --jq '[.workflow_runs[] | select(.id != ${{ github.run_id }} and (.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending" or .status == "requested"))] | length')
           labeled=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" --jq '[.[].name] | index("deploy-preview") != null')
           echo "newer in-flight runs: $newer, deploy-preview label present: $labeled"
-          if [ "$newer" -eq 0 ] && [ "$labeled" = "true" ]; then echo "owner=true"; else echo "owner=false"; fi >> "$GITHUB_OUTPUT"
+          if [ "$newer" -eq 0 ] && [ "$labeled" = "true" ]; then echo "owner=true"; else echo "owner=false"; fi | tee -a "$GITHUB_OUTPUT"
 
       - name: Mark GitHub deployment inactive
         if: always() && env.DEPLOYMENT_ID != ''

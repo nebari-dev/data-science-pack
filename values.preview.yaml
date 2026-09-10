@@ -31,7 +31,7 @@ jupyterhub:
     profiles:
       - slug: micro-instance
         display_name: "Micro Instance"
-        description: "0.5 CPU / 1 GB RAM"
+        description: "0.5 CPU / 1 GB RAM: quick checks, smoke tests, reviewing a change."
         default: true
         kubespawner_override:
           cpu_limit: 0.5
@@ -40,7 +40,7 @@ jupyterhub:
           mem_guarantee: "512M"
       - slug: small-instance
         display_name: "Small Instance"
-        description: "1 CPU / 2 GB RAM"
+        description: "1 CPU / 2 GB RAM: interactive notebooks, light data exploration."
         kubespawner_override:
           cpu_limit: 1
           cpu_guarantee: 0.5
