@@ -1,74 +1,16 @@
-{{- if .Values.nebariapp.enabled }}
-apiVersion: reconcilers.nebari.dev/v1
-kind: NebariApp
-metadata:
-  name: {{ include "nebari-data-science-pack.fullname" . }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "nebari-data-science-pack.labels" . | nindent 4 }}
-spec:
-  hostname: {{ required "Set keycloak.hostname (for auto-derivation) or nebariapp.hostname explicitly." (include "nebari-data-science-pack.hubHostname" .) }}
-  service:
-    name: {{ .Values.nebariapp.service.name | default "proxy-public" }}
-    port: {{ .Values.nebariapp.service.port | default 80 }}
-  {{- with .Values.nebariapp.routing }}
-  routing:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
-  {{- with .Values.nebariapp.auth }}
-  auth:
-    enabled: {{ .enabled | default true }}
-    provider: {{ .provider | default "keycloak" }}
-    provisionClient: {{ .provisionClient | default true }}
-    redirectURI: {{ .redirectURI | default "/oauth2/callback" }}
-    {{- with .scopes }}
-    scopes:
-      {{- toYaml . | nindent 6 }}
-    {{- end }}
-    {{- if hasKey . "enforceAtGateway" }}
-    enforceAtGateway: {{ .enforceAtGateway }}
-    {{- end }}
-    {{- if hasKey . "forwardAccessToken" }}
-    forwardAccessToken: {{ .forwardAccessToken }}
-    {{- end }}
-    {{- with .tokenExchange }}
-    tokenExchange:
-      {{- toYaml . | nindent 6 }}
-    {{- end }}
-  {{- end }}
-  {{- with .Values.nebariapp.landingPage }}
-  landingPage:
-    enabled: {{ .enabled | default false }}
-    {{- with .displayName }}
-    displayName: {{ . | quote }}
-    {{- end }}
-    {{- with .description }}
-    description: {{ . | quote }}
-    {{- end }}
-    {{- with .icon }}
-    icon: {{ . | quote }}
-    {{- end }}
-    {{- with .category }}
-    category: {{ . | quote }}
-    {{- end }}
-    {{- with .priority }}
-    priority: {{ . }}
-    {{- end }}
-    {{- with .externalUrl }}
-    externalUrl: {{ . | quote }}
-    {{- end }}
-    {{- with .healthCheck }}
-    healthCheck:
-      enabled: {{ .enabled | default false }}
-      {{- with .path }}
-      path: {{ . | quote }}
-      {{- end }}
-      {{- with .intervalSeconds }}
-      intervalSeconds: {{ . }}
-      {{- end }}
-      {{- with .timeoutSeconds }}
-      timeoutSeconds: {{ . }}
-      {{- end }}
-    {{- end }}
-  {{- end }}
+{{- if .Values.nebariapp.enabled -}}
+{{- $spec := omit .Values.nebariapp "enabled" -}}
+{{- if (not $spec.hostname) -}}
+  {{- /* we cannot put this into the values directly, because nebariapp.hostname is used in multiple places in this chart */ -}}
+  {{- $defaultHostname := required "Set keycloak.hostname (for auto-derivation) or nebariapp.hostname explicitly." (include "nebari-data-science-pack.hubHostname" .) -}}
+  {{- $_ := set $spec "hostname" $defaultHostname -}}
+{{- end -}}
+{{- include "nebari-app.nebariApp" (dict
+    "metadata" (dict
+      "name"      (include "nebari-data-science-pack.fullname" .)
+      "namespace" .Release.Namespace
+      "labels"    (include "nebari-data-science-pack.labels" . | fromYaml)
+    )
+    "spec" $spec
+) -}}
 {{- end }}
