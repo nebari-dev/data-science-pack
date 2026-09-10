@@ -235,10 +235,11 @@ jobs:
             --url "${{ steps.cf_dns.outputs.url }}" --keycloak-url "${{ steps.cf_dns.outputs.keycloak_url }}" --run-url "$RUN_URL" \
             --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}"
 
-      # The label means "a preview is deploying or live". A newer run for
-      # this PR (new commit, label re-added) cancels this one and takes
-      # over both the label and the comment; once the label is gone the
-      # "Stop preview" job owns the comment. Only touch either otherwise.
+      # The label means "a preview is deploying or live". This run edits
+      # the comment and removes the label only when no newer run for this
+      # PR is in flight (a new commit or a re-added label cancels this run
+      # and the newer run takes over both) and the label is still present
+      # (a removed label means the "Stop preview" job is handling it).
       - name: Check whether this run still owns the preview comment and label
         id: owner
         if: always()
