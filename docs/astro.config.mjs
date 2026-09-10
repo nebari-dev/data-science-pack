@@ -55,6 +55,10 @@ export default defineConfig({
             { label: 'NebariApp Integration', slug: 'nebariapp-integration' },
           ],
         },
+        {
+          label: 'Development',
+          items: [{ label: 'PR Preview Environments', slug: 'pr-preview-workflow' }],
+        },
       ],
     }),
   ],
