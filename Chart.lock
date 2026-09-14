@@ -1,6 +1,9 @@
 dependencies:
 - name: jupyterhub
   repository: https://hub.jupyter.org/helm-chart/
-  version: 4.3.2
-digest: sha256:a95c93fe87aa2b61ac544065409bf8ef8b11a5603f0bf08b7280550a36982f2a
-generated: "2026-01-29T08:05:09.699746Z"
+  version: 4.4.0
+- name: nebari-app
+  repository: oci://quay.io/nebari/charts
+  version: 0.1.1
+digest: sha256:4d7d1ca480d696bc0b028ade6b034cfbd01b52745ee96083722ce56e3dc84d0a
+generated: "2026-09-07T08:38:23.53784235+02:00"

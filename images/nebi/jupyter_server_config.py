@@ -40,11 +40,7 @@ nebi_env = {
         "nebi",
         "nebi.db",
     ),
-    "NEBI_STORAGE_WORKSPACES_DIR": os.path.join(
-        os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")),
-        "nebi",
-        "workspaces",
-    ),
+    "NEBI_STORAGE_WORKSPACES_DIR": "/var/lib/nebi/workspaces",
 }
 nebi_remote_url = os.environ.get("NEBI_REMOTE_URL", "")
 if nebi_remote_url:
@@ -64,6 +60,19 @@ c.ServerProxy.servers = {
         "absolute_url": True,
         "new_browser_tab": False,
         "environment": nebi_env,
+        # jupyter-server-proxy forwards the browser's original Host and
+        # Origin headers (e.g. hub.example.com) unchanged to the proxied
+        # backend. nebi's local-mode listener only accepts loopback Host
+        # and, when present, loopback Origin headers (netguard). Host
+        # alone isn't enough: the initial page load has no Origin header
+        # and passes, but every fetch/XHR the Nebi frontend then makes
+        # DOES send Origin, so without this override those calls 403 and
+        # the app renders blank after the shell loads. Force both to
+        # loopback values.
+        "request_headers_override": {
+            "Host": "localhost:{port}",
+            "Origin": "http://localhost:{port}",
+        },
         "launcher_entry": {
             "title": "Nebi",
             "enabled": True,

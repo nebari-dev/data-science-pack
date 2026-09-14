@@ -77,3 +77,28 @@ jobs:
           git add .
           git commit -m "Release ${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}"
           git push origin gh-pages --force
+
+      # Stage a clean chart source directory from the packaged tarball.
+      # `helm package` applies .helmignore, so extracting the .tgz yields
+      # _stage/<chart-name>/ without VCS/dev junk. This is what the central
+      # repo's source tree receives, and it matches the artifact we publish
+      # to our own gh-pages above.
+      - name: Stage chart source for central sync
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          mkdir -p _stage
+          tar -xzf *.tgz -C _stage
+
+      # Open a PR in nebari-dev/helm-repository to publish this chart to the
+      # central catalog (gh-pages index + quay.io OCI). On merge, that repo's
+      # Release Helm Charts workflow packages, indexes, and publishes it.
+      # Requires the org secret NEBARI_HELM_REPO_TOKEN to be granted to this
+      # repository (fine-grained PAT with contents+PR write on helm-repository).
+      - name: Sync chart to central helm-repository
+        if: steps.check.outputs.exists == 'false'
+        uses: nebari-dev/helm-repository/.github/actions/sync-chart@577b5a8b7575bb9a97ee06aaca0fcdade4f177bb  # main 2026-06-19
+        with:
+          chart-path: _stage/nebari-data-science-pack
+          chart-name: nebari-data-science-pack
+          token: ${{ secrets.NEBARI_HELM_REPO_TOKEN }}
+          lint-chart: 'false'

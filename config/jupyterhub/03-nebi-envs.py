@@ -6,7 +6,6 @@ import logging
 import os
 from urllib.request import Request, urlopen
 
-
 log = logging.getLogger(__name__)
 
 # Token exchange functions (_extract_error_body, _sync_refresh_access_token,
@@ -84,8 +83,10 @@ def get_nebi_environments(user):
                     )
                 else:
                     log.warning("nebi-envs: hub API returned auth_state=None for %s", username)
-            except Exception as exc:
-                log.error("nebi-envs: failed to fetch auth_state for %s: %s", username, exc)
+            except Exception:
+                log.exception(
+                    "nebi-envs: failed to fetch auth_state for %s", username,
+                )
         else:
             log.warning("nebi-envs: JUPYTERHUB_API_URL/TOKEN not set, cannot fetch auth_state")
     if not auth_state:
@@ -129,10 +130,10 @@ def get_nebi_environments(user):
         try:
             with urlopen(req, timeout=10) as resp:
                 workspaces = json.loads(resp.read())
-        except Exception as exc:
-            log.error(
-                "nebi-envs: failed to fetch workspaces for %s: %s (url=%s)",
-                username, exc, workspaces_url,
+        except Exception:
+            log.exception(
+                "nebi-envs: failed to fetch workspaces for %s (url=%s)",
+                username, workspaces_url,
             )
             return []
 

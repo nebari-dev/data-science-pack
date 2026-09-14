@@ -16,13 +16,29 @@ A Helm chart for deploying JupyterHub with [jhub-apps](https://github.com/nebari
 
 ### Install from Helm Repository
 
+The chart is published to the central Nebari Helm repository:
+
 ```bash
-helm repo add nebari https://nebari-dev.github.io/nebari-data-science-pack
+helm repo add nebari https://raw.githubusercontent.com/nebari-dev/helm-repository/gh-pages/
 helm repo update
 helm install data-science-pack nebari/nebari-data-science-pack
 ```
 
+It is also available as an OCI artifact on quay.io (no `helm repo add` needed):
+
+```bash
+helm install data-science-pack oci://quay.io/nebari/charts/nebari-data-science-pack --version <version>
+```
+
+> **Cutover note:** releases from `0.1.0-alpha.16` onward publish to the central
+> repository above. The previous per-repo index at
+> `https://nebari-dev.github.io/nebari-data-science-pack` is frozen; releases
+> packaged there before the cutover remain installable from it, but new
+> versions land only in the central repository.
+
 ### Install from Source
+
+Requires Helm 3.17 or newer (the `nebari-app` subchart uses `toYamlPretty`).
 
 ```bash
 git clone https://github.com/nebari-dev/nebari-data-science-pack.git
@@ -57,6 +73,31 @@ make down
 ## Configuration
 
 See `values.yaml` for all configuration options. The chart wraps the [JupyterHub Helm chart](https://z2jh.jupyter.org/) - all `jupyterhub.*` values are passed through.
+
+### Nebi Registries
+
+Admins can provision OCI registries for every user's nebi instance via
+`nebi.registries`. Only public (unauthenticated) registries are supported;
+entries carry no credentials:
+
+```yaml
+nebi:
+  registries:
+    - name: acme-registry
+      url: registry.acme.com
+      namespace: acme-envs
+      default: true
+```
+
+Each entry follows nebi's own `registries.entries` schema (`name`, `url`,
+`namespace`, `default`) and is rendered into a ConfigMap mounted into user
+pods, so entries are locked in the UI rather than editable per-user.
+
+Set `nebi.seedDefaultRegistry: false` to remove the built-in
+`quay.io/nebari_environments` registry that nebi seeds by default.
+
+Both settings only take effect for user servers started after the hub pod
+restarts, since the mount wiring lives in the hub ConfigMap.
 
 ## Shared Storage
 
@@ -120,6 +161,39 @@ To release a new version:
    - Publishes the chart to GitHub Pages
 
 **Note:** Enable GitHub Pages on the `gh-pages` branch in repo settings after the first release.
+
+## Documentation
+
+The docs site lives in [`docs/`](docs/) and is built with [Astro](https://astro.build) +
+[Starlight](https://starlight.astro.build) using the shared `@nebari/starlight` theme. It
+deploys to [packs.nebari.dev/data-science-pack/](https://packs.nebari.dev/data-science-pack/)
+on every merge to `main`; pull requests that touch `docs/` get a preview URL posted as a
+comment.
+
+Administrator guides:
+
+- [Admin setup](https://packs.nebari.dev/data-science-pack/admin-setup/) - cluster
+  prerequisites, the one required value, and what the chart creates.
+- [Values reference](https://packs.nebari.dev/data-science-pack/values-reference/) -
+  field-by-field detail for every value.
+- [Server profiles](https://packs.nebari.dev/data-science-pack/server-profiles/) - sizing
+  JupyterLab servers and gating profiles by group.
+- [Nebi integration](https://packs.nebari.dev/data-science-pack/nebi-integration/) - images,
+  OIDC clients, token exchange, registries.
+- [MLflow integration](https://packs.nebari.dev/data-science-pack/mlflow-integration/) -
+  letting notebooks log experiments to MLflow.
+
+```bash
+cd docs
+npm ci
+npm run dev     # dev server with hot reload at http://localhost:4321
+npm run build   # static build into docs/dist/
+npm test        # unit tests
+```
+
+Pages live in `docs/src/content/docs/` - each `.md` or `.mdx` file becomes a page, and the
+sidebar is configured in `docs/astro.config.mjs`. See [`docs/README.md`](docs/README.md) for
+details.
 
 ## License
 

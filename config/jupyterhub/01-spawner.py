@@ -5,12 +5,16 @@ import asyncio
 import json
 import logging
 import os
+import string
 import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+import escapism
+from kubernetes_asyncio.client.rest import ApiException
+from kubespawner.objects import make_pvc
 from z2jh import get_config
 
 log = logging.getLogger(__name__)
@@ -31,6 +35,9 @@ log = logging.getLogger(__name__)
 c.KubeSpawner.storage_pvc_ensure = True
 c.KubeSpawner.storage_capacity = get_config("custom.storage-capacity", "20Gi")
 c.KubeSpawner.storage_access_modes = ["ReadWriteOnce"]
+# KubeSpawner 7 defaults to slug_scheme="safe". Keep the old escaped slug
+# behavior until PVC names and affinity labels are intentionally migrated.
+c.KubeSpawner.slug_scheme = "escape"
 # Without this override, KubeSpawner's default template is
 # `claim-{username}--{servername}`, so for jhub-apps named servers it ensures
 # a per-server PVC — while the `volumes` block below mounts the per-user
@@ -66,13 +73,65 @@ c.KubeSpawner.volume_mounts = [
     },
 ]
 
+# ---------------------------------------------------------------------------
+# Admin-provisioned nebi config (OCI registries, default-registry seed flag).
+# Helm renders the deployer's `nebi.registries` / `nebi.seedDefaultRegistry`
+# values into a ConfigMap and substitutes its name below; the placeholder
+# stays literal (and is skipped) when the deployer customizes neither value.
+# nebi searches /etc/nebi/config.yaml at boot, so mounting is all it takes.
+# ---------------------------------------------------------------------------
+_NEBI_CONFIG_CM = "__NEBI_CONFIG_CM__"
+if _NEBI_CONFIG_CM and not _NEBI_CONFIG_CM.startswith("__"):
+    c.KubeSpawner.volumes.append(
+        {
+            "name": "nebi-config",
+            "configMap": {"name": _NEBI_CONFIG_CM},
+        }
+    )
+    c.KubeSpawner.volume_mounts.append(
+        {
+            "name": "nebi-config",
+            "mountPath": "/etc/nebi/config.yaml",
+            "subPath": "config.yaml",
+        }
+    )
+
 c.KubeSpawner.notebook_dir = "/home/jovyan"
 c.KubeSpawner.working_dir = "/home/jovyan"
+
+# Apply umask 0002 to the singleuser server process so files in /shared/<group>
+# are group-writable (664/2775). This image is NOT jupyter docker-stacks — there
+# is no start.sh to apply the umask, and the k8s `command:` overrides any
+# Dockerfile ENTRYPOINT. So we wrap the server command here: `umask` runs before
+# `exec`, and the kernel and terminal processes (children of the server) inherit
+# it. Done hub-side rather than in the image so it takes effect without an image
+# rebuild / tag bump. The value is hardcoded (not read from an env var) because it
+# is intrinsically coupled to the shared-storage setgid design (2775 dirs), not an
+# independently tunable knob. `$0` is the real command (jupyterhub-singleuser);
+# `$@` is KubeSpawner's args, appended by k8s after `command`. See
+# https://github.com/nebari-dev/data-science-pack/issues/144
+c.KubeSpawner.cmd = [
+    "sh",
+    "-c",
+    'umask 0002; exec "$0" "$@"',
+    "jupyterhub-singleuser",
+]
 
 # affinity — co-locate all pods for the same user on the same node.
 # hcloud-volumes is ReadWriteOnce — only one node can mount it at a time.
 # Pod affinity ensures jhub-apps app pods land on the same node as the
 # user's JupyterLab pod so the shared home PVC can be mounted by all of them.
+#
+# The affinity selects on a chart-owned label set via extra_labels below,
+# NOT on kubespawner's hub.jupyter.org/username label: kubespawner escapes
+# that label with a different scheme (label-safe slug, e.g.
+# "tpotts-openteams-com---c9bc22a3") than the {username} expansion used in
+# extra_pod_config templates (DNS escaping, e.g. "tpotts-40openteams-2ecom").
+# For any username needing escaping (emails), label != affinity value, the
+# scheduler's self-match bootstrap never applies, and every spawn deadlocks
+# in Pending ("didn't match pod affinity rules"). Using the identical
+# template string on both sides guarantees they render equal for every
+# username shape.
 #
 # securityContext.fsGroup: 100 — GID 100 (users group) as the pod's fsGroup.
 # Kubernetes adds GID 100 as a supplemental group and chgrps mounted volumes
@@ -89,6 +148,16 @@ c.KubeSpawner.working_dir = "/home/jovyan"
 # extra_pod_config applies pod.spec attributes with a top-level overwrite —
 # any securityContext we set here REPLACES the one fs_gid would produce, so
 # both fields must live in this dict together.
+# Merge with singleuser.extraLabels rather than assign: z2jh's default there
+# is hub.jupyter.org/network-access-hub: "true", which the hub NetworkPolicy
+# requires for singleuser -> hub API traffic. Dropping it leaves the server
+# unable to complete its startup handshake with the hub, so it never binds
+# its port and every spawn dies on the hub's http_timeout.
+c.KubeSpawner.extra_labels = {
+    **get_config("singleuser.extraLabels", {}),
+    "nebari.dev/colocate-user": "{username}",
+}
+
 c.KubeSpawner.extra_pod_config = {
     "affinity": {
         "podAffinity": {
@@ -97,7 +166,7 @@ c.KubeSpawner.extra_pod_config = {
                     "labelSelector": {
                         "matchExpressions": [
                             {
-                                "key": "hub.jupyter.org/username",
+                                "key": "nebari.dev/colocate-user",
                                 "operator": "In",
                                 "values": ["{username}"],
                             }
@@ -161,6 +230,69 @@ if nebi_image:
 
 
 # ---------------------------------------------------------------------------
+# Enterprise CA bundle (TLS-inspected egress)
+# ---------------------------------------------------------------------------
+# On clusters behind a TLS-inspecting proxy, NIC core's trust-manager projects
+# the org CA into every namespace as a ConfigMap. We merge it with the image's
+# system CA bundle into an emptyDir and point the standard CA env vars at the
+# merged file, so pip/conda/git verify BOTH proxy-inspected (org-signed) and
+# genuine public-root endpoints with no flags. Gated off by default.
+_trust_bundle_enabled = get_chart_config("trust-bundle-enabled", False)
+_trust_bundle_configmap = get_chart_config("trust-bundle-configmap", "nebari-trust-bundle")
+_trust_bundle_key = get_chart_config("trust-bundle-key", "ca-certificates.crt")
+_MERGED_CA_PATH = "/etc/ssl/certs-extra/ca-bundle.crt"
+
+
+def _setup_trust_bundle(spawner):
+    """Mount + merge the org CA into the pod and set the CA env vars.
+
+    The merge init container runs spawner.image so it reads the SAME system CA
+    store the main container has (a generic busybox would not). The org-ca
+    ConfigMap is mounted optional, so a cluster without trust-manager — or a
+    spawn that races the projection — still starts; the merged file is then
+    just the system bundle, i.e. no behavior change.
+    """
+    spawner.volumes = list(spawner.volumes) + [
+        {
+            "name": "org-ca",
+            "configMap": {"name": _trust_bundle_configmap, "optional": True},
+        },
+        {"name": "ca-merged", "emptyDir": {}},
+    ]
+    spawner.volume_mounts = list(spawner.volume_mounts) + [
+        {"name": "ca-merged", "mountPath": "/etc/ssl/certs-extra"},
+    ]
+    spawner.init_containers = list(spawner.init_containers) + [
+        {
+            "name": "merge-ca-bundle",
+            "image": spawner.image,
+            "imagePullPolicy": get_config("custom.nebi-image-pull-policy", "IfNotPresent"),
+            "command": [
+                "/bin/sh",
+                "-c",
+                (
+                    "cp /etc/ssl/certs/ca-certificates.crt /merged/ca-bundle.crt && "
+                    f"if [ -f /org-ca/{_trust_bundle_key} ]; then "
+                    f"cat /org-ca/{_trust_bundle_key} >> /merged/ca-bundle.crt; fi"
+                ),
+            ],
+            "volumeMounts": [
+                {"name": "org-ca", "mountPath": "/org-ca", "readOnly": True},
+                {"name": "ca-merged", "mountPath": "/merged"},
+            ],
+        },
+    ]
+    spawner.environment = {
+        **spawner.environment,
+        "REQUESTS_CA_BUNDLE": _MERGED_CA_PATH,
+        "SSL_CERT_FILE": _MERGED_CA_PATH,
+        "NODE_EXTRA_CA_CERTS": _MERGED_CA_PATH,
+        "CURL_CA_BUNDLE": _MERGED_CA_PATH,
+        "GIT_SSL_CAINFO": _MERGED_CA_PATH,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Environment variables
 # ---------------------------------------------------------------------------
 # Start with extraEnv from values.yaml so deployers can inject env vars
@@ -171,6 +303,19 @@ env["HOME"] = "/home/jovyan"
 nebi_remote_url = get_chart_config("nebi-remote-url")
 if nebi_remote_url:
     env["NEBI_REMOTE_URL"] = nebi_remote_url
+
+env["NEBI_STORAGE_WORKSPACES_DIR"] = "/var/lib/nebi/workspaces"
+
+# nebi's local-mode netguard only accepts loopback Origin headers by default.
+# Browsers send the hub's public origin on CORS-mode asset requests (the SPA
+# bundle is emitted as <script type="module" crossorigin>), which blanked the
+# Nebi tile (https://github.com/nebari-dev/nebi/issues/489). Allow the hub
+# origin explicitly; the env var reaches nebi because jupyter-server-proxy
+# children inherit the pod environment. Older nebi builds without
+# server.allowed_origins ignore it.
+_hub_external_host = get_chart_config("external-url")
+if _hub_external_host:
+    env["NEBI_SERVER_ALLOWED_ORIGINS"] = f"https://{_hub_external_host}"
 
 c.KubeSpawner.environment = env
 
@@ -185,7 +330,12 @@ c.KubeSpawner.environment = env
 # ``kubespawner_override`` accepts any valid KubeSpawner trait so deployers
 # can add node_selector, image, extra_resource_limits (GPU), etc. without
 # code changes. Empty list = no profile selector (single-instance mode).
-# Keys used only for group gating; KubeSpawner must never see them.
+# Keys used only for group gating; KubeSpawner must never see them. They are
+# stripped per user in _filter_profiles because gating is a per-user decision.
+# ``image-variant`` is the other chart-only key — it is stripped once at load
+# in _resolve_image_variants because its effect (image injection) is the same
+# for every user and jhub-apps reads the resolved list too. A future custom key
+# belongs in whichever of the two matches how it is evaluated.
 _PROFILE_GATING_KEYS = ("access", "groups", "users")
 
 
@@ -214,15 +364,14 @@ def _get_profile_groups(auth_state):
     return result
 
 
-def _get_keycloak_profile_names(auth_state):
-    """Profile display_names allowed via ``access: keycloak``.
+def _get_keycloak_profile_slugs(auth_state):
+    """Profile slugs allowed via ``access: keycloak``.
 
-    Read from the user's ``jupyterlab_profiles`` claim, which a Keycloak
-    attribute mapper stamps into the token from the user's group/user
-    attributes (matches classic Nebari).
+    Read from ``auth_state["allowed_jupyterlab_profiles"]``, which the
+    authenticator resolves at login from the user's ``jupyterlab-profiles``
+    Keycloak role (its ``profiles`` attribute) on the hub client.
     """
-    oauth_user = (auth_state or {}).get("oauth_user") or {}
-    return oauth_user.get("jupyterlab_profiles", []) or []
+    return (auth_state or {}).get("allowed_jupyterlab_profiles", []) or []
 
 
 def _profile_username(auth_state):
@@ -236,19 +385,20 @@ def _profile_username(auth_state):
     return oauth_user.get("preferred_username") or ""
 
 
-def _filter_profiles(profiles, groups, username, keycloak_profile_names=()):
+def _filter_profiles(profiles, groups, username, keycloak_profile_slugs=()):
     """Return the profiles a user may select, stripped of gating-only keys.
 
     Mirrors classic Nebari's ``access:`` semantics on each profile:
       * ``access: all`` (or omitted) — visible to everyone.
       * ``access: yaml`` — visible only if the user is in the profile's
         ``users`` list or shares one of the profile's ``groups``.
-      * ``access: keycloak`` — visible only if the profile's ``display_name``
-        is in the user's ``jupyterlab_profiles`` claim, which a Keycloak
-        attribute mapper stamps into the token from group/user attributes.
+      * ``access: keycloak``: visible only if the profile's ``slug`` is in
+        the allow-list granted by the user's ``jupyterlab-profiles`` Keycloak
+        role (its ``profiles`` attribute), resolved at login by the
+        authenticator and stamped into auth_state.
     """
     group_set = set(groups)
-    profile_name_set = set(keycloak_profile_names)
+    profile_slug_set = set(keycloak_profile_slugs)
     visible = []
     for profile in profiles:
         access = profile.get("access", "all")
@@ -258,7 +408,7 @@ def _filter_profiles(profiles, groups, username, keycloak_profile_names=()):
             if not in_users and not in_groups:
                 continue
         elif access == "keycloak":
-            if profile.get("display_name") not in profile_name_set:
+            if profile.get("slug") not in profile_slug_set:
                 continue
         elif access != "all":
             # Fail closed on an unrecognized access mode: restricted profiles
@@ -287,8 +437,8 @@ async def _render_profile_list(spawner):
     auth_state = await spawner.user.get_auth_state()
     groups = _get_profile_groups(auth_state)
     username = _profile_username(auth_state)
-    keycloak_profile_names = _get_keycloak_profile_names(auth_state)
-    visible = _filter_profiles(_profiles, groups, username, keycloak_profile_names)
+    keycloak_profile_slugs = _get_keycloak_profile_slugs(auth_state)
+    visible = _filter_profiles(_profiles, groups, username, keycloak_profile_slugs)
     log.info(
         "profiles: user %s (groups=%s) sees %d/%d profile(s): %s",
         username, groups, len(visible), len(_profiles),
@@ -297,7 +447,110 @@ async def _render_profile_list(spawner):
     return visible
 
 
-_profiles = get_config("custom.profiles", [])
+def _resolve_image_variants(profiles, base_name, base_tag, overrides):
+    """Inject a variant of the singleuser image into ``image-variant`` profiles.
+
+    Every jupyterlab image variant (today only ``gpu``) is built from the same
+    commit as the CPU image and shares its ``sha-<short>`` tag, so a profile
+    marked ``image-variant: gpu`` resolves to
+    ``<singleuser.image.name>-gpu:<singleuser.image.tag>`` and stays current
+    across pack updates without a hardcoded SHA in the overlay (issue #230).
+
+    Order of precedence for the injected image:
+      1. the profile's own ``kubespawner_override.image`` — never touched
+      2. ``custom.image-variants.<variant>`` — deployer override, full ref
+         (mirrored registries, a variant published elsewhere)
+      3. ``<base_name>-<variant>:<base_tag>`` — derived
+      4. nothing — ``base_name``/``base_tag`` empty (schema-valid in z2jh);
+         the profile falls back to the CPU default image and the hub warns.
+    An empty ``image-variant:`` value is stripped without injecting anything
+    and warns, since it is almost certainly a mistake.
+
+    The ``image-variant`` key is stripped whatever its value — KubeSpawner
+    must never see it. Variant profiles are rebuilt as new dicts; the rest pass
+    through by reference. Nothing is mutated — the input list and its dicts are
+    left untouched.
+
+    Every degraded path only warns, because raising here would break hub
+    startup (and therefore login) for every user. Besides the empty-ref
+    fallback above, this covers: ``custom.image-variants`` that is not a
+    mapping, or maps a variant to something other than a non-empty string
+    (both ignored); an ``image-variants`` key no profile claims (a likely typo
+    that would otherwise silently hand the mirrored-registry deployer the
+    derived ref); and a profile that also declares ``profile_options.image`` —
+    KubeSpawner applies the selected choice's ``kubespawner_override`` AFTER
+    the profile-level one and replaces rather than merges, so the choice's
+    image silently wins over the injected one at spawn time (while jhub-apps
+    still displays the injected one).
+    """
+    if overrides and not isinstance(overrides, dict):
+        log.warning(
+            "profiles: custom.image-variants is %s, expected a mapping of "
+            "variant -> image ref — ignoring it",
+            type(overrides).__name__,
+        )
+        overrides = {}
+    overrides = overrides or {}
+    claimed_variants = set()
+    resolved = []
+    for profile in profiles:
+        if "image-variant" not in profile:
+            resolved.append(profile)
+            continue
+        name = profile.get("slug") or profile.get("display_name")
+        variant = profile["image-variant"]
+        profile = {k: v for k, v in profile.items() if k != "image-variant"}
+        if not variant:
+            log.warning("profiles: %r has an empty image-variant — no image injected", name)
+            resolved.append(profile)
+            continue
+        claimed_variants.add(variant)
+        override = dict(profile.get("kubespawner_override") or {})
+        if not override.get("image"):
+            image = overrides.get(variant)
+            if image and not isinstance(image, str):
+                log.warning(
+                    "profiles: custom.image-variants.%s is %r, expected an image ref "
+                    "string — ignoring it",
+                    variant, image,
+                )
+                image = None
+            if not image and base_name and base_tag:
+                image = f"{base_name}-{variant}:{base_tag}"
+            if image:
+                override["image"] = image
+                log.info("profiles: %r image-variant %r — injected image %s", name, variant, image)
+            else:
+                log.warning(
+                    "profiles: %r has image-variant %r but no image could be derived "
+                    "(singleuser.image.name/tag empty?) and custom.image-variants.%s is "
+                    "unset — the profile will spawn the CPU default image",
+                    name, variant, variant,
+                )
+        if "image" in (profile.get("profile_options") or {}):
+            log.warning(
+                "profiles: %r has image-variant %r but declares profile_options.image; "
+                "the selected choice's image overrides the injected one at spawn time — "
+                "drop the option or point its choices at the variant image",
+                name, variant,
+            )
+        profile["kubespawner_override"] = override
+        resolved.append(profile)
+    for unclaimed in sorted(set(overrides) - claimed_variants, key=str):
+        log.warning(
+            "profiles: custom.image-variants.%s matches no profile's image-variant "
+            "(typo?) — variant profiles use the derived ref instead",
+            unclaimed,
+        )
+    return resolved
+
+
+_profiles = _resolve_image_variants(
+    get_config("custom.profiles", []),
+    get_config("singleuser.image.name", ""),
+    get_config("singleuser.image.tag", ""),
+    get_config("custom.image-variants", {}),
+)
 if _profiles:
     c.KubeSpawner.profile_list = _render_profile_list
     log.info(
@@ -330,7 +583,7 @@ def _extract_error_body(exc):
     if hasattr(exc, "read"):
         try:
             return exc.read().decode("utf-8", errors="replace")
-        except Exception:
+        except (AttributeError, OSError):
             pass
     return ""
 
@@ -349,7 +602,7 @@ def _decode_jwt_claims(token):
         # Add padding
         payload += "=" * (4 - len(payload) % 4)
         return json.loads(base64.urlsafe_b64decode(payload))
-    except Exception:
+    except (ValueError, TypeError):
         return {}
 
 
@@ -408,9 +661,9 @@ def _sync_refresh_access_token(refresh_token, keycloak_url, hub_client_id, hub_c
             return token
     except Exception as exc:
         resp_body = _extract_error_body(exc)
-        log.error(
-            "token-exchange step 1 FAILED: %s response=%s (url=%s, client_id=%s)",
-            exc, resp_body, keycloak_url, hub_client_id,
+        log.exception(
+            "token-exchange step 1 FAILED: response=%s (url=%s, client_id=%s)",
+            resp_body, keycloak_url, hub_client_id,
         )
         return ""
 
@@ -454,9 +707,9 @@ def _sync_exchange_access_token_for_nebi_id_token(
             return token
     except Exception as exc:
         resp_body = _extract_error_body(exc)
-        log.error(
-            "token-exchange step 2 FAILED: %s response=%s (url=%s, audience=%s, client_id=%s)",
-            exc, resp_body, keycloak_url, nebi_client_id, hub_client_id,
+        log.exception(
+            "token-exchange step 2 FAILED: response=%s (url=%s, audience=%s, client_id=%s)",
+            resp_body, keycloak_url, nebi_client_id, hub_client_id,
         )
         return ""
 
@@ -494,9 +747,9 @@ def _sync_exchange_nebi_id_token_for_jwt(nebi_id_token, nebi_internal_url):
             return token
     except Exception as exc:
         resp_body = _extract_error_body(exc)
-        log.error(
-            "token-exchange step 3 FAILED: %s response=%s (url=%s)",
-            exc, resp_body, session_url,
+        log.exception(
+            "token-exchange step 3 FAILED: response=%s (url=%s)",
+            resp_body, session_url,
         )
         return ""
 
@@ -631,6 +884,34 @@ async def _nebi_pre_spawn_hook(spawner):
                 "NEBI_DATA_DIR": nebi_env_dir,
             }
 
+            nebi_pull_env = [
+                {"name": "HOME", "value": nebi_env_dir},
+                {"name": "NEBI_DATA_DIR", "value": nebi_env_dir},
+                {"name": "NEBI_AUTH_TOKEN", "value": nebi_jwt},
+                {"name": "NEBI_REMOTE_URL", "value": nebi_remote},
+            ]
+            nebi_pull_mounts = [
+                {"name": "nebi-bin", "mountPath": "/usr/local/bin/nebi", "subPath": "nebi"},
+                {"name": "nebi-env", "mountPath": nebi_env_dir},
+            ]
+            # When the org CA bundle is enabled, nebi-pull's own egress
+            # (`nebi pull` over HTTPS, `pixi install` from PyPI/conda) also goes
+            # through the inspecting proxy, so it needs the merged bundle too.
+            # _setup_trust_bundle ran first (see _pre_spawn_hook ordering), so
+            # the ca-merged volume exists and merge-ca-bundle precedes this in
+            # init-container order, leaving the merged file ready to mount.
+            if _trust_bundle_enabled:
+                nebi_pull_env += [
+                    {"name": "REQUESTS_CA_BUNDLE", "value": _MERGED_CA_PATH},
+                    {"name": "SSL_CERT_FILE", "value": _MERGED_CA_PATH},
+                    {"name": "NODE_EXTRA_CA_CERTS", "value": _MERGED_CA_PATH},
+                    {"name": "CURL_CA_BUNDLE", "value": _MERGED_CA_PATH},
+                    {"name": "GIT_SSL_CAINFO", "value": _MERGED_CA_PATH},
+                ]
+                nebi_pull_mounts += [
+                    {"name": "ca-merged", "mountPath": "/etc/ssl/certs-extra"},
+                ]
+
             spawner.init_containers = list(spawner.init_containers) + [{
                 "name": "nebi-pull",
                 "image": spawner.image,
@@ -640,22 +921,16 @@ async def _nebi_pre_spawn_hook(spawner):
                     # Pull workspace files into the ephemeral dir, then
                     # pre-install the pixi environment so jhub-app-proxy's
                     # `pixi run` doesn't hit the ready-check timeout.
-                    f"mkdir -p {ws_dir} && "
-                    f"nebi pull {workspace_name} -o {ws_dir} --force && "
-                    f"pixi install --manifest-path {ws_dir}/pixi.toml && "
-                    f"chmod -R a+rw {nebi_env_dir}/nebi.db* || "
-                    f"echo 'WARNING: nebi pull or pixi install failed for {workspace_name}'",
+                    (
+                        f"mkdir -p {ws_dir} && "
+                        f"nebi pull {workspace_name} -o {ws_dir} --force && "
+                        f"pixi install --manifest-path {ws_dir}/pixi.toml && "
+                        f"chmod -R a+rw {nebi_env_dir}/nebi.db* || "
+                        f"echo 'WARNING: nebi pull or pixi install failed for {workspace_name}'"
+                    ),
                 ],
-                "env": [
-                    {"name": "HOME", "value": nebi_env_dir},
-                    {"name": "NEBI_DATA_DIR", "value": nebi_env_dir},
-                    {"name": "NEBI_AUTH_TOKEN", "value": nebi_jwt},
-                    {"name": "NEBI_REMOTE_URL", "value": nebi_remote},
-                ],
-                "volumeMounts": [
-                    {"name": "nebi-bin", "mountPath": "/usr/local/bin/nebi", "subPath": "nebi"},
-                    {"name": "nebi-env", "mountPath": nebi_env_dir},
-                ],
+                "env": nebi_pull_env,
+                "volumeMounts": nebi_pull_mounts,
             }]
     except Exception:
         log.exception("Nebi auto-auth failed for %s (pod will still spawn)", spawner.user.name)
@@ -733,7 +1008,8 @@ async def _setup_shared_storage(spawner, groups):
     Creates /shared/<group> on the PVC with:
     - chown 0:100 so group owner is GID 100 (users), matching pod fs_gid
     - chmod 2775 (rwxrwsr-x) so group has write and setgid propagates GID to new files
-    Combined with NB_UMASK=0002, new files are group-writable (664/775).
+    Combined with the server's umask 0002 (see c.KubeSpawner.cmd), new files
+    are group-writable (664/775).
     """
     log.info(
         "shared-storage: setting up PVC mounts for user %s, groups: %s",
@@ -794,7 +1070,8 @@ def _generate_nss_files(username, uid=1000, gid=1000):
 async def _setup_nss_wrapper(spawner, username, groups):
     """Configure libnss_wrapper so whoami/id report the real username.
 
-    Sets LD_PRELOAD, NSS_WRAPPER_* paths, and NB_UMASK=0002.
+    Sets LD_PRELOAD and the NSS_WRAPPER_* paths so getpwuid/getgrgid resolve
+    against the generated /tmp/passwd and /tmp/group.
     Adds a postStart lifecycle hook that:
     - writes /tmp/passwd and /tmp/group using printf (safe for special chars in username)
     - when shared PVC is enabled: symlinks ~/shared → PVC mount prefix
@@ -815,7 +1092,6 @@ async def _setup_nss_wrapper(spawner, username, groups):
         "LD_PRELOAD": "libnss_wrapper.so",
         "NSS_WRAPPER_PASSWD": "/tmp/passwd",
         "NSS_WRAPPER_GROUP": "/tmp/group",
-        "NB_UMASK": "0002",
     }
     log.debug("nss-wrapper: LD_PRELOAD and NSS_WRAPPER_* set in spawner environment")
 
@@ -901,11 +1177,65 @@ async def _setup_nss_wrapper(spawner, username, groups):
 
 
 # ---------------------------------------------------------------------------
+# Workspace PVC helper
+# ---------------------------------------------------------------------------
+
+async def _ensure_workspace_pvc(spawner):
+    """Create a per-user RWO PVC for nebi workspaces if it doesn't exist.
+
+    KubeSpawner only manages one PVC natively (the home directory).  We
+    create the second PVC here via the Kubernetes API, mirroring the same
+    retry logic KubeSpawner uses internally.
+    """
+    username = spawner.user.name
+    safe_chars = set(string.ascii_lowercase + string.digits)
+    slug = escapism.escape(username, safe=safe_chars, escape_char='-').lower()
+    pvc_name = f"nebi-workspaces-{slug}"
+    namespace = spawner.namespace
+
+    storage_class = get_config("custom.workspace-storage-class", "") or None
+    storage_capacity = get_config("custom.workspace-storage-capacity", "20Gi")
+
+    pvc = make_pvc(
+        name=pvc_name,
+        storage_class=storage_class,
+        access_modes=["ReadWriteOnce"],
+        selector=None,
+        storage=storage_capacity,
+        labels={
+            "app": "nebi-workspaces",
+            "hub.jupyter.org/username": slug,
+        },
+    )
+
+    try:
+        await spawner.api.create_namespaced_persistent_volume_claim(
+            namespace=namespace,
+            body=pvc,
+        )
+        log.info("Created workspace PVC %s in namespace %s", pvc_name, namespace)
+    except ApiException as exc:
+        if exc.status == 409:
+            log.info("Workspace PVC %s already  exists", pvc_name)
+        else:
+            log.error("Failed to create workspace PVC %s: %s", pvc_name, exc)
+            raise
+
+    return pvc_name
+
+
+# ---------------------------------------------------------------------------
 # Pre-spawn hook orchestrator
 # ---------------------------------------------------------------------------
-# Chains the three independent concerns: Nebi auto-auth, shared storage mounts,
-# and NSS wrapper setup. Each is implemented as its own focused function above.
-# The orchestrator always runs so NSS wrapper is active even without Nebi/shared.
+# Chains the independent concerns: 
+# 1. Nebi auto-auth
+# 2. workspace PVC
+# 3. Resolve groups
+# 5. shared storage mounts
+# 4. NSS wrapper setup
+# 
+# Each is implemented as its own focused function above. The orchestrator always
+# runs so NSS wrapper is active even without Nebi/shared.
 
 _nebi_auth_configured = bool(nebi_remote_url and get_chart_config("nebi-internal-url"))
 log.info(
@@ -932,18 +1262,57 @@ async def _pre_spawn_hook(spawner):
     preferred_username = oauth_user.get("preferred_username") or username
     spawner.environment = {**spawner.environment, "PREFERRED_USERNAME": preferred_username}
 
-    # 1. Nebi auto-auth (non-fatal)
+    # 1. Enterprise CA bundle (non-fatal). Off by default; on only when the
+    #    cluster runs trust-manager and the deployer/operator enables it. Runs
+    #    BEFORE Nebi auto-auth so the merge-ca-bundle init container is appended
+    #    (and thus executes) before nebi-pull, and so the ca-merged volume
+    #    exists when nebi-pull mounts it. The non-fatal guard lives here at the
+    #    call site (unlike Nebi, which guards inside _nebi_pre_spawn_hook) since
+    #    _setup_trust_bundle is synchronous.
+    if _trust_bundle_enabled:
+        try:
+            _setup_trust_bundle(spawner)
+            log.info("trust-bundle: CA merge configured for %s", username)
+        except Exception:
+            log.exception(
+                "trust-bundle: setup FAILED for %s (pod will still spawn)", username,
+            )
+    else:
+        log.debug("trust-bundle: disabled, skipping CA merge for %s", username)
+
+    # 2. Nebi auto-auth (non-fatal)
     if _nebi_auth_configured:
         log.debug("pre-spawn: running Nebi auto-auth for %s", username)
         await _nebi_pre_spawn_hook(spawner)
     else:
         log.debug("pre-spawn: Nebi auto-auth not configured, skipping")
 
-    # 2. Resolve groups from auth_state (stored by KeyCloakOAuthenticator)
+    # 2. Workspace PVC — per-user RWO (non-fatal)
+    log.debug("pre-spawn: ensuring workspace PVC for %s", username)
+    try:
+        workspace_pvc_name = await _ensure_workspace_pvc(spawner)
+        workspaces_volume = {
+            "name": "nebi-workspaces",
+            "persistentVolumeClaim": {"claimName": workspace_pvc_name},
+        }
+        workspaces_volume_mount = {
+            "name": "nebi-workspaces",
+            "mountPath": "/var/lib/nebi/workspaces",
+        }
+        log.info("pre-spawn: workspace PVC %s configured for %s", workspace_pvc_name, username)
+    except Exception:
+        log.exception("pre-spawn: workspace PVC setup FAILED for %s", username)
+        workspaces_volume = workspaces_volume_mount = None
+    if workspaces_volume is not None:
+        spawner.volumes.append(workspaces_volume)
+    if workspaces_volume_mount is not None:
+        spawner.volume_mounts.append(workspaces_volume_mount)
+
+    # 3. Resolve groups from auth_state (stored by KeyCloakOAuthenticator)
     groups = _get_user_groups(auth_state)
     log.info("pre-spawn: user %s resolved groups: %s", username, groups)
 
-    # 3. Shared group directory PVC mounts (only when RWX PVC is configured)
+    # 4. Shared group directory PVC mounts (only when RWX PVC is configured)
     if shared_storage_enabled:
         if groups:
             log.info("pre-spawn: setting up shared storage mounts for %s", username)
@@ -963,7 +1332,7 @@ async def _pre_spawn_hook(spawner):
     else:
         log.debug("pre-spawn: shared storage disabled, skipping PVC mounts for %s", username)
 
-    # 4. NSS wrapper — always runs; independently guarded so shared storage
+    # 5. NSS wrapper — always runs; independently guarded so shared storage
     #    failures never prevent whoami/id from showing the real username
     log.debug("pre-spawn: running NSS wrapper setup for %s", username)
     try:
