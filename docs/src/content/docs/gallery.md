@@ -9,6 +9,8 @@ JupyterLab, each backed by a git repository the user can clone with one click.
 The extension already ships in the singleuser image, so configuring it is only
 a matter of telling the `GalleryManager` which exhibits to show. If not exhibits are included in the config, the section remains empty. 
 
+![gallery_image_overview](https://raw.githubusercontent.com/nebari-dev/jupyterlab-gallery/main/ui-tests/tests/jupyterlab_gallery.spec.ts-snapshots/in-launchpad-linux.png)
+
 ## Location of the configuration
 
 `GalleryManager` only exists in the **singleuser** Jupyter server, not in the
@@ -76,15 +78,15 @@ reach the outside network, so that fetch fails and the tile shows the browser's
 broken-image placeholder with no fallback.
 
 For those environments, point `icon` at a **local** asset served from within
-the deployment — bundled into the singleuser image, or served from the same
-origin — so the tile renders without any external fetch:
+the deployment: bundled into the singleuser image, or served from the same
+origin; so the tile renders without any external fetch:
 
 ```python
 c.GalleryManager.exhibits = [
     {
-        "title": "JATIC Checkmaite Tutorial",
-        "git": "https://internal.example.com/jatic/checkmaite.git",
-        "icon": "/etc/jupyter/gallery-icons/checkmaite.png",  # local, no external fetch
+        "title": "My Tutorial",
+        "git": "https://internal.example.com/test/demo-app.git",
+        "icon": "/etc/jupyter/gallery-icons/demo-app.png",  # local, no external fetch
     },
 ]
 ```
