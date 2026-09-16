@@ -1,15 +1,15 @@
 ---
 title: Jupyter Gallery
-description: Configure jupyterlab-gallery exhibits, where the config has to live, and the remote-icon trap on restricted-egress clusters.
+description: Configure jupyterlab-gallery exhibits
 ---
 
 The [`jupyterlab-gallery`](https://github.com/nebari-dev/jupyterlab-gallery)
 extension shows a curated set of tutorial "exhibits" as tiles inside
 JupyterLab, each backed by a git repository the user can clone with one click.
 The extension already ships in the singleuser image, so configuring it is only
-a matter of telling the `GalleryManager` which exhibits to show.
+a matter of telling the `GalleryManager` which exhibits to show. If not exhibits are included in the config, the section remains empty. 
 
-## Where the config has to live
+## Location of the configuration
 
 `GalleryManager` only exists in the **singleuser** Jupyter server, not in the
 hub. Setting `c.GalleryManager.exhibits` under `jupyterhub.hub.extraConfig`
@@ -41,23 +41,23 @@ jupyterhub:
 ```
 
 `destination` is the directory (relative to the user's home) that exhibits are
-cloned into.
+cloned into. The example above will clone into `$HOME/tutorials/xarray-tutorial`. 
 
 ## Exhibit schema
 
-Each entry in `c.GalleryManager.exhibits` is a dict. The keys the upstream
-`GalleryManager` understands:
+Each entry in `c.GalleryManager.exhibits` is a dictionary. These are the keys the upstream
+`GalleryManager` accepts:
 
 | Key | Purpose |
 |---|---|
 | `git` | Clone URL of the exhibit repository (required) |
 | `title` | Label shown on the tile |
-| `homepage` | Link opened from the tile's "info" affordance |
+| `homepage` | Link opened from the tile's "info" button |
 | `description` | Short blurb shown on the tile |
 | `icon` | Tile image (see [Tile icons](#tile-icons-and-the-remote-icon-trap) below) |
 | `branch` | Branch to clone (defaults to the repo's default branch) |
 | `depth` | Clone depth for shallow clones |
-| `account` / `token` | Credentials for private repositories |
+| `account` / `token` | Credentials for private repositories (see information below) |
 
 For private repositories, supply `account` and a personal access `token`.
 Rather than embedding the token literally in the config, reference it from an
