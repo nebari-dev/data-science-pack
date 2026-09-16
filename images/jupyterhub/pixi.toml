@@ -25,5 +25,5 @@ pyjwt = ">=2.13.0,<3"
 [pypi-dependencies]
 nebari-jupyterhub-theme = "==2024.7.1"
 python-keycloak = "==0.26.1"
-# 2026.7.1 adds dark-mode-aware hub page theming (jhub-apps PR 704/707).
-jhub-apps = "==2026.7.1"
+# 2026.8.1 fixes app library filtering and adds banner support (jhub-apps PR 722/725).
+jhub-apps = "==2026.8.1"

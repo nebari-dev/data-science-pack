@@ -28,9 +28,17 @@ Nebari's custom images, per-group shared storage, and integration with the
 - [Architecture](/architecture/) — how the proxy, hub, jhub-apps, and user pods fit together.
 - [Shared Storage](/shared-storage/) — per-group directories, StorageClass requirements, and the transitional NFS mode.
 
+## Administration
+
+- [Admin setup](/admin-setup/) — cluster prerequisites, the one required value, and what the chart creates.
+- [Server profiles](/server-profiles/) — sizing JupyterLab servers and gating profiles by group.
+- [Nebi integration](/nebi-integration/) — wiring the environment manager: images, OIDC, registries.
+- [MLflow integration](/mlflow-integration/) — letting notebooks log experiments to MLflow.
+
 ## Reference
 
 - [Configuration](/configuration/) — the top-level `values.yaml` sections.
+- [Values reference](/values-reference/) — field-by-field detail for every value.
 - [NebariApp Integration](/nebariapp-integration/) — the CRD fields this chart sets and why.
 
 Source, issues, and the full `values.yaml` live in the
