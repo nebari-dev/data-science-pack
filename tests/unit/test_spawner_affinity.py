@@ -1,23 +1,28 @@
 """Tests for the user-pod co-location affinity in `01-spawner.py`.
 
 The chart co-locates all of a user's pods on one node (required podAffinity)
-because the home PVC is RWO. The affinity originally selected on kubespawner's
-own `hub.jupyter.org/username` label, but kubespawner escapes that label value
-with a different scheme (label-safe slug, e.g. `tpotts-openteams-com---c9bc22a3`)
-than the one it uses to expand `{username}` in `extra_pod_config` templates
-(DNS escaping, e.g. `tpotts-40openteams-2ecom`). For any username needing
-escaping (emails), label != affinity value, the scheduler's self-match
-bootstrap never fires, and every spawn deadlocks in Pending.
+because the home PVC is RWO. The scheduler lets a pod satisfy its own
+required affinity only when the required value equals the pod's own label,
+so the invariant that keeps spawns schedulable is: the affinity value must
+equal the pod's rendered `hub.jupyter.org/username` label, byte for byte.
 
-The contract pinned here: the affinity must select on a chart-owned label
-that is set via `extra_labels` with the *identical* template string, so both
-sides go through the same expansion and are equal for every username shape.
+kubespawner renders that label and `{username}` template expansion through
+different code paths (the label ignores `slug_scheme` and applies label
+validation; the template follows `slug_scheme` with a different truncation
+budget), so any fix that writes a template into the affinity is trusting two
+renderings to agree. These tests exercise the real kubespawner rendering so
+a kubespawner upgrade that breaks the invariant fails here, in the version
+bump PR, instead of deadlocking spawns in production.
 """
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
+from unittest import mock
+
+import pytest
 
 # 01-spawner.py imports `z2jh.get_config`; stub it so the module exec's standalone.
 _z2jh = types.ModuleType("z2jh")
@@ -26,93 +31,120 @@ sys.modules.setdefault("z2jh", _z2jh)
 
 from conftest import FakeConfig, load_config_module  # noqa: E402
 
+USERNAME_LABEL = "hub.jupyter.org/username"
 
-def _affinity_terms(c):
-    pod_config = getattr(c.KubeSpawner, "extra_pod_config", None)
-    assert pod_config, "KubeSpawner.extra_pod_config is not set"
-    affinity = pod_config.get("affinity", {})
-    terms = affinity.get("podAffinity", {}).get(
-        "requiredDuringSchedulingIgnoredDuringExecution", []
-    )
-    assert terms, "required podAffinity is missing — RWO co-location is not enforced"
-    return terms
+# Long enough that the stripped name exceeds every truncation budget in play
+# (the shape that diverged under kubespawner 7's default scheme), and short
+# enough to fit them all (the shape that only diverges under scheme mismatch).
+LONG_EMAIL = "alexandrina.woolstonecraft@example-corporation.com"
+SHORT_EMAIL = "alice@example.com"
 
 
-def test_affinity_selects_on_chart_owned_label_not_kubespawner_username():
-    """The affinity must not key on hub.jupyter.org/username.
-
-    kubespawner renders that label with a different escaping than the
-    {username} template, so self-match can never satisfy the required
-    affinity for escaped usernames and spawns hang in Pending.
-    """
+def _load_hook():
     c = FakeConfig()
     load_config_module("01-spawner.py", inject_c=c)
-
-    for term in _affinity_terms(c):
-        for expr in term["labelSelector"].get("matchExpressions", []):
-            assert expr["key"] != "hub.jupyter.org/username", (
-                "podAffinity selects on kubespawner's username label, whose "
-                "escaping differs from {username} template expansion"
-            )
+    hook = c.KubeSpawner.__dict__.get("modify_pod_hook")
+    assert hook is not None, "01-spawner.py must set KubeSpawner.modify_pod_hook"
+    return hook
 
 
-def test_extra_labels_preserve_z2jh_singleuser_extra_labels():
-    """extra_labels must merge with singleuser.extraLabels, not replace them.
+def _rendered_pod(username, slug_scheme, node_affinity_preferred=None):
+    """Build a real pod manifest through kubespawner and apply the hook.
 
-    z2jh's default ``singleuser.extraLabels`` carries
-    ``hub.jupyter.org/network-access-hub: "true"``, which the hub
-    NetworkPolicy requires for singleuser -> hub API traffic (port 8081).
-    Assigning ``c.KubeSpawner.extra_labels`` wholesale drops that label; the
-    singleuser server then can't complete its startup handshake with the hub
-    (``check_hub_version`` retries and blocks), never binds its port, and
-    every spawn dies on the hub's ``http_timeout``.
+    The Kubernetes API client is stubbed out: constructing KubeSpawner
+    otherwise loads whatever kubeconfig the host happens to have, and
+    manifest rendering never talks to a cluster anyway.
     """
-    netpol_labels = {"hub.jupyter.org/network-access-hub": "true"}
-    orig = sys.modules["z2jh"].get_config
-    sys.modules["z2jh"].get_config = lambda key, default=None: (
-        dict(netpol_labels) if key == "singleuser.extraLabels" else default
+    hook = _load_hook()
+
+    async def go():
+        with (
+            mock.patch("kubespawner.spawner.load_config"),
+            mock.patch("kubespawner.spawner.shared_client"),
+        ):
+            from kubespawner import KubeSpawner
+
+            s = KubeSpawner(_mock=True)
+            s.user.name = username
+            s.slug_scheme = slug_scheme
+            if node_affinity_preferred is not None:
+                s.node_affinity_preferred = node_affinity_preferred
+            pod = await s.get_pod_manifest()
+            return hook(s, pod)
+
+    return asyncio.run(go())
+
+
+def _single_required_term(pod):
+    affinity = pod.spec.affinity
+    assert affinity is not None, "pod has no affinity — co-location is not enforced"
+    pod_affinity = affinity.pod_affinity
+    assert pod_affinity is not None, "pod has no podAffinity — co-location is not enforced"
+    terms = pod_affinity.required_during_scheduling_ignored_during_execution
+    assert terms and len(terms) == 1, (
+        f"expected exactly one required podAffinity term, got {terms!r}"
     )
-    try:
-        c = FakeConfig()
-        load_config_module("01-spawner.py", inject_c=c)
-    finally:
-        sys.modules["z2jh"].get_config = orig
-
-    labels = getattr(c.KubeSpawner, "extra_labels", None)
-    assert labels, "KubeSpawner.extra_labels is not set"
-    assert labels.get("hub.jupyter.org/network-access-hub") == "true", (
-        "extra_labels dropped z2jh's singleuser.extraLabels — the hub "
-        "NetworkPolicy only admits pods labeled "
-        "hub.jupyter.org/network-access-hub=true, so spawned servers can't "
-        "reach the hub API and never come up"
-    )
-    assert "nebari.dev/colocate-user" in labels
+    return terms[0]
 
 
-def test_affinity_label_is_applied_with_identical_template():
-    """extra_labels must define the exact key/value the affinity selects on.
+@pytest.mark.parametrize("slug_scheme", ["safe", "escape"])
+@pytest.mark.parametrize(
+    "username",
+    [LONG_EMAIL, SHORT_EMAIL],
+    ids=["long-email", "short-email"],
+)
+def test_affinity_value_equals_rendered_username_label(username, slug_scheme):
+    """The invariant that keeps spawns schedulable, pinned on rendered output.
 
-    Both extra_labels and extra_pod_config templates expand through the same
-    kubespawner code path, so using the identical template string guarantees
-    label == affinity value for every username, which keeps the scheduler's
-    self-match bootstrap working for the user's first pod.
+    With the current hook the affinity value is copied from the label, so the
+    equality holds by construction; what this test guards is the rest of the
+    chain: the username label still exists on rendered pods (if a kubespawner
+    upgrade dropped or renamed it, the hook would fail open and co-location
+    would silently disappear), the co-location affinity is enforced at all,
+    and any future reimplementation (e.g. templating the value again) still
+    produces a value equal to the pod's own label.
     """
-    c = FakeConfig()
-    load_config_module("01-spawner.py", inject_c=c)
+    pod = _rendered_pod(username, slug_scheme)
+    label = pod.metadata.labels.get(USERNAME_LABEL)
+    assert label, f"pod for {username!r} has no {USERNAME_LABEL} label"
 
-    extra_labels = getattr(c.KubeSpawner, "extra_labels", None)
-    assert extra_labels, "KubeSpawner.extra_labels is not set"
+    term = _single_required_term(pod)
+    (expr,) = term["labelSelector"]["matchExpressions"]
+    assert expr["key"] == USERNAME_LABEL
+    assert expr["values"] == [label], (
+        f"affinity value {expr['values']!r} != pod label {label!r} — the "
+        "required affinity is unsatisfiable and every spawn will hang Pending"
+    )
+    assert term["topologyKey"] == "kubernetes.io/hostname"
 
-    for term in _affinity_terms(c):
-        exprs = term["labelSelector"].get("matchExpressions", [])
-        assert exprs, "affinity term has no matchExpressions"
-        for expr in exprs:
-            key, values = expr["key"], expr["values"]
-            assert key in extra_labels, (
-                f"affinity selects on {key!r} but extra_labels does not set it"
-            )
-            assert values == [extra_labels[key]], (
-                f"affinity values {values!r} != extra_labels template "
-                f"{extra_labels[key]!r} — the two sides must use the identical "
-                "template string"
-            )
+
+def test_hook_preserves_node_affinity():
+    """The hook must add podAffinity without discarding node affinity.
+
+    z2jh's matchNodePurpose preference travels in node affinity on the same
+    rendered pod; replacing the whole affinity object would silently drop it.
+    """
+    preference = {
+        "preference": {
+            "matchExpressions": [
+                {
+                    "key": "hub.jupyter.org/node-purpose",
+                    "operator": "In",
+                    "values": ["user"],
+                }
+            ]
+        },
+        "weight": 100,
+    }
+    pod = _rendered_pod(SHORT_EMAIL, "safe", node_affinity_preferred=[preference])
+
+    node_affinity = pod.spec.affinity.node_affinity
+    assert node_affinity is not None, (
+        "node affinity was discarded when the co-location podAffinity was added"
+    )
+    preferred = node_affinity.preferred_during_scheduling_ignored_during_execution
+    assert preferred is not None and len(preferred) == 1
+    # kubespawner may render the term as a dict or an API model object;
+    # compare content, not type.
+    assert "hub.jupyter.org/node-purpose" in str(preferred[0])
+    assert pod.spec.affinity.pod_affinity is not None

@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import escapism
+from kubernetes_asyncio.client.models import V1Affinity, V1PodAffinity
 from kubernetes_asyncio.client.rest import ApiException
 from kubespawner.objects import make_pvc
 from z2jh import get_config
@@ -117,22 +118,6 @@ c.KubeSpawner.cmd = [
     "jupyterhub-singleuser",
 ]
 
-# affinity — co-locate all pods for the same user on the same node.
-# hcloud-volumes is ReadWriteOnce — only one node can mount it at a time.
-# Pod affinity ensures jhub-apps app pods land on the same node as the
-# user's JupyterLab pod so the shared home PVC can be mounted by all of them.
-#
-# The affinity selects on a chart-owned label set via extra_labels below,
-# NOT on kubespawner's hub.jupyter.org/username label: kubespawner escapes
-# that label with a different scheme (label-safe slug, e.g.
-# "tpotts-openteams-com---c9bc22a3") than the {username} expansion used in
-# extra_pod_config templates (DNS escaping, e.g. "tpotts-40openteams-2ecom").
-# For any username needing escaping (emails), label != affinity value, the
-# scheduler's self-match bootstrap never applies, and every spawn deadlocks
-# in Pending ("didn't match pod affinity rules"). Using the identical
-# template string on both sides guarantees they render equal for every
-# username shape.
-#
 # securityContext.fsGroup: 100 — GID 100 (users group) as the pod's fsGroup.
 # Kubernetes adds GID 100 as a supplemental group and chgrps mounted volumes
 # to 100 at pod start. This ensures shared dirs (created by init container as
@@ -148,40 +133,51 @@ c.KubeSpawner.cmd = [
 # extra_pod_config applies pod.spec attributes with a top-level overwrite —
 # any securityContext we set here REPLACES the one fs_gid would produce, so
 # both fields must live in this dict together.
-# Merge with singleuser.extraLabels rather than assign: z2jh's default there
-# is hub.jupyter.org/network-access-hub: "true", which the hub NetworkPolicy
-# requires for singleuser -> hub API traffic. Dropping it leaves the server
-# unable to complete its startup handshake with the hub, so it never binds
-# its port and every spawn dies on the hub's http_timeout.
-c.KubeSpawner.extra_labels = {
-    **get_config("singleuser.extraLabels", {}),
-    "nebari.dev/colocate-user": "{username}",
-}
-
 c.KubeSpawner.extra_pod_config = {
-    "affinity": {
-        "podAffinity": {
-            "requiredDuringSchedulingIgnoredDuringExecution": [
-                {
-                    "labelSelector": {
-                        "matchExpressions": [
-                            {
-                                "key": "nebari.dev/colocate-user",
-                                "operator": "In",
-                                "values": ["{username}"],
-                            }
-                        ]
-                    },
-                    "topologyKey": "kubernetes.io/hostname",
-                }
-            ]
-        }
-    },
     "securityContext": {
         "fsGroup": 100,
         "fsGroupChangePolicy": "OnRootMismatch",
     },
 }
+
+
+# Co-locate all pods for the same user on the same node. The home PVC is
+# ReadWriteOnce, so only one node can mount it at a time; pod affinity makes
+# jhub-apps app pods land on the same node as the user's JupyterLab pod.
+#
+# The affinity value is copied from the pod's own hub.jupyter.org/username
+# label instead of templating "{username}" into extra_pod_config: kubespawner
+# renders that label and the template through different code paths (the label
+# is always the label-safe slug regardless of slug_scheme; the template
+# follows slug_scheme and uses a different truncation), so for usernames that
+# need escaping (emails) a templated value can diverge from the label. A
+# diverged value makes the required affinity unsatisfiable and the pod never
+# schedules. Copying the rendered label removes the possibility entirely.
+def _colocate_user_pods(spawner, pod):
+    username_label = (pod.metadata.labels or {}).get("hub.jupyter.org/username")
+    if not username_label:
+        return pod
+    term = {
+        "labelSelector": {
+            "matchExpressions": [
+                {
+                    "key": "hub.jupyter.org/username",
+                    "operator": "In",
+                    "values": [username_label],
+                }
+            ]
+        },
+        "topologyKey": "kubernetes.io/hostname",
+    }
+    if pod.spec.affinity is None:
+        pod.spec.affinity = V1Affinity()
+    pod.spec.affinity.pod_affinity = V1PodAffinity(
+        required_during_scheduling_ignored_during_execution=[term]
+    )
+    return pod
+
+
+c.KubeSpawner.modify_pod_hook = _colocate_user_pods
 
 
 # ---------------------------------------------------------------------------
