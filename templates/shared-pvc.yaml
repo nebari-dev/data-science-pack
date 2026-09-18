@@ -16,7 +16,6 @@ provisioner: kubernetes.io/no-provisioner
 volumeBindingMode: Immediate
 ---
 # PersistentVolume pointing to the in-cluster NFS server.
-# Uses the service DNS name so it works regardless of which node the pod lands on.
 # The fake StorageClass name ensures this PV only binds to our PVC below.
 apiVersion: v1
 kind: PersistentVolume
@@ -45,8 +44,40 @@ spec:
   mountOptions:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+  {{- /*
+      NFS server endpoint. The kubelet performs the NFS mount in the host's
+      network namespace, where /etc/resolv.conf typically points at the
+      upstream DNS provider (the VPC resolver on managed Kubernetes) — not
+      at the cluster's CoreDNS. As a result, mounts that reference the
+      Service FQDN fail with "Failed to resolve server ...: Name or service
+      not known" on most cloud-managed clusters (EKS, GKE without node-local
+      DNS, AKS without DNS forwarders).
+
+      Resolve the Service's ClusterIP at install time via `helm lookup` and
+      bake the IP into the PV. kube-proxy programs host-side iptables for
+      Service IPs so the mount works without any host-DNS dependency.
+
+      Fall back to the FQDN when the lookup returns no IP — which happens
+      on the very first `helm install` (Service doesn't exist yet) and
+      during `helm template`-only renders (no live API). The FQDN path
+      preserves backward compatibility for clusters whose host DNS DOES
+      forward cluster.local to CoreDNS (k3s, microk8s with custom resolvers).
+
+      Note: PV `.spec.persistentvolumesource` is immutable. On a fresh
+      install where the FQDN landed first, the next `helm upgrade` will
+      see the Service-IP-rendered manifest but the API server will reject
+      the patch. Recovery: delete the PV (Retain reclaim policy preserves
+      the backing storage on the NFS server's RWO PVC) and re-sync.
+  */ -}}
+  {{- $svcName := printf "%s-nfs" (include "nebari-data-science-pack.fullname" .) }}
+  {{- $svcFQDN := printf "%s.%s.svc.cluster.local" $svcName .Release.Namespace }}
+  {{- $svcIP := "" }}
+  {{- $svcLookup := (lookup "v1" "Service" .Release.Namespace $svcName) }}
+  {{- if $svcLookup }}
+  {{-   $svcIP = (default "" $svcLookup.spec.clusterIP) }}
+  {{- end }}
   nfs:
-    server: {{ include "nebari-data-science-pack.fullname" . }}-nfs.{{ .Release.Namespace }}.svc.cluster.local
+    server: {{ default $svcFQDN $svcIP | quote }}
     path: /exports
 ---
 # Shared-storage PVC — bound to the NFS-backed PV above.
