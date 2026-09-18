@@ -40,7 +40,10 @@ flowchart TB
 4. It port-forwards the hub and Keycloak services from the cluster to the
    runner's `localhost`, starts a `cloudflared` tunnel mapping the public
    preview hostnames to those local ports, and points a Cloudflare DNS
-   record at the tunnel.
+   record at the tunnel. The tunnel step shows kubectl's output in its
+   log, restarts a port-forward that exits after it was forwarding (lost
+   connection to the pod), and fails the run if one exits before it ever
+   forwarded (kubectl's error says why).
 5. It posts the preview URL as a GitHub Deployment and a PR comment.
 6. A reviewer opening the link authenticates through Cloudflare Access
    (GitHub SSO) before any request reaches the tunnel. Past Access, traffic
@@ -59,9 +62,15 @@ label runs the `cleanup-preview` job, which cancels any in-flight deploy
 for that PR, marks the GitHub deployment inactive, and posts a "stopped"
 comment.
 Pushing a new commit while the label is on cancels the in-flight deploy
-and starts a fresh one; the label stays and the comment follows the new
-run. A deploy cancelled any other way posts a "cancelled" comment and
-drops the label.
+and starts a fresh one. The fresh run starts only after the cancelled
+run's cleanup (which updates the comment and drops the label) has
+finished; it then puts the label back and takes the comment over. A
+deploy cancelled any other way posts a "cancelled" comment and drops the
+label.
+
+Whether a finishing run updates the comment and drops the label depends
+only on the label: present means the run still owns the preview, absent
+means a person removed it and the `cleanup-preview` job owns it.
 
 ## Lifetime and the `extend-preview` label
 
@@ -71,9 +80,12 @@ instead of GitHub reporting a false "cancelled" run). Adding the
 `extend-preview` label resets the deadline to 20 minutes from that moment;
 it can be added any number of times, but each add is a reset, not an
 addition on top of what's left. The label is polled from inside the running
-tunnel step (`scripts/preview/tunnel.py`), not re-triggered as a new
-workflow run, so extending is excluded from the workflow's own
-`cancel-in-progress` concurrency group.
+tunnel step (`scripts/preview/tunnel.py`), not by the workflow run the
+label event starts. Only a push while `deploy-preview` is on, or a person
+adding or removing `deploy-preview`, shares the PR's concurrency group.
+Every other event gets a group of its own, so it can neither cancel the
+live preview nor replace a queued stop or redeploy (a group keeps one
+pending run). Label changes the workflow makes itself start no runs.
 
 ## Hostnames and TLS
 
@@ -121,8 +133,10 @@ automatically once the tag exists; no action is needed either way.
   manual timezone math or re-editing needed.
 - **On expiry**: the deployment is marked inactive and, if a "ready"
   comment was posted, it's re-rendered to the expired state.
-- **On failure**: if the deploy dies before a "ready" comment exists, the
-  "deploying" comment is re-rendered to a failed state linking the run.
+- **On failure**: if the deploy dies before a "ready" comment exists, or
+  the tunnel step fails after it (cloudflared exits, or a port-forward
+  cannot be restarted), the comment is re-rendered to a failed state linking
+  the run.
 
 ## One-time Cloudflare setup
 

@@ -5,11 +5,20 @@ on:
   pull_request:
     types: [labeled, unlabeled, synchronize]
 
+# Only runs that change the preview share the PR's group: a push while
+# deploy-preview is on, or a person adding or removing deploy-preview. A run
+# in the group cancels the one in progress and starts only after that one,
+# cleanup steps included, has finished. Every other event (extend-preview,
+# unrelated labels, a push without the label) gets a group of its own, so it
+# can neither cancel the preview nor replace a queued stop or redeploy (a
+# group keeps one pending run). Label changes this workflow makes with
+# GITHUB_TOKEN start no runs.
 concurrency:
-  group: k8s-preview-${{ github.event.pull_request.number }}
-  cancel-in-progress: ${{ !(github.event.action == 'labeled' && github.event.label.name == 'extend-preview') && !(github.event.action == 'unlabeled' && github.event.sender.login == 'github-actions[bot]') }}
+  group: ${{ ((github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'deploy-preview')) || github.event.label.name == 'deploy-preview') && format('k8s-preview-{0}', github.event.pull_request.number) || format('k8s-preview-{0}-{1}', github.event.pull_request.number, github.run_id) }}
+  cancel-in-progress: true
 
 env:
+  PYTHONUNBUFFERED: "1"
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
   PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
@@ -41,6 +50,11 @@ jobs:
 
       - name: Ensure the extend-preview label exists
         run: gh label create extend-preview -R ${{ github.repository }} --color BFD4F2 --description "Push this preview's expiry back 20 minutes" --force
+
+      # The run this one replaced removed the label in its cleanup; this run
+      # owns the preview now, so it puts the label back.
+      - name: Put the deploy-preview label back
+        run: gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" -f "labels[]=deploy-preview" --silent
 
       - name: Render the deploying comment body
         id: render_deploying
@@ -228,27 +242,35 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           message: ${{ steps.render_ready.outputs.body }}
 
+      # tunnel.py takes over the port-forwards: it restarts one that exits after
+      # it was forwarding and fails this step if one exits before it forwarded.
       - name: Run tunnel until it times out (extend via the extend-preview label)
+        id: tunnel
+        env:
+          KUBECONFIG: ${{ steps.sandbox.outputs.kubeconfig }}
         run: |
+          kill "$PORT_FORWARD_PID" "$KEYCLOAK_PORT_FORWARD_PID" || true
+          for pid in "$PORT_FORWARD_PID" "$KEYCLOAK_PORT_FORWARD_PID"; do tail --pid="$pid" -f /dev/null; done
+          cat /tmp/port-forward.log /tmp/port-forward-keycloak.log
           python -m scripts.preview.tunnel run \
             --cloudflared /tmp/cloudflared --token "${TUNNEL_TOKEN}" --repo "${{ github.repository }}" --pr "${{ github.event.pull_request.number }}" \
             --url "${{ steps.cf_dns.outputs.url }}" --keycloak-url "${{ steps.cf_dns.outputs.keycloak_url }}" --run-url "$RUN_URL" \
-            --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}"
+            --deployed-at "${{ steps.timestamps.outputs.deployed_at }}" --deployed-at-iso "${{ steps.timestamps.outputs.deployed_at_iso }}" \
+            --port-forward pr-preview svc/proxy-public 8000:80 \
+            --port-forward keycloak svc/keycloak-keycloakx-http 8001:8080
 
-      # The label means "a preview is deploying or live". This run edits
-      # the comment and removes the label only when no newer run for this
-      # PR is in flight (a new commit or a re-added label cancels this run
-      # and the newer run takes over both) and the label is still present
-      # (a removed label means the "Stop preview" job is handling it).
+      # The label means "a preview is deploying or live". Label present: this
+      # run owns the comment and label, including when a push or re-added
+      # label cancelled it (the newer run starts only after this one has
+      # finished, then puts the label back and takes the comment over).
+      # Label absent: a person removed it and the "Stop preview" job owns both.
       - name: Check whether this run still owns the preview comment and label
         id: owner
         if: always()
         run: |
-          newer=$(gh api "repos/${{ github.repository }}/actions/workflows/k8s-preview.yaml/runs?branch=${{ github.head_ref }}&event=pull_request&per_page=10" \
-            --jq '[.workflow_runs[] | select(.id != ${{ github.run_id }} and (.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending" or .status == "requested"))] | length')
           labeled=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" --jq '[.[].name] | index("deploy-preview") != null')
-          echo "newer in-flight runs: $newer, deploy-preview label present: $labeled"
-          if [ "$newer" -eq 0 ] && [ "$labeled" = "true" ]; then echo "owner=true"; else echo "owner=false"; fi | tee -a "$GITHUB_OUTPUT"
+          echo "deploy-preview label present: $labeled"
+          echo "owner=$labeled" | tee -a "$GITHUB_OUTPUT"
 
       - name: Mark GitHub deployment inactive
         if: always() && env.DEPLOYMENT_ID != ''
@@ -256,14 +278,14 @@ jobs:
 
       - name: Render the expired-preview comment body
         id: render_expired
-        if: always() && steps.comment_preview.outcome == 'success' && steps.owner.outputs.owner == 'true'
+        if: always() && steps.comment_preview.outcome == 'success' && steps.tunnel.outcome != 'failure' && steps.owner.outputs.owner == 'true'
         run: |
           python -m scripts.preview.comment render-expired \
             --expires-at "${{ steps.timestamps.outputs.expires_at }}" \
             --expires-at-iso "${{ steps.timestamps.outputs.expires_at_iso }}"
 
       - name: Comment that the preview expired
-        if: always() && steps.comment_preview.outcome == 'success' && steps.owner.outputs.owner == 'true'
+        if: always() && steps.comment_preview.outcome == 'success' && steps.tunnel.outcome != 'failure' && steps.owner.outputs.owner == 'true'
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
           header: k8s-preview
@@ -272,11 +294,11 @@ jobs:
 
       - name: Render the failed-preview comment body
         id: render_failed
-        if: failure() && steps.comment_preview.outcome != 'success' && steps.owner.outputs.owner == 'true'
+        if: failure() && (steps.comment_preview.outcome != 'success' || steps.tunnel.outcome == 'failure') && steps.owner.outputs.owner == 'true'
         run: python -m scripts.preview.comment render-failed --run-url "$RUN_URL"
 
       - name: Comment that the preview failed
-        if: failure() && steps.comment_preview.outcome != 'success' && steps.owner.outputs.owner == 'true'
+        if: failure() && (steps.comment_preview.outcome != 'success' || steps.tunnel.outcome == 'failure') && steps.owner.outputs.owner == 'true'
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
           header: k8s-preview

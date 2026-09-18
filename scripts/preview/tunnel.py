@@ -2,12 +2,17 @@
 resets the deadline to now + EXTEND_SECONDS and is removed once consumed.
 Each extend re-renders the PR comment's expiry (best-effort).
 
+Also runs the `kubectl port-forward`s cloudflared sends traffic to, with
+their output in this step's log. A port-forward that exits after it was
+forwarding is restarted; one that exits before it ever forwarded fails the run.
+
 Usage:
     KC_ADMIN_PASSWORD=... python -m scripts.preview.tunnel run \\
         --cloudflared PATH --token TOKEN \\
         --repo OWNER/REPO --pr N --run-url URL \\
         --url URL --keycloak-url URL \\
-        --deployed-at STR --deployed-at-iso ISO
+        --deployed-at STR --deployed-at-iso ISO \\
+        --port-forward NAMESPACE RESOURCE LOCAL:REMOTE [--port-forward ...]
 
 The Keycloak admin password (re-rendered into the PR comment on each extend)
 comes from KC_ADMIN_PASSWORD, not argv; see keycloak.admin_password_from_env.
@@ -19,6 +24,7 @@ import argparse
 import os
 import subprocess
 import sys
+import threading
 import time
 
 from .comment import render_ready
@@ -29,6 +35,7 @@ STICKY_MARKER = "<!-- Sticky Pull Request Commentk8s-preview -->"
 INITIAL_SECONDS = 1200
 EXTEND_SECONDS = 1200
 POLL_SECONDS = 15
+CHECK_SECONDS = 1
 EXTEND_LABEL = "extend-preview"
 
 
@@ -67,6 +74,51 @@ def _stop(proc: subprocess.Popen) -> None:
         proc.wait()
 
 
+class PortForward:
+    """One `kubectl port-forward`, restarted each time it exits after forwarding.
+
+    kubectl prints "Forwarding from ..." only once it has connected to the pod
+    and is listening locally; after that it exits when the pod connection
+    closes ("lost connection to pod"). Exiting without that line means it
+    could not set the forward up at all, and its error says why.
+    """
+
+    def __init__(self, namespace: str, resource: str, ports: str) -> None:
+        self.name = f"{namespace}/{resource} {ports}"
+        self._cmd = ["kubectl", "-n", namespace, "port-forward", resource, ports]
+        self._start()
+
+    def _start(self) -> None:
+        self._forwarding = False
+        self._proc = subprocess.Popen(self._cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self._relay = threading.Thread(target=self._relay_output, args=(self._proc,), daemon=True)
+        self._relay.start()
+
+    def _relay_output(self, proc: subprocess.Popen) -> None:
+        # kubectl prints "Handling connection for N" per connection; drop it, keep the rest.
+        for line in proc.stdout:
+            if line.startswith("Forwarding from"):
+                self._forwarding = True
+            if not line.startswith("Handling connection for"):
+                print(f"[port-forward {self.name}] {line.rstrip()}")
+
+    def ensure_running(self) -> bool:
+        """Restart kubectl if it exited after forwarding. False if it exited before it ever forwarded."""
+        code = self._proc.poll()
+        if code is None:
+            return True
+        self._relay.join()  # kubectl's output is closed once it exits; the relay has seen every line
+        if not self._forwarding:
+            print(f"port-forward {self.name} exited with code {code} before it started forwarding, giving up")
+            return False
+        print(f"port-forward {self.name} exited with code {code}, restarting")
+        self._start()
+        return True
+
+    def stop(self) -> None:
+        _stop(self._proc)
+
+
 def _refresh_comment_expiry(args: argparse.Namespace, seconds_remaining: float) -> None:
     """Rewrite the sticky comment's Expires line for the new deadline. Best-effort."""
     deadline = time.gmtime(time.time() + seconds_remaining)
@@ -86,24 +138,35 @@ def _refresh_comment_expiry(args: argparse.Namespace, seconds_remaining: float) 
 
 
 def run(args: argparse.Namespace) -> int:
-    """Run cloudflared until the deadline, extending it when the label appears.
+    """Run the port-forwards and cloudflared until the deadline, extending it
+    when the label appears.
 
-    Returns cloudflared's exit code if it crashed, 0 on a clean deadline stop.
+    Returns cloudflared's exit code if it crashed, 1 if a port-forward could
+    not be kept running, 0 on a clean deadline stop.
     """
+    forwards = [PortForward(*spec) for spec in args.port_forward]
     proc = subprocess.Popen([args.cloudflared, "tunnel", "--no-autoupdate", "run", "--token", args.token])
     deadline = time.monotonic() + INITIAL_SECONDS
-
-    while proc.poll() is None and time.monotonic() < deadline:
-        if EXTEND_LABEL in _pr_labels(args.repo, args.pr):
-            deadline = time.monotonic() + EXTEND_SECONDS
-            _remove_label(args.repo, args.pr, EXTEND_LABEL)
-            _refresh_comment_expiry(args, deadline - time.monotonic())
-        time.sleep(POLL_SECONDS)
-
-    if proc.poll() is not None:
-        return proc.returncode
-    _stop(proc)
-    return 0
+    next_label_check = time.monotonic()
+    try:
+        while proc.poll() is None and time.monotonic() < deadline:
+            if not all(forward.ensure_running() for forward in forwards):
+                return 1
+            if time.monotonic() >= next_label_check:
+                if EXTEND_LABEL in _pr_labels(args.repo, args.pr):
+                    deadline = time.monotonic() + EXTEND_SECONDS
+                    _remove_label(args.repo, args.pr, EXTEND_LABEL)
+                    _refresh_comment_expiry(args, deadline - time.monotonic())
+                next_label_check = time.monotonic() + POLL_SECONDS
+            time.sleep(CHECK_SECONDS)
+        if proc.poll() is not None:
+            return proc.returncode
+        return 0
+    finally:
+        for forward in forwards:
+            forward.stop()
+        if proc.poll() is None:
+            _stop(proc)
 
 
 def main(argv: list[str]) -> int:
@@ -120,6 +183,8 @@ def main(argv: list[str]) -> int:
     p.add_argument("--keycloak-url", required=True)
     p.add_argument("--deployed-at", required=True)
     p.add_argument("--deployed-at-iso", required=True)
+    p.add_argument("--port-forward", nargs=3, action="append", default=[],
+                   metavar=("NAMESPACE", "RESOURCE", "LOCAL:REMOTE"))
     p.set_defaults(func=run)
 
     args = parser.parse_args(argv[1:])

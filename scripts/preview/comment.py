@@ -54,7 +54,7 @@ def render_deploying(run_url: str) -> str:
 
 def render_failed(run_url: str) -> str:
     return (
-        "The preview for this PR failed to deploy.\n\n"
+        "The preview for this PR failed.\n\n"
         "| Project | Deployment | Actions | Updated |\n"
         "| --- | --- | --- | --- |\n"
         f"| `{PROJECT}` | 🔴 [Failed]({run_url}) | [CI run]({run_url}) | {_now_relative_time()} |\n\n"
