@@ -54,6 +54,11 @@ data:
         # both. Deployer override via jupyterhub.custom.shared-storage-enabled
         # still wins via z2jh.
         "shared-storage-enabled": {{ ternary "True" "False" .Values.sharedStorage.enabled }},
+        # Shared-memory defaults are chart-level values because the spawner
+        # owns the volume list. Profile-specific size overrides are translated
+        # in 01-spawner.py before KubeSpawner applies them.
+        "shared-memory-enabled": {{ ternary "True" "False" .Values.singleuser.sharedMemory.enabled }},
+        "shared-memory-size-limit": {{ .Values.singleuser.sharedMemory.sizeLimit | quote }},
     }
 
 
