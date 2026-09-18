@@ -38,6 +38,8 @@ helm install data-science-pack oci://quay.io/nebari/charts/nebari-data-science-p
 
 ### Install from Source
 
+Requires Helm 3.17 or newer (the `nebari-app` subchart uses `toYamlPretty`).
+
 ```bash
 git clone https://github.com/nebari-dev/nebari-data-science-pack.git
 cd nebari-data-science-pack

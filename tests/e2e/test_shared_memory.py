@@ -59,5 +59,7 @@ def test_singleuser_has_memory_backed_shared_memory(spawn_user):
     mount = next(item for item in notebook["volumeMounts"] if item["name"] == "dshm")
     assert mount["mountPath"] == "/dev/shm"
 
-    assert _shared_memory_capacity(user) == EIGHT_GIBIBYTES
+    # Kubelet may cap tmpfs below sizeLimit based on node or pod memory.
+    capacity = _shared_memory_capacity(user)
+    assert SHARED_MEMORY_PROBE_BYTES <= capacity <= EIGHT_GIBIBYTES
     _write_shared_memory_above_runtime_default(user)

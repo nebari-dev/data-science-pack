@@ -47,6 +47,18 @@ validator keyed to the browser-facing issuer rejects them.
 Rendered into the `NebariApp` CRD. Semantics of each CRD field are in
 [NebariApp Integration](/nebariapp-integration/).
 
+Every key under `nebariapp` except `enabled` is forwarded verbatim as the `spec`
+of the `NebariApp` resource. The authoritative schema is the operator's
+`NebariAppSpec`, not this chart, so the table below is **not** an exhaustive list
+of what you may set: it lists the fields this chart ships defaults for. Any other
+field the CRD accepts can be set here and will reach the resource. See
+[Pass-through and validation](/nebariapp-integration/#pass-through-and-validation)
+for what happens when a key is not one the CRD recognises.
+
+`nebariapp.enabled` is the one key in this section that is not a CRD field. It
+gates both the `NebariApp` resource and the Keycloak bootstrap Job, and it is
+stripped before the rest of the section is forwarded.
+
 | Field | Default | What it does |
 |---|---|---|
 | `nebariapp.enabled` | `true` | Render the `NebariApp`. False outside Nebari. |
@@ -81,7 +93,7 @@ Not to be confused with `jupyterhub.singleuser`, which is the upstream passthrou
 | Field | Default | What it does |
 |---|---|---|
 | `singleuser.sharedMemory.enabled` | `true` | Mount a memory-backed `emptyDir` at `/dev/shm` in singleuser pods. |
-| `singleuser.sharedMemory.sizeLimit` | `8Gi` | Maximum tmpfs consumption; used pages count against the pod memory limit. |
+| `singleuser.sharedMemory.sizeLimit` | `8Gi` | Maximum tmpfs consumption; used pages count against the writing container's memory limit. |
 | `singleuser.networkPolicy.allowEgressToGateway` | `true` | Renders a NetworkPolicy letting user pods reach the Envoy Gateway pod. |
 | `singleuser.networkPolicy.gatewayNamespace` | `envoy-gateway-system` | Where the gateway runs. |
 | `singleuser.networkPolicy.gatewayName` | `nebari-gateway` | Gateway name, matched on `gateway.envoyproxy.io/owning-gateway-name`. |
@@ -94,10 +106,14 @@ across policies selecting the same pod, so it is harmless where it is not needed
 
 Profiles inherit the chart-wide shared-memory size. Set
 `kubespawner_override.shm_size_limit` on a profile to replace only that profile's
-limit. Setting `singleuser.sharedMemory.enabled: false` disables the mount for all
-profiles. The size limit caps tmpfs usage but does not reserve memory; only pages
-written to `/dev/shm` count against the pod's memory cgroup. Keep the pod memory
-limit large enough for both shared memory and the notebook processes.
+limit. Set `singleuser.sharedMemory.enabled: false` to disable the chart-managed
+mount and retain the runtime default, or to manage `/dev/shm` through explicit
+profile volume overrides. Those overrides remain unchanged when disabled;
+`shm_size_limit` is ignored. The size limit caps tmpfs usage but does not reserve
+memory; only pages written to `/dev/shm` count against the writing container's
+memory limit. Keep that limit large enough for both shared memory and the notebook
+processes. Node or pod memory constraints can reduce the effective filesystem
+capacity below the configured cap.
 
 ## `singleuserCuller`
 
@@ -199,6 +215,7 @@ always win.
 | `external-url` | `""` *(derived)* | Hub bind hostname. |
 | `nebi-image` | `""` *(derived)* | `repository:tag` copied into user pods. |
 | `nebi-image-pull-policy` | `IfNotPresent` | — |
+| `image-variants` | `{}` | Per-variant image overrides for `image-variant: <name>` profiles. Default derivation is `<singleuser.image.name>-<name>:<tag>` — see [Server profiles](/server-profiles/#gpu-profiles). |
 | `jhub-app-proxy-version` | `v0.2.3` | Installed at app-spawn time. Must be ≥ v0.2.3 for apps to run inside a Nebi (pixi) environment; older versions only activate conda and fall back to the base env. |
 | `nebi-remote-url` | `""` *(derived)* | Browser-facing Nebi URL. |
 | `nebi-internal-url` | `""` *(derived)* | In-cluster Nebi URL. |

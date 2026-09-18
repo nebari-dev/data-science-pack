@@ -68,7 +68,7 @@ def test_global_default_adds_memory_backed_volume_and_mount():
     assert _named(config.KubeSpawner.volume_mounts, "home") is not None
 
 
-def test_standard_extra_volumes_and_mounts_are_preserved():
+def test_unsupported_extra_volume_keys_do_not_change_storage():
     _, config = _load(
         {
             "singleuser.extraVolumes": [
@@ -80,8 +80,8 @@ def test_standard_extra_volumes_and_mounts_are_preserved():
         }
     )
 
-    assert _named(config.KubeSpawner.volumes, "scratch") is not None
-    assert _named(config.KubeSpawner.volume_mounts, "scratch") is not None
+    assert _named(config.KubeSpawner.volumes, "scratch") is None
+    assert _named(config.KubeSpawner.volume_mounts, "scratch") is None
     assert _named(config.KubeSpawner.volumes, DSHM_NAME) is not None
 
 
@@ -90,6 +90,54 @@ def test_disabled_global_setting_adds_no_shared_memory_entries():
 
     assert _named(config.KubeSpawner.volumes, DSHM_NAME) is None
     assert _named(config.KubeSpawner.volume_mounts, DSHM_NAME) is None
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_chart_storage_is_unchanged(enabled):
+    _, config = _load({"custom.shared-memory-enabled": enabled})
+
+    assert _named(config.KubeSpawner.volumes, "home") == {
+        "name": "home",
+        "persistentVolumeClaim": {"claimName": "claim-{username}"},
+    }
+    assert _named(config.KubeSpawner.volumes, "singleuser-config") == {
+        "name": "singleuser-config",
+        "configMap": {"name": "__SINGLEUSER_CONFIG_CM__"},
+    }
+    assert _named(config.KubeSpawner.volume_mounts, "home") == {
+        "name": "home",
+        "mountPath": "/home/jovyan",
+    }
+    assert _named(config.KubeSpawner.volume_mounts, "singleuser-config") == {
+        "name": "singleuser-config",
+        "mountPath": "/etc/jupyter/jupyter_server_config.py",
+        "subPath": "jupyter_server_config.py",
+    }
+
+
+@pytest.mark.parametrize("size", ["", "  ", None, 8])
+def test_global_setting_rejects_invalid_size_type_or_empty_string(size):
+    with pytest.raises(ValueError, match="must be a non-empty string"):
+        _load({"custom.shared-memory-size-limit": size})
+
+
+def test_global_size_is_trimmed():
+    _, config = _load({"custom.shared-memory-size-limit": " 2Gi "})
+
+    assert _named(config.KubeSpawner.volumes, DSHM_NAME)["emptyDir"] == {
+        "medium": "Memory",
+        "sizeLimit": "2Gi",
+    }
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [{"display_name": "Default"}, {"kubespawner_override": {"image": "custom:test"}}],
+)
+def test_profiles_without_storage_overrides_are_unchanged(profile):
+    module, _ = _load()
+
+    assert module._translate_profile_shared_memory(profile) == profile
 
 
 def test_profile_override_is_translated_without_mutating_input():
@@ -202,12 +250,70 @@ def test_disabled_setting_strips_profile_pseudo_trait():
     assert "volume_mounts" not in visible[0]["kubespawner_override"]
 
 
-def test_profile_override_rejects_empty_size_limit():
+@pytest.mark.parametrize("include_size", [True, False])
+def test_disabled_setting_preserves_operator_managed_mount(include_size):
+    module, config = _load({"custom.shared-memory-enabled": False})
+    overrides = {
+        "volumes": [
+            {"name": "custom-shm", "emptyDir": {"medium": "Memory", "sizeLimit": "2Gi"}}
+        ],
+        "volume_mounts": [{"name": "custom-shm", "mountPath": DSHM_PATH}],
+    }
+    profile = {
+        "display_name": "Custom shared memory",
+        "kubespawner_override": copy.deepcopy(overrides),
+    }
+    if include_size:
+        profile["kubespawner_override"]["shm_size_limit"] = "16Gi"
+    original = copy.deepcopy(profile)
+
+    translated = module._translate_profile_shared_memory(profile)
+
+    assert translated["kubespawner_override"] == overrides
+    assert profile == original
+    assert _named(config.KubeSpawner.volumes, DSHM_NAME) is None
+    assert _named(config.KubeSpawner.volume_mounts, DSHM_NAME) is None
+
+
+def test_callable_profile_storage_is_composed_without_mutation():
+    module, _ = _load()
+    volumes = [{"name": "scratch", "emptyDir": {}}]
+    mounts = [{"name": "scratch", "mountPath": "/scratch"}]
+    original_volumes, original_mounts = copy.deepcopy((volumes, mounts))
+    spawner = types.SimpleNamespace(volumes=[], volume_mounts=[], log=module.log)
+
+    def configured_volumes(current):
+        assert current is spawner
+        return volumes
+
+    def configured_mounts(current):
+        assert current is spawner
+        return mounts
+
+    profile = {
+        "kubespawner_override": {
+            "volumes": configured_volumes,
+            "volume_mounts": configured_mounts,
+        }
+    }
+    translated = module._translate_profile_shared_memory(profile)
+    KubeSpawner._apply_overrides(spawner, translated["kubespawner_override"])
+
+    assert volumes == original_volumes
+    assert mounts == original_mounts
+    assert _named(spawner.volumes, "scratch") == volumes[0]
+    assert _named(spawner.volume_mounts, "scratch") == mounts[0]
+    assert _named(spawner.volumes, DSHM_NAME)["emptyDir"]["sizeLimit"] == "8Gi"
+    assert _named(spawner.volume_mounts, DSHM_NAME)["mountPath"] == DSHM_PATH
+
+
+@pytest.mark.parametrize("size", ["", "  ", None, 8])
+def test_profile_override_rejects_invalid_size_type_or_empty_string(size):
     module, _ = _load()
     profile = {
         "slug": "gpu",
         "display_name": "GPU",
-        "kubespawner_override": {"shm_size_limit": ""},
+        "kubespawner_override": {"shm_size_limit": size},
     }
 
     with pytest.raises(ValueError, match="must be a non-empty string"):

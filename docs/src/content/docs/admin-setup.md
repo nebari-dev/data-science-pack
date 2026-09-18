@@ -18,9 +18,51 @@ derives on its own, and where each knob lives. For a five-minute install, start 
 | A ReadWriteMany StorageClass | Per-group shared directories | Yes — see [Shared Storage](/shared-storage/) |
 | A default (RWO) StorageClass | Per-user home PVCs and Nebi workspace PVCs | No |
 | Namespace label `nebari.dev/managed=true` | The operator ignores `NebariApp`s in unlabeled namespaces | No, when the operator is used |
+| Helm 3.17 or newer | The `nebari-app` library subchart uses `toYamlPretty`, added in Helm 3.17.0. Older Helm cannot parse the chart at all. See [Helm version](#helm-version) | No |
 
 Without the operator the chart still installs — dummy authenticator, no routing, no shared
 Keycloak. That is the local-development path, not a deployment mode.
+
+### Helm version
+
+The chart depends on the `nebari-app` library chart, whose templates call
+`toYamlPretty`. That function was added in Helm 3.17.0 (released 2025-01-15). On
+any older Helm the chart fails while templates are being *parsed*, before values
+are evaluated:
+
+```text
+Error: parse error at (nebari-data-science-pack/charts/nebari-app/templates/_nebari-app.tpl:21):
+       function "toYamlPretty" not defined
+```
+
+Because this is a parse-time failure it cannot be worked around with values.
+Setting `nebariapp.enabled: false` does not avoid it, and neither does
+`--show-only` on an unrelated template: `helm lint`, `helm template` and
+`helm install` all fail identically.
+
+The library chart is bundled into the released `.tgz`, so the requirement travels
+with the published chart. You do not need registry access to `quay.io` at install
+time, but you do need a new enough Helm.
+
+On an ArgoCD-managed cluster the Helm that matters is the one bundled in the
+ArgoCD repo-server image, not the one on your workstation:
+
+| ArgoCD | Bundled Helm | Renders this chart? |
+|---|---|---|
+| 2.13.x | 3.15.4 | No |
+| 2.14.x | 3.16.3 | No |
+| 3.0.0 and newer | 3.17.1 and newer | Yes |
+
+**On a NIC-managed cluster this is already satisfied and needs no action.** NIC
+installs the `argo-cd` chart pinned in `nebari-infrastructure-core`
+(`pkg/argocd/config.go`), currently 9.7.1, which installs ArgoCD v3.4.4 with
+Helm 3.19.4. That pin is also held at v3.4 or later for an unrelated reason (the
+`helm.valueFiles` glob expansion the overlay seam depends on), so it will not
+drift below the floor this chart needs.
+
+The table matters when you run ArgoCD yourself, or install the chart with your
+own `helm` binary. If ArgoCD reports `function "toYamlPretty" not defined` on
+sync, upgrade ArgoCD to 3.0 or newer rather than changing chart values.
 
 ## One required field
 

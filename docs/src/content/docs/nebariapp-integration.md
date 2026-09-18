@@ -7,6 +7,44 @@ When `nebariapp.enabled: true` (the default), the chart renders a
 `NebariApp` custom resource that the [Nebari Operator](https://github.com/nebari-dev/nebari-operator)
 reconciles into routing, an OIDC client, and an optional landing-page card.
 
+## Pass-through and validation
+
+Everything under `nebariapp` except `enabled` becomes the `spec` of the
+`NebariApp` verbatim. The chart does not enumerate the fields, so any field the
+operator's `NebariAppSpec` accepts can be set from values, including ones this
+page does not mention. The operator's CRD is the authority for what exists and
+what it means; it is versioned with the operator, not with this chart, so
+upgrading the operator can change what is accepted without a chart release.
+
+Values are not template-expanded. A `{{ ... }}` in a value reaches the resource
+as literal text rather than being evaluated.
+
+The chart itself checks only that a hostname is set or derivable, and that
+`service`, `service.name` and `service.port` are present with a port of at least
+1. Everything else is checked by the API server when the resource is applied, and
+the two install paths behave differently there:
+
+- `helm install` / `helm upgrade` **succeeds**. An unrecognised key is dropped
+  before the resource is stored, and the only signal is a line on stderr:
+  `Warning: unknown field "spec.auth.provisionCleint"`. If that field had a
+  default in the CRD, the stored resource silently keeps the default, so a typo
+  looks exactly like never having set the value.
+- `kubectl apply` **rejects** the resource, naming every unrecognised field:
+  `Error from server (BadRequest): ... strict decoding error: unknown field
+  "spec.auth.provisionCleint", unknown field "spec.typoField"`.
+
+Because Helm will not fail on a typo, check a values change against a live API
+server before deploying it:
+
+```bash
+helm template . -n <namespace> -f my-values.yaml -s templates/nebariapp.yaml \
+  | kubectl apply -n <namespace> --dry-run=server -f -
+```
+
+This uses the same strict decoding as a real `kubectl apply`, so a typo is
+reported as `unknown field "spec.auth.provisionCleint"` while clean values report
+`created (server dry run)`. Nothing is persisted either way.
+
 ## Routing
 
 ```yaml
