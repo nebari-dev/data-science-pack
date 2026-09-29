@@ -25,6 +25,7 @@ export default defineConfig({
           githubHref: 'https://github.com/nebari-dev/data-science-pack',
         }),
       ],
+      lastUpdated: true,
       sidebar: [
         {
           label: 'Overview',
@@ -36,6 +37,7 @@ export default defineConfig({
             { label: 'Quick Start', slug: 'quick-start' },
             { label: 'Architecture', slug: 'architecture' },
             { label: 'Shared Storage', slug: 'shared-storage' },
+            { label: 'Jupyter Gallery', slug: 'gallery' },
           ],
         },
         {
@@ -54,6 +56,10 @@ export default defineConfig({
             { label: 'Values reference', slug: 'values-reference' },
             { label: 'NebariApp Integration', slug: 'nebariapp-integration' },
           ],
+        },
+        {
+          label: 'Development',
+          items: [{ label: 'PR Preview Environments', slug: 'pr-preview-workflow' }],
         },
       ],
     }),
