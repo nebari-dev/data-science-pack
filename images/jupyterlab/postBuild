@@ -5,4 +5,12 @@ set -x
 # install code-server extension
 sh /opt/scripts/install-code-server.sh "/opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/share"
 
+# Package the activity-reporter extension as a vsix. Installed per-user by a
+# postStart hook (01-spawner.py) because the extensions dir lives on the
+# home PVC, which would shadow a build-time install. The pixi env's python
+# is not on PATH at this point in the build — use it explicitly.
+"/opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}/bin/python" /opt/scripts/build-vsix.py \
+    /opt/jupyterlab/vscode-activity-reporter \
+    /opt/code-server-extensions/nebari-activity-reporter.vsix
+
 fix-permissions "/opt/jupyterlab/.pixi/envs/${DEFAULT_ENV}"
