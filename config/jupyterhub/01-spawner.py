@@ -306,6 +306,12 @@ if nebi_remote_url:
 
 env["NEBI_STORAGE_WORKSPACES_DIR"] = "/var/lib/nebi/workspaces"
 
+# Tell jhub-app-proxy to activate an app's environment with pixi (it looks
+# the workspace up via `nebi workspace list`) instead of conda. Set for
+# every pod rather than only when a remote Nebi server is configured, so
+# apps can also run in the user's local Nebi workspaces.
+env["JHUB_APP_ENV_MANAGER"] = "pixi"
+
 # nebi's local-mode netguard only accepts loopback Origin headers by default.
 # Browsers send the hub's public origin on CORS-mode asset requests (the SPA
 # bundle is emitted as <script type="module" crossorigin>), which blanked the
@@ -845,12 +851,6 @@ async def _nebi_pre_spawn_hook(spawner):
     NEBI_AUTH_TOKEN into the pod environment.
     Non-fatal: if any step fails, the pod still spawns without auto-auth.
     """
-    # Tell jhub-app-proxy to use pixi activation (instead of conda) for app pods.
-    # Set this first, before any early returns, because pixi activation is needed
-    # regardless of whether the token exchange succeeds — the nebi binary in the
-    # pod handles workspace pull and pixi env activation independently.
-    spawner.environment = {**spawner.environment, "JHUB_APP_ENV_MANAGER": "pixi"}
-
     auth_state = await spawner.user.get_auth_state()
     if not auth_state:
         log.warning("No auth_state for %s, skipping Nebi auto-auth", spawner.user.name)

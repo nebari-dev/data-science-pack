@@ -132,9 +132,10 @@ Empty when neither is available.
 External Nebi URL. Order of precedence:
   1. .Values.nebi.remoteURL (explicit)
   2. https://<subdomains.nebi>.<baseDomain(keycloak.hostname)>
-Empty when neither is available.
+Empty when neither is available, or when nebi.remote.enabled is false.
 */}}
 {{- define "nebari-data-science-pack.nebiRemoteURL" -}}
+{{- if .Values.nebi.remote.enabled -}}
 {{- if .Values.nebi.remoteURL -}}
 {{- .Values.nebi.remoteURL -}}
 {{- else -}}
@@ -144,17 +145,21 @@ Empty when neither is available.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
 
 {{/*
 In-cluster Nebi URL. Order of precedence:
   1. .Values.nebi.internalURL (explicit)
   2. http://nebi-pack-nebari-nebi-pack.<nebi.namespace>.svc.cluster.local
+Empty when nebi.remote.enabled is false.
 */}}
 {{- define "nebari-data-science-pack.nebiInternalURL" -}}
+{{- if .Values.nebi.remote.enabled -}}
 {{- if .Values.nebi.internalURL -}}
 {{- .Values.nebi.internalURL -}}
 {{- else -}}
 {{- printf "http://nebi-pack-nebari-nebi-pack.%s.svc.cluster.local" (.Values.nebi.namespace | default "nebi") -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 

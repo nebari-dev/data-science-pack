@@ -169,6 +169,87 @@ def get_nebi_environments(user):
 
 
 # ---------------------------------------------------------------------------
+# Local workspace listing (no remote Nebi server)
+# ---------------------------------------------------------------------------
+
+# In-cluster address of the hub's proxy. The service name is hardcoded
+# because JupyterHub starts jhub-apps with a scrubbed environment, so the
+# PROXY_PUBLIC_SERVICE_* variables Kubernetes injects are not visible here.
+_PROXY_URL = "http://proxy-public"
+
+
+def get_local_nebi_environments(user):
+    """Return the names of the user's installed local Nebi workspaces.
+
+    Used when no remote Nebi server is deployed. The workspaces live on the
+    user's own volumes, which the hub cannot read, so ask the Nebi instance
+    inside the user's running JupyterLab (jupyter-server-proxy serves it at
+    /user/<name>/nebi/). App pods mount the same volumes, so jhub-app-proxy
+    resolves the selected name there with `nebi workspace list` at launch.
+
+    Returns an empty list when JupyterLab is not running or on any failure.
+    """
+    username = user.get("name", "<unknown>")
+    lab = (user.get("servers") or {}).get("") or {}
+    if not lab.get("ready"):
+        log.info(
+            "nebi-envs: JupyterLab is not running for %s, no local environments to list",
+            username,
+        )
+        return []
+
+    api_url = os.environ.get("JUPYTERHUB_API_URL", "")
+    api_token = os.environ.get("JUPYTERHUB_API_TOKEN", "")
+    try:
+        # Short-lived token acting as the user, to get past their
+        # JupyterLab server's hub authentication.
+        req = Request(
+            f"{api_url}/users/{username}/tokens",
+            data=json.dumps({"expires_in": 60}).encode(),
+            headers={
+                "Authorization": f"token {api_token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urlopen(req, timeout=10) as resp:
+            user_token = json.loads(resp.read())["token"]
+
+        # The first request may have to start `nebi serve`, which
+        # jupyter-server-proxy waits up to 20s for.
+        req = Request(
+            f"{_PROXY_URL}{lab['url']}nebi/api/v1/workspaces",
+            headers={"Authorization": f"token {user_token}"},
+        )
+        with urlopen(req, timeout=30) as resp:
+            workspaces = json.loads(resp.read())
+    except Exception:
+        log.exception("nebi-envs: failed to list local environments for %s", username)
+        return []
+
+    if not isinstance(workspaces, list):
+        log.error(
+            "nebi-envs: unexpected local workspaces response type %s for %s (expected list)",
+            type(workspaces).__name__, username,
+        )
+        return []
+
+    # Only installed workspaces: an uninstalled one would be installed by
+    # `pixi run` at app launch and overrun the app's ready timeout.
+    envs = [
+        ws["name"] for ws in workspaces
+        if ws.get("status") == "ready"
+        and ws.get("install_status") == "installed"
+        and ws.get("name")
+    ]
+    log.info(
+        "nebi-envs: listed %d installed local environments for %s (total workspaces: %d)",
+        len(envs), username, len(workspaces),
+    )
+    return envs
+
+
+# ---------------------------------------------------------------------------
 # Register the callable with jhub-apps
 # ---------------------------------------------------------------------------
 _nebi_internal_url = get_chart_config("nebi-internal-url")
@@ -177,6 +258,8 @@ if _nebi_internal_url:
     c.JAppsConfig.conda_envs = get_nebi_environments
     log.info("nebi-envs: environment selector enabled (nebi_url=%s)", _nebi_internal_url)
 else:
-    log.warning(
-        "nebi-envs: nebi-internal-url is not set, environment selector will not be enabled"
+    c.JAppsConfig.conda_envs = get_local_nebi_environments
+    log.info(
+        "nebi-envs: no remote Nebi server configured, "
+        "environment selector lists local workspaces"
     )

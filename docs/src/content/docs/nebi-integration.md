@@ -199,6 +199,21 @@ jhub-apps offers a Nebi environment when deploying an app. Two things gate it:
   activate conda environments and silently fall back to the base environment, so an app
   launched into a Nebi environment comes up missing its packages.
 
+### Without a Nebi server
+
+When nebi-pack is not deployed, turn the server integration off:
+
+```yaml
+nebi:
+  remote:
+    enabled: false
+```
+
+The environment selector then lists the user's own local workspaces, the ones built in the
+Nebi tile inside JupyterLab, and the app runs straight from that workspace. Only installed
+workspaces are listed, and the user's JupyterLab server must be running for the list to
+load. The token exchange and the Nebi card are switched off.
+
 ## Behind a TLS-inspecting proxy
 
 The init container that pre-pulls Nebi environments makes its own outbound HTTPS calls
