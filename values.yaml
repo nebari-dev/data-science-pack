@@ -818,6 +818,22 @@ jupyterhub:
         - ports:
             - port: 10202  # jhub-apps service port
 
+    # Hub service for the user cleanup hooks in
+    # ``templates/user-cleanup-hooks.yaml``. z2jh generates its API token and
+    # stores it in the ``hub`` Secret under ``hub.services.user-cleanup.apiToken``.
+    # The role grants only what the hooks need: read a user, stop their
+    # servers, and delete the user record.
+    services:
+      user-cleanup: {}
+    loadRoles:
+      user-cleanup:
+        services:
+          - user-cleanup
+        scopes:
+          - read:users
+          - servers
+          - delete:users
+
   singleuser:
     image:
       name: quay.io/nebari/nebari-data-science-pack-jupyterlab
