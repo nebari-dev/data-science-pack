@@ -179,13 +179,17 @@ _PROXY_URL = "http://proxy-public"
 
 
 def get_local_nebi_environments(user):
-    """Return the names of the user's installed local Nebi workspaces.
+    """Return the user's local Nebi workspaces, each as the directory it lives in.
 
     Used when no remote Nebi server is deployed. The workspaces live on the
     user's own volumes, which the hub cannot read, so ask the Nebi instance
     inside the user's running JupyterLab (jupyter-server-proxy serves it at
-    /user/<name>/nebi/). App pods mount the same volumes, so jhub-app-proxy
-    resolves the selected name there with `nebi workspace list` at launch.
+    /user/<name>/nebi/).
+
+    The directory, not the name, is what gets selected: at launch the app pod
+    copies pixi.toml and pixi.lock out of it and builds its own environment
+    (_add_local_workspace_container in 01-spawner.py), so starting an app
+    needs neither JupyterLab nor the Nebi database, only those two files.
 
     Returns an empty list when JupyterLab is not running or on any failure.
     """
@@ -234,16 +238,14 @@ def get_local_nebi_environments(user):
         )
         return []
 
-    # Only installed workspaces: an uninstalled one would be installed by
-    # `pixi run` at app launch and overrun the app's ready timeout.
+    # Only what an app pod can copy from: _local_workspace_dir (01-spawner.py)
+    # is the same check the spawner applies to the selection.
     envs = [
-        ws["name"] for ws in workspaces
-        if ws.get("status") == "ready"
-        and ws.get("install_status") == "installed"
-        and ws.get("name")
+        ws["path"] for ws in workspaces
+        if ws.get("status") == "ready" and _local_workspace_dir(ws.get("path"))
     ]
     log.info(
-        "nebi-envs: listed %d installed local environments for %s (total workspaces: %d)",
+        "nebi-envs: listed %d local environments for %s (total workspaces: %d)",
         len(envs), username, len(workspaces),
     )
     return envs
@@ -252,11 +254,14 @@ def get_local_nebi_environments(user):
 # ---------------------------------------------------------------------------
 # Register the callable with jhub-apps
 # ---------------------------------------------------------------------------
-_nebi_internal_url = get_chart_config("nebi-internal-url")
-
-if _nebi_internal_url:
+# _local_nebi_workspaces is set in 01-spawner.py, so the selector and the
+# spawner always agree on which kind of selection is in play.
+if not _local_nebi_workspaces:
     c.JAppsConfig.conda_envs = get_nebi_environments
-    log.info("nebi-envs: environment selector enabled (nebi_url=%s)", _nebi_internal_url)
+    log.info(
+        "nebi-envs: environment selector enabled (nebi_url=%s)",
+        get_chart_config("nebi-internal-url"),
+    )
 else:
     c.JAppsConfig.conda_envs = get_local_nebi_environments
     log.info(

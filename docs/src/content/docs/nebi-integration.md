@@ -209,10 +209,25 @@ nebi:
     enabled: false
 ```
 
-The environment selector then lists the user's own local workspaces, the ones built in the
-Nebi tile inside JupyterLab, and the app runs straight from that workspace. Only installed
-workspaces are listed, and the user's JupyterLab server must be running for the list to
-load. The token exchange and the Nebi card are switched off.
+The token exchange and the Nebi card are switched off, and the environment selector lists
+the user's own workspaces: the ones built in the Nebi tile inside JupyterLab, or registered
+from a terminal with `nebi init`. Each is offered as the directory that holds its
+`pixi.toml`.
+
+- **The list is read from the user's running JupyterLab.** The workspaces live on the
+  user's own volumes, which the hub cannot read. While JupyterLab is stopped the selector
+  is empty. Starting or restarting an app does not need JupyterLab.
+- **An app builds its own copy of the environment.** At launch an init container copies
+  `pixi.toml` and `pixi.lock` out of that directory into the pod's own `emptyDir` and runs
+  `pixi install` there, the same way an app built from a Nebi server workspace does. The
+  app shares neither the installed environment nor the Nebi database with JupyterLab, so
+  nothing here depends on a user's pods sharing a node. A change to the workspace reaches
+  the app when the app is restarted.
+- **A Panel app's workspace needs `bokeh-root-cmd` as well as `panel`**, because jhub-apps
+  starts Panel through it.
+- **Restart the hub after changing this value.** It only changes the hub's config files,
+  which the hub reads at startup, and an upgrade that changes nothing else leaves the hub
+  pod running: `kubectl rollout restart deployment/hub`.
 
 ## Behind a TLS-inspecting proxy
 
