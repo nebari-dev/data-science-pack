@@ -14,8 +14,12 @@ Both use the token of the ``user-cleanup`` hub service
 declared in values.yaml. The pod label is what the hub NetworkPolicy
 admits. PVC names assume a plain lowercase username; anything KubeSpawner
 has to escape (emails, uppercase) will not match.
+
+Gated on ``nebariapp.enabled`` like the NebariApp itself: without the
+operator the CRD does not exist and the install would fail.
 */}}
-{{- $name := printf "%s-user-cleanup" (include "nebari-data-science-pack.fullname" .) }}
+{{- if .Values.nebariapp.enabled }}
+{{- $name :=printf "%s-user-cleanup" (include "nebari-data-science-pack.fullname" .) }}
 {{- $image := "alpine/k8s:1.34.12" }}
 apiVersion: v1
 kind: ServiceAccount
@@ -157,3 +161,4 @@ spec:
               esac
 
               kubectl delete pvc $pvcs --ignore-not-found
+{{- end }}
