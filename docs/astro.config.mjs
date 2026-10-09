@@ -2,7 +2,6 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { nebari } from '@nebari/starlight';
-import rehypeMermaid from 'rehype-mermaid';
 import remarkBaseLinks from './src/plugins/remark-base-links';
 
 // BASE and SITE are set by CI when deploying under a subpath
@@ -65,9 +64,6 @@ export default defineConfig({
     }),
   ],
   markdown: {
-    // Turn Shiki off for mermaid so rehype-mermaid sees the raw graph source.
-    syntaxHighlight: { type: 'shiki', excludeLangs: ['mermaid'] },
     remarkPlugins: [[remarkBaseLinks, { base: process.env.BASE || '/' }]],
-    rehypePlugins: [[rehypeMermaid, { strategy: 'inline-svg' }]],
   },
 });
