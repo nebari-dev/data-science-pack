@@ -1,0 +1,13 @@
+{
+  "name": "nebari-activity-reporter",
+  "displayName": "Nebari Activity Reporter",
+  "description": "Reports real user interaction to the Jupyter server so idle culling works correctly with VS Code (nebari-dev/data-science-pack#208).",
+  "publisher": "nebari",
+  "version": "0.1.0",
+  "license": "BSD-3-Clause",
+  "engines": { "vscode": "^1.93.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {}
+}

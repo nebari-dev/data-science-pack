@@ -148,3 +148,21 @@ def test_get_chart_config_explicit_override_wins(rendered_chart_derived):
     )
     got = ns["get_chart_config"]("external-url")
     assert got == "explicit.example.com"
+
+
+def test_vscode_activity_enabled_defaults_true(rendered_chart_derived):
+    """`vscodeActivity.enabled` must reach the spawner via _CHART_DERIVED so
+    the update_last_activity escape hatch (issue #208) is wireable without
+    a jupyterhub.custom.* override."""
+    ns = _exec_chart_derived(rendered_chart_derived, z2jh_values={})
+    assert ns["get_chart_config"]("vscode-activity-enabled") is True
+
+
+def test_shutdown_no_activity_timeout_reaches_spawner(rendered_chart_derived):
+    """`singleuserCuller.server.shutdownNoActivityTimeout` drives
+    CODE_SERVER_IDLE_TIMEOUT_SECONDS (issue #208): the code-server exit
+    timer must mirror the in-pod culler's schedule, so the value has to be
+    visible to 01-spawner.py via _CHART_DERIVED (rendered as a quoted
+    string; the spawner int-parses it)."""
+    ns = _exec_chart_derived(rendered_chart_derived, z2jh_values={})
+    assert ns["get_chart_config"]("shutdown-no-activity-timeout") == "900"
