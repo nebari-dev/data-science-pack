@@ -38,7 +38,7 @@ on:
         default: ""
         type: string
       smoke_test_labextensions:
-        description: "After each arch build, run `jupyter labextension list` in the pushed image and assert the extensions pinned in images/jupyterlab/pixi.toml are enabled at their pinned versions. Enable for every image built from the jupyterlab Dockerfile target (including the GPU variant — it installs the same pixi.toml). Skipped on fork PRs (no pushed image to run)."
+        description: "After each arch build, run `jupyter labextension list` in the pushed image and assert the extensions pinned in images/jupyterlab/pixi.toml are enabled at their pinned versions, then run check-labextension-versions.py to assert no extension was built against a newer JupyterLab than the image ships (#239). Enable for every image built from the jupyterlab Dockerfile target (including the GPU variant — it installs the same pixi.toml). Skipped on fork PRs (no pushed image to run)."
         required: false
         default: false
         type: boolean
@@ -130,6 +130,10 @@ jobs:
               exit 1
             }
           done
+          # Every extension bundle must have been built against the JupyterLab the
+          # image ships; otherwise the browser logs "Unsatisfied version" warnings
+          # for each shared @jupyterlab/* package (#239).
+          docker run --rm "$ref" check-labextension-versions.py
 
       - name: "Export digest"
         if: env.IS_FORK_PR != 'true'
@@ -214,6 +218,10 @@ jobs:
               exit 1
             }
           done
+          # Every extension bundle must have been built against the JupyterLab the
+          # image ships; otherwise the browser logs "Unsatisfied version" warnings
+          # for each shared @jupyterlab/* package (#239).
+          docker run --rm "$ref" check-labextension-versions.py
 
       - name: "Export digest"
         if: env.IS_FORK_PR != 'true'
