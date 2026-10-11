@@ -301,11 +301,11 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterhub-5.5.0-hb42b831_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterhub-base-5.5.0-pyhc90fa1f_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-4.6.2-pyhd8ed1ab_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-favorites-3.5.2-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-favorites-3.5.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-git-0.54.0-pyh6e2b5a4_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-git-core-0.54.0-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-pioneer-1.7.3-pyhd8ed1ab_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-spellchecker-0.9.0-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-spellchecker-0.8.4-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab_code_formatter-3.0.3-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab_pygments-0.3.0-pyhd8ed1ab_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab_server-2.28.0-pyhcf101f3_0.conda
@@ -779,11 +779,11 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterhub-5.5.0-hb42b831_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterhub-base-5.5.0-pyhc90fa1f_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-4.6.2-pyhd8ed1ab_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-favorites-3.5.2-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-favorites-3.5.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-git-0.54.0-pyh6e2b5a4_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-git-core-0.54.0-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-pioneer-1.7.3-pyhd8ed1ab_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-spellchecker-0.9.0-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-spellchecker-0.8.4-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab_code_formatter-3.0.3-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab_pygments-0.3.0-pyhd8ed1ab_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab_server-2.28.0-pyhcf101f3_0.conda
@@ -7366,9 +7366,9 @@ packages:
   run_exports: {}
   size: 14035048
   timestamp: 1784641255275
-- conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-favorites-3.5.2-pyhd8ed1ab_0.conda
-  sha256: 399196d6a70262b55e79c442ada4ce2072eff1f26f9cf75189c280c9a9e3c212
-  md5: 10d2d3bfe09277f5ae4ed5915606c261
+- conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-favorites-3.5.0-pyhd8ed1ab_0.conda
+  sha256: 7010e80778ab81541f6342fd86937287799b13be91e9fcfa580568dfc5006aee
+  md5: da353c79d63bec6d32e0090e3cb8acd2
   depends:
   - python >=3.8,<4.0
   license: BSD-3-Clause
@@ -7376,8 +7376,8 @@ packages:
   purls:
   - pkg:pypi/jupyterlab-favorites?source=hash-mapping
   run_exports: {}
-  size: 29854
-  timestamp: 1782926859781
+  size: 29541
+  timestamp: 1770988603707
 - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-git-0.54.0-pyh6e2b5a4_0.conda
   sha256: 0083d4fc8d0968d6931226421002155c67f2fd1396eb5ed8fb3a0ddc7b39c7df
   md5: 6f043794d9f53f486f27a13fd4ec08c5
@@ -7432,18 +7432,19 @@ packages:
   run_exports: {}
   size: 29178
   timestamp: 1770203184421
-- conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-spellchecker-0.9.0-pyhd8ed1ab_0.conda
-  sha256: bf7f540ed56fba558fc71ecd7644c89e87cf4d8fda8eb3781c39ec3d4a19255b
-  md5: 3ff2a8b5650d871416ce9a5151cf5ac7
+- conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab-spellchecker-0.8.4-pyhd8ed1ab_0.conda
+  sha256: 36f315e80e8038c93471a4eb01bdc0f6af88a06c2f6bd998e40a45577f2fcec3
+  md5: aee68a8ea335e07fab06e8d8f544c146
   depends:
   - jupyterlab ~=4.0
   - python >=3.8
   license: BSD-3-Clause
+  license_family: BSD
   purls:
   - pkg:pypi/jupyterlab-spellchecker?source=hash-mapping
   run_exports: {}
-  size: 2030968
-  timestamp: 1783345670701
+  size: 2148024
+  timestamp: 1690583606416
 - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab_code_formatter-3.0.3-pyhd8ed1ab_0.conda
   sha256: f1e79b2d35fea6c768c9d2d1a6bb9388307145a8bd82b1507b2aaf544f0a1601
   md5: 6c4f1092d88ddef44e97d12450a04c28
