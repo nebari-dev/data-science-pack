@@ -89,7 +89,16 @@ function activate(context) {
   on(vscode.workspace.onDidChangeTextDocument, "edit");
   on(vscode.window.onDidChangeTextEditorSelection, "selection");
   on(vscode.window.onDidChangeTextEditorVisibleRanges, "scroll");
-  on(vscode.window.onDidChangeWindowState, "focus");
+  // Not via on(): only transitions INTO focused/active are interaction.
+  // The event also fires on blur and when the window goes inactive after
+  // a stretch of no input; counting those would extend an idle session.
+  context.subscriptions.push(
+    vscode.window.onDidChangeWindowState((s) => {
+      if (s.focused || s.active) {
+        recordActivity("focus");
+      }
+    }),
+  );
   on(vscode.window.onDidOpenTerminal, "terminal-open");
   // Not via on(): the close handler needs the terminal argument to clear
   // its busy bit — disposal is the one end-of-execution path that never
