@@ -250,40 +250,40 @@ def get_local_nebi_environments(user):
 def _list_from_lab(username, lab_url):
     """Ask the Nebi instance in the user's running JupyterLab for its workspaces.
 
-    jupyter-server-proxy serves it at /user/<name>/nebi/. Returns None on
-    any failure.
+    jupyter-server-proxy serves it at /user/<name>/nebi/, behind the
+    JupyterLab server's hub authentication. Returns None on any failure.
     """
-    api_url = os.environ.get("JUPYTERHUB_API_URL", "")
-    api_token = os.environ.get("JUPYTERHUB_API_TOKEN", "")
-    try:
-        # Short-lived token acting as the user, to get past their
-        # JupyterLab server's hub authentication.
-        req = Request(
-            f"{api_url}/users/{username}/tokens",
-            data=json.dumps({"expires_in": 60}).encode(),
-            headers={
-                "Authorization": f"token {api_token}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        with urlopen(req, timeout=10) as resp:
-            user_token = json.loads(resp.read())["token"]
-    except Exception:
-        log.exception("nebi-envs: failed to list local environments for %s", username)
+    token = _short_lived_user_token(username)
+    if token is None:
         return None
-    return _fetch_lab_workspaces(username, f"{_PROXY_URL}{lab_url}", user_token)
+    return _fetch_lab_workspaces(username, f"{_PROXY_URL}{lab_url}", token)
+
+
+def _short_lived_user_token(username):
+    """Ask the hub for a 60s token that acts as the user; None on failure."""
+    req = Request(
+        f"{os.environ.get('JUPYTERHUB_API_URL', '')}/users/{username}/tokens",
+        data=json.dumps({"expires_in": 60}).encode(),
+        headers={
+            "Authorization": f"token {os.environ.get('JUPYTERHUB_API_TOKEN', '')}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read())["token"]
+    except Exception:
+        log.exception("nebi-envs: could not get a token for %s", username)
+        return None
 
 
 def _fetch_lab_workspaces(username, server_url, token):
     """GET the workspaces from a JupyterLab server; None on any failure."""
+    # The first request may have to start `nebi serve`, which
+    # jupyter-server-proxy waits up to 20s for.
+    req = Request(f"{server_url}nebi/api/v1/workspaces", headers={"Authorization": f"token {token}"})
     try:
-        # The first request may have to start `nebi serve`, which
-        # jupyter-server-proxy waits up to 20s for.
-        req = Request(
-            f"{server_url}nebi/api/v1/workspaces",
-            headers={"Authorization": f"token {token}"},
-        )
         with urlopen(req, timeout=30) as resp:
             workspaces = json.loads(resp.read())
     except Exception:
@@ -297,17 +297,24 @@ def _fetch_lab_workspaces(username, server_url, token):
         )
         return None
 
-    # Only what an app pod can copy from: _local_workspace_dir (01-spawner.py)
-    # is the same check the spawner applies to the selection.
-    envs = [
-        ws["path"] for ws in workspaces
-        if ws.get("status") == "ready" and _local_workspace_dir(ws.get("path"))
-    ]
+    envs = _usable_workspace_dirs(workspaces)
     log.info(
         "nebi-envs: listed %d local environments for %s (total workspaces: %d)",
         len(envs), username, len(workspaces),
     )
     return envs
+
+
+def _usable_workspace_dirs(workspaces):
+    """The directories of the ready workspaces an app pod can copy from.
+
+    _local_workspace_dir (01-spawner.py) is the same check the spawner applies
+    to the selection.
+    """
+    return [
+        ws["path"] for ws in workspaces
+        if ws.get("status") == "ready" and _local_workspace_dir(ws.get("path"))
+    ]
 
 
 async def save_list_before_stop(spawner):
@@ -327,6 +334,7 @@ async def save_list_before_stop(spawner):
     )
     if envs is not None:
         _save_list(spawner.user.name, envs)
+
 
 # ---------------------------------------------------------------------------
 # Register the callable with jhub-apps

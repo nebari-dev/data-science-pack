@@ -274,8 +274,9 @@ nebi:
   # which turns off the hub <-> Nebi token exchange and the Nebi launcher
   # card, and the jhub-apps environment selector lists the user's own
   # local Nebi workspaces (built in the JupyterLab Nebi tile or registered
-  # with `nebi init`) instead of the server's. The list is read from the
-  # user's running JupyterLab. An app copies the selected workspace's
+  # with `nebi init`) instead of the server's. The list comes from the
+  # user's main JupyterLab; the hub keeps a copy for while it is stopped.
+  # An app copies the selected workspace's
   # pixi.toml and pixi.lock into its own pod and builds the environment
   # there. Restart the hub after changing this: it only changes the hub's
   # config files, which an upgrade alone does not reload.
