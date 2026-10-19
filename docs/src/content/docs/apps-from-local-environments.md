@@ -28,6 +28,8 @@ nebi init
 - `nebi init` registers the folder with Nebi, which is how the Deploy App form finds it.
 - Check that it is there with `nebi workspace ls`.
 
+![A JupyterLab terminal in the sales-dashboard folder, where nebi workspace ls lists the sales-dashboard workspace and its path, /home/jovyan/sales-dashboard](../../assets/apps-from-local-environments/terminal.png)
+
 The app runs entirely in this environment, so it must contain everything the app imports
 **and** the framework you deploy it with. For a Panel app that is `panel` and
 `bokeh-root-cmd`; the hub starts Panel apps through `bokeh-root-cmd`, and an environment
@@ -58,9 +60,13 @@ pn.Column("# Sales dashboard", region, pn.bind(lambda r: f"Showing **{r}**", reg
 4. In **File path**, enter the path to the script: `/home/jovyan/sales-dashboard/app.py`.
 5. Click **Next**, pick a server size, and deploy.
 
+![The Deploy App form with Framework set to Panel, Software Environment set to /home/jovyan/sales-dashboard, and File path set to /home/jovyan/sales-dashboard/app.py](../../assets/apps-from-local-environments/deploy-form.png)
+
 The first start takes a few minutes. The app gets its own copy of the environment, built
 from your `pixi.toml` and `pixi.lock`, before it starts. Your JupyterLab can be running or
 stopped; the app does not need it.
+
+![A deployed Panel sales dashboard, showing that it runs on the environment the app built at /tmp/nebi-env/workspace/.pixi/envs/default](../../assets/apps-from-local-environments/app.png)
 
 ## How the environment list stays up to date
 
