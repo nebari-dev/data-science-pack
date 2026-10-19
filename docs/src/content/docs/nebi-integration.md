@@ -212,7 +212,8 @@ nebi:
 The token exchange and the Nebi card are switched off, and the environment selector lists
 the user's own workspaces: the ones built in the Nebi tile inside JupyterLab, or registered
 from a terminal with `nebi init`. Each is offered as the directory that holds its
-`pixi.toml`.
+`pixi.toml`. The user's side is in
+[Apps from your local Nebi environments](/apps-from-local-environments/).
 
 - **The list comes from the user's main JupyterLab.** The workspaces live on the user's
   own volumes, which the hub cannot read, so the hub asks the running JupyterLab and saves
