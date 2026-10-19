@@ -4,9 +4,7 @@ description: Build a local Nebi environment in JupyterLab and deploy a dashboard
 ---
 
 You can deploy a dashboard or web app from the hub's home page (the **Deploy App** button)
-and have it run in a local Nebi environment you built yourself in JupyterLab. The environment is
-yours: other people's apps never use it, and you never need anyone to publish an
-environment for you.
+and have it run in a local Nebi environment you built yourself in JupyterLab.
 
 This page is for clusters where your administrator has set this up. If the **Software
 Environment** list in the Deploy App form shows environments with names like
