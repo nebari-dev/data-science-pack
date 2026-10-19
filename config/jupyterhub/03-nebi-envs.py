@@ -1,9 +1,12 @@
 """Nebi environment listing for jhub-apps environment selector."""
 # ruff: noqa: F821 - `c` is a magic global provided by JupyterHub
 
+import asyncio
 import json
 import logging
 import os
+import tempfile
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 log = logging.getLogger(__name__)
@@ -178,30 +181,78 @@ def get_nebi_environments(user):
 _PROXY_URL = "http://proxy-public"
 
 
+# Where the hub remembers each user's last list, so the selector still offers
+# it while their JupyterLab is stopped. Workspaces are only created and
+# changed from the main JupyterLab, so the last list it gave stays correct
+# until it runs again. /srv/jupyterhub is the hub's own persistent volume.
+_SAVED_LISTS_DIR = "/srv/jupyterhub/nebi-envs"
+
+
+def _saved_list_path(username):
+    return os.path.join(_SAVED_LISTS_DIR, f"{quote(username, safe='')}.json")
+
+
+def _save_list(username, envs):
+    # The hub (at stop) and jhub-apps (on form open) both write: each write
+    # goes to its own temporary file, then replaces the list in one step.
+    try:
+        os.makedirs(_SAVED_LISTS_DIR, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=_SAVED_LISTS_DIR, suffix=".tmp")
+        with os.fdopen(fd, "w") as f:
+            json.dump(envs, f)
+        os.replace(tmp, _saved_list_path(username))
+    except OSError:
+        log.exception("nebi-envs: could not save the environment list for %s", username)
+
+
+def _saved_list(username):
+    try:
+        with open(_saved_list_path(username)) as f:
+            envs = json.load(f)
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError):
+        log.exception("nebi-envs: could not read the saved environment list for %s", username)
+        return []
+    # Same check as a fresh listing: the file is only ever written from one.
+    return [env for env in envs if isinstance(env, str) and _local_workspace_dir(env)]
+
+
 def get_local_nebi_environments(user):
     """Return the user's local Nebi workspaces, each as the directory it lives in.
 
     Used when no remote Nebi server is deployed. The workspaces live on the
     user's own volumes, which the hub cannot read, so ask the Nebi instance
-    inside the user's running JupyterLab (jupyter-server-proxy serves it at
-    /user/<name>/nebi/).
+    inside the user's running JupyterLab and remember the answer. While
+    JupyterLab is stopped, or if asking it fails, offer the remembered list.
 
     The directory, not the name, is what gets selected: at launch the app pod
     copies pixi.toml and pixi.lock out of it and builds its own environment
     (_add_local_workspace_container in 01-spawner.py), so starting an app
     needs neither JupyterLab nor the Nebi database, only those two files.
-
-    Returns an empty list when JupyterLab is not running or on any failure.
     """
     username = user.get("name", "<unknown>")
     lab = (user.get("servers") or {}).get("") or {}
     if not lab.get("ready"):
         log.info(
-            "nebi-envs: JupyterLab is not running for %s, no local environments to list",
+            "nebi-envs: JupyterLab is not running for %s, offering the saved list",
             username,
         )
-        return []
+        return _saved_list(username)
 
+    envs = _list_from_lab(username, lab["url"])
+    if envs is None:
+        return _saved_list(username)
+    _save_list(username, envs)
+    return envs
+
+
+def _list_from_lab(username, lab_url):
+    """Ask the Nebi instance in the user's running JupyterLab for its workspaces.
+
+    jupyter-server-proxy serves it at /user/<name>/nebi/. Returns None on
+    any failure.
+    """
     api_url = os.environ.get("JUPYTERHUB_API_URL", "")
     api_token = os.environ.get("JUPYTERHUB_API_TOKEN", "")
     try:
@@ -218,25 +269,33 @@ def get_local_nebi_environments(user):
         )
         with urlopen(req, timeout=10) as resp:
             user_token = json.loads(resp.read())["token"]
+    except Exception:
+        log.exception("nebi-envs: failed to list local environments for %s", username)
+        return None
+    return _fetch_lab_workspaces(username, f"{_PROXY_URL}{lab_url}", user_token)
 
+
+def _fetch_lab_workspaces(username, server_url, token):
+    """GET the workspaces from a JupyterLab server; None on any failure."""
+    try:
         # The first request may have to start `nebi serve`, which
         # jupyter-server-proxy waits up to 20s for.
         req = Request(
-            f"{_PROXY_URL}{lab['url']}nebi/api/v1/workspaces",
-            headers={"Authorization": f"token {user_token}"},
+            f"{server_url}nebi/api/v1/workspaces",
+            headers={"Authorization": f"token {token}"},
         )
         with urlopen(req, timeout=30) as resp:
             workspaces = json.loads(resp.read())
     except Exception:
         log.exception("nebi-envs: failed to list local environments for %s", username)
-        return []
+        return None
 
     if not isinstance(workspaces, list):
         log.error(
             "nebi-envs: unexpected local workspaces response type %s for %s (expected list)",
             type(workspaces).__name__, username,
         )
-        return []
+        return None
 
     # Only what an app pod can copy from: _local_workspace_dir (01-spawner.py)
     # is the same check the spawner applies to the selection.
@@ -250,6 +309,24 @@ def get_local_nebi_environments(user):
     )
     return envs
 
+
+async def save_list_before_stop(spawner):
+    """Save the final list of a main JupyterLab that is about to stop.
+
+    Called from the spawner's stop() while the pod is still up, so the list
+    saved is exactly what JupyterLab had, even if the user never opened the
+    app form after their last change. The hub asks the pod directly with the
+    server's own token. Never raises: a stop must not fail because of this.
+    """
+    # JupyterHub also calls stop() to clean up a start that failed, when
+    # there may be no server to ask.
+    if not _local_nebi_workspaces or spawner.name or spawner.server is None:
+        return
+    envs = await asyncio.to_thread(
+        _fetch_lab_workspaces, spawner.user.name, spawner.server.url, spawner.api_token,
+    )
+    if envs is not None:
+        _save_list(spawner.user.name, envs)
 
 # ---------------------------------------------------------------------------
 # Register the callable with jhub-apps

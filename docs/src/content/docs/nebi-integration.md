@@ -214,9 +214,14 @@ the user's own workspaces: the ones built in the Nebi tile inside JupyterLab, or
 from a terminal with `nebi init`. Each is offered as the directory that holds its
 `pixi.toml`.
 
-- **The list is read from the user's running JupyterLab.** The workspaces live on the
-  user's own volumes, which the hub cannot read. While JupyterLab is stopped the selector
-  is empty. Starting or restarting an app does not need JupyterLab.
+- **The list comes from the user's main JupyterLab.** The workspaces live on the user's
+  own volumes, which the hub cannot read, so the hub asks the running JupyterLab and saves
+  the answer under `/srv/jupyterhub/nebi-envs/` on its own volume, both when the app form
+  opens and when JupyterLab stops. While JupyterLab is stopped the selector offers that
+  saved list. Workspaces are expected to be created and changed only from the main
+  JupyterLab; a change made from anywhere else shows up once the main JupyterLab has run
+  again. A user who has never started JupyterLab has an empty list. Starting or
+  restarting an app does not need JupyterLab.
 - **An app builds its own copy of the environment.** At launch an init container copies
   `pixi.toml` and `pixi.lock` out of that directory into the pod's own `emptyDir` and runs
   `pixi install` there, the same way an app built from a Nebi server workspace does. The

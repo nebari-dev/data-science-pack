@@ -194,11 +194,18 @@ class _Response(io.BytesIO):
         return False
 
 
+@pytest.fixture
+def selector(monkeypatch, tmp_path):
+    mod = _load_selector()
+    monkeypatch.setattr(mod, "_SAVED_LISTS_DIR", str(tmp_path / "nebi-envs"))
+    return mod
+
+
 _RUNNING_LAB = {"name": "alice", "servers": {"": {"ready": True, "url": "/user/alice/"}}}
 
 
-def test_selector_offers_each_ready_workspace_as_its_directory(monkeypatch):
-    mod = _load_selector()
+def test_selector_offers_each_ready_workspace_as_its_directory(monkeypatch, selector):
+    mod = selector
     workspaces = [
         {"name": "sales-dashboard", "status": "ready", "path": "/home/jovyan/sales-dashboard"},
         {"name": "apptest", "status": "ready", "path": "/var/lib/nebi/workspaces/apptest-1f0c"},
@@ -224,8 +231,8 @@ def test_selector_offers_each_ready_workspace_as_its_directory(monkeypatch):
     ]
 
 
-def test_selector_is_empty_while_jupyterlab_is_stopped():
-    mod = _load_selector()
+def test_selector_is_empty_for_a_user_whose_jupyterlab_never_ran(selector):
+    mod = selector
 
     stopped = {"name": "alice", "servers": {"": {"ready": False, "url": "/user/alice/"}}}
     assert mod.get_local_nebi_environments(stopped) == []
@@ -249,3 +256,144 @@ def test_nebi_server_selection_is_left_to_the_server_path():
     })
 
     assert _copy_container(spawner) is None
+
+
+# --- remembering the list while JupyterLab is stopped ------------------------
+
+
+_STOPPED_LAB = {"name": "alice", "servers": {}}
+
+
+def _fake_lab(monkeypatch, mod, workspaces_by_user):
+    """Answer the hub token call and each user's JupyterLab Nebi listing."""
+    def fake_urlopen(request, timeout=None):
+        if request.full_url.endswith("/tokens"):
+            return _Response(json.dumps({"token": "user-token"}).encode())
+        for name, workspaces in workspaces_by_user.items():
+            if request.full_url == f"http://proxy-public/user/{name}/nebi/api/v1/workspaces":
+                if isinstance(workspaces, Exception):
+                    raise workspaces
+                return _Response(json.dumps(workspaces).encode())
+        raise AssertionError(f"unexpected request {request.full_url}")
+
+    monkeypatch.setattr(mod, "urlopen", fake_urlopen)
+    monkeypatch.setenv("JUPYTERHUB_API_URL", "http://hub:8081/hub/api")
+    monkeypatch.setenv("JUPYTERHUB_API_TOKEN", "service-token")
+
+
+def _workspace(path):
+    return {"name": path.rsplit("/", 1)[-1], "status": "ready", "path": path}
+
+
+def test_selector_offers_the_last_list_after_jupyterlab_stops(monkeypatch, selector):
+    _fake_lab(monkeypatch, selector, {"alice": [_workspace("/home/jovyan/sales-dashboard")]})
+    assert selector.get_local_nebi_environments(_RUNNING_LAB) == ["/home/jovyan/sales-dashboard"]
+
+    assert selector.get_local_nebi_environments(_STOPPED_LAB) == ["/home/jovyan/sales-dashboard"]
+
+
+def test_a_failed_listing_keeps_the_last_list(monkeypatch, selector):
+    _fake_lab(monkeypatch, selector, {"alice": [_workspace("/home/jovyan/sales-dashboard")]})
+    selector.get_local_nebi_environments(_RUNNING_LAB)
+
+    _fake_lab(monkeypatch, selector, {"alice": OSError("nebi serve did not start")})
+    assert selector.get_local_nebi_environments(_RUNNING_LAB) == ["/home/jovyan/sales-dashboard"]
+    assert selector.get_local_nebi_environments(_STOPPED_LAB) == ["/home/jovyan/sales-dashboard"]
+
+
+def test_an_emptied_workspace_list_is_remembered_as_empty(monkeypatch, selector):
+    _fake_lab(monkeypatch, selector, {"alice": [_workspace("/home/jovyan/sales-dashboard")]})
+    selector.get_local_nebi_environments(_RUNNING_LAB)
+
+    _fake_lab(monkeypatch, selector, {"alice": []})
+    selector.get_local_nebi_environments(_RUNNING_LAB)
+    assert selector.get_local_nebi_environments(_STOPPED_LAB) == []
+
+
+def test_each_user_is_offered_only_their_own_list(monkeypatch, selector):
+    _fake_lab(monkeypatch, selector, {"alice": [_workspace("/home/jovyan/sales-dashboard")]})
+    selector.get_local_nebi_environments(_RUNNING_LAB)
+
+    assert selector.get_local_nebi_environments({"name": "bob", "servers": {}}) == []
+
+
+
+class _StoppingSpawner:
+    """The spawner of a server that is being stopped while its pod is still up."""
+
+    def __init__(self, server_name="", user="alice"):
+        self.name = server_name
+        self.user = types.SimpleNamespace(name=user)
+        self.api_token = "server-token"
+        path = f"/user/{user}/{server_name + '/' if server_name else ''}"
+        self.server = types.SimpleNamespace(url=f"http://10.0.0.7:8888{path}")
+
+
+def _fake_pod(monkeypatch, mod, answer):
+    """The stopping server's pod, which the hub asks directly with the
+    server's own token."""
+    asked = []
+
+    def fake_urlopen(request, timeout=None):
+        asked.append(request.full_url)
+        assert request.full_url == "http://10.0.0.7:8888/user/alice/nebi/api/v1/workspaces"
+        assert request.headers["Authorization"] == "token server-token"
+        if isinstance(answer, Exception):
+            raise answer
+        return _Response(json.dumps(answer).encode())
+
+    monkeypatch.setattr(mod, "urlopen", fake_urlopen)
+    return asked
+
+
+def test_stopping_jupyterlab_saves_its_final_list(monkeypatch, selector):
+    """A user who changes workspaces and stops JupyterLab without opening the form."""
+    _fake_pod(monkeypatch, selector, [_workspace("/home/jovyan/sales-dashboard")])
+
+    asyncio.run(selector.save_list_before_stop(_StoppingSpawner()))
+
+    assert selector.get_local_nebi_environments(_STOPPED_LAB) == ["/home/jovyan/sales-dashboard"]
+
+
+def test_stopping_an_app_does_not_touch_the_list(monkeypatch, selector):
+    _fake_lab(monkeypatch, selector, {"alice": [_workspace("/home/jovyan/sales-dashboard")]})
+    selector.get_local_nebi_environments(_RUNNING_LAB)
+    asked = _fake_pod(monkeypatch, selector, [])
+
+    asyncio.run(selector.save_list_before_stop(_StoppingSpawner(server_name="dashboard")))
+
+    assert asked == []
+    assert selector.get_local_nebi_environments(_STOPPED_LAB) == ["/home/jovyan/sales-dashboard"]
+
+
+def test_a_failed_listing_at_stop_keeps_the_last_list(monkeypatch, selector):
+    _fake_lab(monkeypatch, selector, {"alice": [_workspace("/home/jovyan/sales-dashboard")]})
+    selector.get_local_nebi_environments(_RUNNING_LAB)
+    _fake_pod(monkeypatch, selector, OSError("connection refused"))
+
+    asyncio.run(selector.save_list_before_stop(_StoppingSpawner()))
+
+    assert selector.get_local_nebi_environments(_STOPPED_LAB) == ["/home/jovyan/sales-dashboard"]
+
+
+def test_stopping_a_jupyterlab_that_never_came_up_still_stops(monkeypatch, selector):
+    """JupyterHub also calls stop() to clean up a failed start, with no server address."""
+    asked = _fake_pod(monkeypatch, selector, [])
+    spawner = _StoppingSpawner()
+    spawner.server = None
+
+    asyncio.run(selector.save_list_before_stop(spawner))
+
+    assert asked == []
+
+
+def test_stopping_jupyterlab_with_a_nebi_server_configured_asks_nothing(monkeypatch):
+    mod = _load_selector({
+        "custom.nebi-remote-url": "https://nebi.example.test",
+        "custom.nebi-internal-url": "https://nebi.internal.test",
+    })
+    asked = _fake_pod(monkeypatch, mod, [])
+
+    asyncio.run(mod.save_list_before_stop(_StoppingSpawner()))
+
+    assert asked == []
