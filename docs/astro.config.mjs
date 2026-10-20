@@ -38,6 +38,7 @@ export default defineConfig({
             { label: 'Architecture', slug: 'architecture' },
             { label: 'Shared Storage', slug: 'shared-storage' },
             { label: 'Jupyter Gallery', slug: 'gallery' },
+            { label: 'Apps from your local Nebi environments', slug: 'apps-from-local-environments' },
           ],
         },
         {

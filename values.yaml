@@ -269,6 +269,19 @@ nebi:
     # to the ~61s KernelSpecManager poll — no error is logged anywhere.
     tag: "sha-5ca877a"
     pullPolicy: IfNotPresent
+  # Set enabled: false when no Nebi server (nebari-nebi-pack) is deployed
+  # alongside this pack. remoteURL and internalURL then resolve to empty,
+  # which turns off the hub <-> Nebi token exchange and the Nebi launcher
+  # card, and the jhub-apps environment selector lists the user's own
+  # local Nebi workspaces (built in the JupyterLab Nebi tile or registered
+  # with `nebi init`) instead of the server's. The list comes from the
+  # user's main JupyterLab; the hub keeps a copy for while it is stopped.
+  # An app copies the selected workspace's
+  # pixi.toml and pixi.lock into its own pod and builds the environment
+  # there. Restart the hub after changing this: it only changes the hub's
+  # config files, which an upgrade alone does not reload.
+  remote:
+    enabled: true
   # External Nebi FQDN (browser-side, used for OIDC redirect).
   # If empty, derived from keycloak.hostname as
   # `https://<subdomains.nebi>.<base-domain>`.
