@@ -25,7 +25,7 @@ Then edit files under `src/content/docs/`. Astro reloads on save.
 
 Relative to this directory:
 
-- `astro.config.mjs` - Starlight + `@nebari/starlight` + `rehype-mermaid` + `remark-base-links`
+- `astro.config.mjs` - Starlight + `@nebari/starlight` (also renders mermaid fences) + `remark-base-links`
 - `package.json`, `tsconfig.json`, `.gitignore`
 - `src/content.config.ts` - Starlight docs collection
 - `src/content/docs/*.md` - actual pages (frontmatter required: `title`, `description`)
@@ -44,14 +44,13 @@ Related, at the repo root:
 `scripts/check-links.sh`, or the workflow itself.
 
 1. Node 22, `npm ci` in `docs/`.
-2. Installs Playwright (for `rehype-mermaid`).
-3. Runs `vitest` (the `remark-base-links` plugin test).
-4. Computes `SITE`/`BASE` per event: on `main`, `BASE=/data-science-pack/`
+2. Runs `vitest` (the `remark-base-links` plugin test).
+3. Computes `SITE`/`BASE` per event: on `main`, `BASE=/data-science-pack/`
    (served under the portal subpath); on a PR, `BASE=/` (the preview lives at
    its own `*.pages.dev` subdomain).
-5. Builds, then runs `scripts/check-links.sh` against `docs/dist/` - every
+4. Builds, then runs `scripts/check-links.sh` against `docs/dist/` - every
    internal `href`/`src` must resolve to a file.
-6. Deploys `docs/dist/` to the `data-science-pack` Cloudflare Pages project
+5. Deploys `docs/dist/` to the `data-science-pack` Cloudflare Pages project
    with `wrangler pages deploy`. Main deploys to production; PRs deploy a
    preview and get the URL posted as a sticky comment.
 

@@ -55,10 +55,6 @@ jobs:
         working-directory: docs
         run: npm ci
 
-      - name: Install Playwright (mermaid rendering)
-        working-directory: docs
-        run: npx playwright install --with-deps chromium
-
       - name: Unit tests
         working-directory: docs
         run: npm test
