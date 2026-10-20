@@ -1,0 +1,21 @@
+apiVersion: v1
+entries:
+  nebari-data-science-pack:
+  - apiVersion: v2
+    appVersion: 5.4.3
+    created: "2026-10-20T11:37:15.355559799Z"
+    dependencies:
+    - name: jupyterhub
+      repository: https://hub.jupyter.org/helm-chart/
+      version: 4.4.0
+    - name: nebari-app
+      repository: oci://quay.io/nebari/charts
+      version: 0.1.1
+    description: A Helm chart for deploying JupyterHub with jhub-apps on Kubernetes
+    digest: e2fdc35f5e437e9e6b9c6018e213f60ec6a4db7cbe6f036e9698f1adde277947
+    name: nebari-data-science-pack
+    type: application
+    urls:
+    - https://github.com/nebari-dev/data-science-pack/releases/download/nebari-data-science-pack-0.1.7/nebari-data-science-pack-0.1.7.tgz
+    version: 0.1.7
+generated: "2026-10-20T11:37:15.342454429Z"
