@@ -9,7 +9,7 @@ on:
 jobs:
   unit:
     name: unit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Checkout
@@ -42,7 +42,7 @@ jobs:
   #      flows through the matrix automatically with no workflow edits.
   prep:
     name: prep (image + test matrix)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       ref: ${{ steps.img.outputs.ref }}
@@ -104,7 +104,7 @@ jobs:
   # a matrix leg automatically.
   e2e:
     name: e2e / ${{ matrix.test.id }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: prep
     timeout-minutes: 10
     strategy:
@@ -170,7 +170,7 @@ jobs:
   # that live KC via a port-forward.
   integration-rbac-bootstrap:
     name: integration / rbac-bootstrap
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
