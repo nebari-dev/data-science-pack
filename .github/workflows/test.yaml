@@ -147,6 +147,13 @@ jobs:
       - name: Create kind cluster
         run: kind create cluster --name "${{ steps.cluster.outputs.name }}" --wait 60s
 
+      - name: Show open-file limits
+        run: |
+          set -x
+          cat /proc/sys/fs/nr_open
+          systemctl show docker containerd -p LimitNOFILE || true
+          docker exec "${{ steps.cluster.outputs.name }}-control-plane" sh -c 'grep "open files" /proc/1/limits; grep "open files" /proc/$(pidof containerd)/limits' || true
+
       - name: Side-load singleuser image into kind node
         run: kind load image-archive "${{ needs.prep.outputs.tar }}" --name "${{ steps.cluster.outputs.name }}"
 
@@ -246,13 +253,13 @@ jobs:
           cat /tmp/kc-pf.log || true
 
       - name: Argo CD diagnostics on failure
-        if: failure()
+        if: failure() || cancelled()
         run: |
           set -x
-          CLUSTER=$(kind get clusters | head -1)
-          kind get kubeconfig --name "$CLUSTER" > /tmp/kind.kubeconfig
-          export KUBECONFIG=/tmp/kind.kubeconfig
-          kubectl -n argocd get pods -o wide || true
-          kubectl -n argocd describe pod -l app.kubernetes.io/name=argocd-redis || true
-          kubectl -n argocd logs -l app.kubernetes.io/name=argocd-redis --all-containers --tail=100 || true
-          kubectl get events -A --field-selector type=Warning | tail -40 || true
+          NODE=$(docker ps --format '{{.Names}}' | grep control-plane | head -1)
+          k() { docker exec "$NODE" kubectl --kubeconfig /etc/kubernetes/admin.conf "$@"; }
+          docker exec "$NODE" sh -c 'grep "open files" /proc/1/limits; grep "open files" /proc/$(pidof containerd)/limits' || true
+          k -n argocd get pods -o wide || true
+          k -n argocd describe pod -l app.kubernetes.io/name=argocd-redis || true
+          k -n argocd logs -l app.kubernetes.io/name=argocd-redis --all-containers --tail=100 || true
+          k get events -A --field-selector type=Warning | tail -40 || true
