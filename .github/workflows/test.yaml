@@ -201,6 +201,8 @@ jobs:
       - name: Provision Nebari sandbox (kind + NIC platform stack)
         id: sandbox
         uses: nebari-dev/action-nebari-sandbox@9ac369ebf87ac2ae217504dcbf824c77f70e429a  # v3.0.0
+        with:
+          nic-version: v0.14.0
 
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
