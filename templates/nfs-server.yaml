@@ -76,6 +76,17 @@ spec:
       containers:
         - name: nfs-server
           image: {{ .Values.sharedStorage.nfsServer.image.repository }}:{{ .Values.sharedStorage.nfsServer.image.tag }}
+          # rpcbind and rpc.statd (libtirpc) allocate a table sized by the
+          # open-file limit. Runtimes that hand containers a limit of ~1e9
+          # make that allocation fail ("clnt_dg_create: out of memory"),
+          # rpcbind never registers, and every NFS mount fails. Cap it.
+          command:
+            - /bin/sh
+            - -c
+            - |
+              n=$(ulimit -n)
+              if [ "$n" = unlimited ] || [ "$n" -gt 1048576 ]; then ulimit -n 1048576; fi
+              exec /usr/local/bin/run_nfs.sh /exports /
           ports:
             - name: nfs
               containerPort: 2049
