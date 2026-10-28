@@ -147,13 +147,6 @@ jobs:
       - name: Create kind cluster
         run: kind create cluster --name "${{ steps.cluster.outputs.name }}" --wait 60s
 
-      - name: Show open-file limits
-        run: |
-          set -x
-          cat /proc/sys/fs/nr_open
-          systemctl show docker containerd -p LimitNOFILE || true
-          docker exec "${{ steps.cluster.outputs.name }}-control-plane" sh -c 'grep "open files" /proc/1/limits; grep "open files" /proc/$(pidof containerd)/limits' || true
-
       - name: Side-load singleuser image into kind node
         run: kind load image-archive "${{ needs.prep.outputs.tar }}" --name "${{ steps.cluster.outputs.name }}"
 
@@ -167,21 +160,6 @@ jobs:
       - name: Hub logs on failure
         if: failure()
         run: kubectl logs -l component=hub --tail=200 || true
-
-      - name: NFS diagnostics on failure
-        if: failure()
-        run: |
-          NODE="${{ steps.cluster.outputs.name }}-control-plane"
-          set -x
-          uname -a
-          cat /etc/os-release | head -3
-          lsmod | grep -E 'nfs|lockd|sunrpc' || true
-          sudo modprobe -v nfsd || true
-          sudo modprobe -v nfs || true
-          grep nfs /proc/filesystems || true
-          kubectl logs -l app.kubernetes.io/component=nfs-server --tail=100 || true
-          SERVER=$(kubectl get pv -o jsonpath='{.items[?(@.spec.nfs)].spec.nfs.server}')
-          docker exec "$NODE" sh -c "grep nfs /etc/hosts; command -v mount.nfs; mkdir -p /tmp/nfstest; mount -v -t nfs $SERVER:/exports /tmp/nfstest; echo rc=\$?; dmesg | tail -20" || true
 
   # Integration tests for files/keycloak_rbac_bootstrap.py against a
   # real Keycloak. The bootstrap is the chart's only piece of Python
@@ -253,15 +231,3 @@ jobs:
           kubectl -n keycloak logs statefulset/keycloak-keycloakx --tail=200 || true
           echo "--- port-forward log ---"
           cat /tmp/kc-pf.log || true
-
-      - name: Argo CD diagnostics on failure
-        if: failure() || cancelled()
-        run: |
-          set -x
-          NODE=$(docker ps --format '{{.Names}}' | grep control-plane | head -1)
-          k() { docker exec "$NODE" kubectl --kubeconfig /etc/kubernetes/admin.conf "$@"; }
-          docker exec "$NODE" sh -c 'grep "open files" /proc/1/limits; grep "open files" /proc/$(pidof containerd)/limits' || true
-          k -n argocd get pods -o wide || true
-          k -n argocd describe pod -l app.kubernetes.io/name=argocd-redis || true
-          k -n argocd logs -l app.kubernetes.io/name=argocd-redis --all-containers --tail=100 || true
-          k get events -A --field-selector type=Warning | tail -40 || true
