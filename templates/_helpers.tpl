@@ -225,16 +225,16 @@ URL and userinfo URL sit next to each other under one base.
 {{- end -}}
 
 {{/*
-OIDC client IDs follow nebari-operator's naming convention:
-  jupyterhub-<release>-<chart>  (hub's own client)
-  nebi-<release>-<chart>        (nebi service client, provisioned by nebi-pack)
+OIDC client IDs follow nebari-operator's naming convention (<namespace>-<nebariapp-name>):
+  <namespace>-<fullname>                (hub's own client)
+  <nebi.namespace>-<release>-<chart>    (nebi service client, provisioned by nebi-pack)
 */}}
 {{- define "nebari-data-science-pack.hubClientID" -}}
 {{- $explicit := index .Values.jupyterhub.custom "jupyterhub-client-id" | default "" -}}
 {{- if $explicit -}}
 {{- $explicit -}}
 {{- else -}}
-{{- printf "jupyterhub-%s" (include "nebari-data-science-pack.fullname" .) -}}
+{{- printf "%s-%s" .Release.Namespace (include "nebari-data-science-pack.fullname" .) -}}
 {{- end -}}
 {{- end -}}
 
@@ -243,7 +243,7 @@ OIDC client IDs follow nebari-operator's naming convention:
 {{- if $explicit -}}
 {{- $explicit -}}
 {{- else -}}
-{{- printf "nebi-%s-nebari-nebi-pack" (.Values.nebi.releaseName | default "nebi-pack") -}}
+{{- printf "%s-%s-nebari-nebi-pack" (.Values.nebi.namespace | default "nebi") (.Values.nebi.releaseName | default "nebi-pack") -}}
 {{- end -}}
 {{- end -}}
 

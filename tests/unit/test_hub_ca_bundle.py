@@ -199,6 +199,16 @@ def test_extra_env_preserves_jupyterhub_oidc_client_secret():
     assert ref.get("optional") is True
 
 
+def test_extra_env_preserves_jupyterhub_oidc_client_id():
+    """The OIDC client-id env var must stay wired to the
+    operator-provisioned Secret; regressing this breaks token exchange."""
+    entry = _hub_values()["extraEnv"].get("JUPYTERHUB_OIDC_CLIENT_ID")
+    assert entry is not None
+    ref = entry.get("valueFrom", {}).get("secretKeyRef", {})
+    assert ref.get("key") == "client-id"
+    assert ref.get("optional") is True
+
+
 # ---------------------------------------------------------------------------
 # Cross-cutting: values must reference the same trust-bundle-configmap that
 # 01-spawner.py's _setup_trust_bundle reads at spawn time (via

@@ -36,7 +36,7 @@ def get_nebi_environments(user):
     # Read config values (chart-derived defaults fill in when blank)
     keycloak_url = get_chart_config("keycloak-token-url")
     nebi_cid = get_chart_config("nebi-client-id")
-    hub_cid = get_chart_config("jupyterhub-client-id")
+    hub_cid = os.environ.get("JUPYTERHUB_OIDC_CLIENT_ID") or get_chart_config("jupyterhub-client-id")
     hub_secret = os.environ.get("JUPYTERHUB_OIDC_CLIENT_SECRET", "")
     nebi_url = get_chart_config("nebi-internal-url")
 
