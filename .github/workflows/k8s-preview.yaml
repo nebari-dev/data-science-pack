@@ -24,8 +24,8 @@ env:
   PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
   PREVIEW_HOSTNAME: pr-${{ github.event.pull_request.number }}-data-science-pack.${{ vars.PREVIEW_DOMAIN }}
   KEYCLOAK_HOSTNAME: keycloak-pr-${{ github.event.pull_request.number }}-data-science-pack.${{ vars.PREVIEW_DOMAIN }}
-  CLOUDFLARED_VERSION: "2026.7.3"
-  CLOUDFLARED_SHA256: "9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17"
+  CLOUDFLARED_VERSION: "2026.10.3"
+  CLOUDFLARED_SHA256: "053b80b0a23031a038fdbf3c073f59f82b8f1f152aa67971d7383ffafc0dbab0"
 
 jobs:
   deploy-preview:
