@@ -38,8 +38,8 @@ namespace, nothing else is required. The defaults derive:
 |---|---|
 | `nebi.remoteURL` | `https://<subdomains.nebi>.<base domain>` |
 | `nebi.internalURL` | `http://nebi-pack-nebari-nebi-pack.<nebi.namespace>.svc.cluster.local` |
-| Nebi OIDC client ID | `nebi-<nebi.releaseName>-nebari-nebi-pack` |
-| Hub OIDC client ID | `jupyterhub-<release>-<chart>` |
+| Nebi OIDC client ID | `<nebi.namespace>-<nebi.releaseName>-nebari-nebi-pack` |
+| Hub OIDC client ID | `<namespace>-<release>-<chart>` |
 
 Override any of them when your layout differs:
 
@@ -102,8 +102,8 @@ Five inputs must all resolve or the exchange aborts:
 | Input | Source |
 |---|---|
 | `keycloak-token-url` | derived from `keycloak.hostname` / `serviceHost` + realm |
-| `nebi-client-id` | derived from `nebi.releaseName` |
-| `jupyterhub-client-id` | derived from the release and chart names |
+| `nebi-client-id` | derived from `nebi.namespace` and `nebi.releaseName` |
+| `jupyterhub-client-id` | derived from the namespace, release, and chart names |
 | `JUPYTERHUB_OIDC_CLIENT_SECRET` | env var from the operator-provisioned Secret |
 | `nebi-internal-url` | derived from `nebi.namespace` |
 

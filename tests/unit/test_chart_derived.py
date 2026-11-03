@@ -166,3 +166,45 @@ def test_shutdown_no_activity_timeout_reaches_spawner(rendered_chart_derived):
     string; the spawner int-parses it)."""
     ns = _exec_chart_derived(rendered_chart_derived, z2jh_values={})
     assert ns["get_chart_config"]("shutdown-no-activity-timeout") == "900"
+
+
+def test_hub_client_id_derives_with_namespace(rendered_chart_derived):
+    """Hub client ID must derive as <namespace>-<fullname> so token exchange
+    matches nebari-operator's Keycloak client naming convention."""
+    ns = _exec_chart_derived(rendered_chart_derived, z2jh_values={})
+    assert ns["get_chart_config"]("jupyterhub-client-id") == "jupyterhub-data-science-pack-nebari-data-science-pack"
+
+
+def test_nebi_client_id_derives_with_namespace_and_release(rendered_chart_derived):
+    """Nebi client ID must derive as <nebi.namespace>-<nebi.releaseName>-nebari-nebi-pack."""
+    ns = _exec_chart_derived(rendered_chart_derived, z2jh_values={})
+    assert ns["get_chart_config"]("nebi-client-id") == "nebi-nebi-pack-nebari-nebi-pack"
+
+
+def test_hub_and_nebi_client_id_in_custom_namespace(tmp_path_factory):
+    """Deploying in a non-jupyterhub namespace (e.g. data-science) and with
+    custom nebi namespace must derive matching client IDs."""
+    helm = shutil.which("helm")
+    if helm is None:
+        pytest.skip("helm not on PATH")
+
+    charts_dir = REPO_ROOT / "charts"
+    has_deps = charts_dir.exists() and any(charts_dir.glob("jupyterhub-*.tgz"))
+    if not has_deps:
+        subprocess.run(
+            [helm, "dependency", "update", str(REPO_ROOT)],
+            capture_output=True, text=True, check=True,
+        )
+
+    values = tmp_path_factory.mktemp("values") / "values.yaml"
+    values.write_text("keycloak:\n  hostname: keycloak.example.com\nnebi:\n  namespace: custom-nebi\n  releaseName: custom-pack\n")
+
+    proc = subprocess.run(
+        [helm, "template", "data-science-pack", str(REPO_ROOT),
+         "-f", str(values), "--namespace", "data-science"],
+        capture_output=True, text=True, check=True,
+    )
+    src = _extract_configmap_key(proc.stdout, "00-chart-derived.py")
+    ns = _exec_chart_derived(src, z2jh_values={})
+    assert ns["get_chart_config"]("jupyterhub-client-id") == "data-science-data-science-pack-nebari-data-science-pack"
+    assert ns["get_chart_config"]("nebi-client-id") == "custom-nebi-custom-pack-nebari-nebi-pack" 

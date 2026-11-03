@@ -294,7 +294,7 @@ nebi:
   # and to derive internalURL above.
   namespace: "nebi"
   # Helm release name used by nebi-pack. Drives the derived OIDC client ID
-  # `nebi-<releaseName>-nebari-nebi-pack` (operator naming convention).
+  # `<nebi.namespace>-<releaseName>-nebari-nebi-pack` (operator naming convention).
   releaseName: "nebi-pack"
   # Port the Nebi server listens on (used in hub -> nebi NetworkPolicy
   # egress rule).
@@ -465,8 +465,8 @@ jupyterhub:
     keycloak-backchannel-issuer-url: ""
     # OIDC client IDs (provisioned by nebari-operator's AuthReconciler).
     # If empty, derived from operator naming convention:
-    #   jupyterhub-<release>-<chart>   (this chart)
-    #   nebi-<nebi.releaseName>-nebari-nebi-pack
+    #   <namespace>-<release>-<chart>   (this chart)
+    #   <nebi.namespace>-<nebi.releaseName>-nebari-nebi-pack
     nebi-client-id: ""
     jupyterhub-client-id: ""
     # ---------------------------------------------------------------------------
@@ -793,11 +793,11 @@ jupyterhub:
           - name: ca-merged
             mountPath: /merged
 
-    # KC OIDC client secret. ``02-jhub-apps.py`` and ``03-nebi-envs.py``
-    # read this env var to do KC token exchange for the Nebi service.
-    # ``00-gateway-auth.py`` reads the same secret from /etc/oauth (file)
-    # for the KeyCloakOAuthenticator wiring — both paths point at the
-    # same operator-provisioned Secret.
+    # KC OIDC client ID and secret. ``01-spawner.py``, ``02-jhub-apps.py``,
+    # and ``03-nebi-envs.py`` read these env vars to do KC token exchange
+    # for the Nebi service. ``00-gateway-auth.py`` reads the same secret
+    # from /etc/oauth (file) for the KeyCloakOAuthenticator wiring — both
+    # paths point at the same operator-provisioned Secret.
     # The secretName follows the same convention as oauth-client above.
     #
     # The five CA env vars point the standard HTTPS libraries at the merged
@@ -807,6 +807,12 @@ jupyterhub:
     # (GIT_SSL_CAINFO). When no org CA is present the merged file is a
     # byte-copy of the system bundle, so pointing at it is a no-op.
     extraEnv:
+      JUPYTERHUB_OIDC_CLIENT_ID:
+        valueFrom:
+          secretKeyRef:
+            name: data-science-pack-nebari-data-science-pack-oidc-client
+            key: client-id
+            optional: true
       JUPYTERHUB_OIDC_CLIENT_SECRET:
         valueFrom:
           secretKeyRef:

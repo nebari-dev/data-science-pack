@@ -82,8 +82,8 @@ From that one value:
 | Hub hostname | `<subdomains.hub>.<base>` | `hub.example.com` |
 | Nebi external URL | `https://<subdomains.nebi>.<base>` | `https://nebi.example.com` |
 | Keycloak token URL | `https://<keycloak.hostname>/realms/<realm>/…/token` | — |
-| Hub OIDC client ID | `jupyterhub-<release>-<chart>` | `jupyterhub-data-science-pack-nebari-data-science-pack` |
-| Nebi OIDC client ID | `nebi-<nebi.releaseName>-nebari-nebi-pack` | `nebi-nebi-pack-nebari-nebi-pack` |
+| Hub OIDC client ID | `<namespace>-<release>-<chart>` | `data-science-data-science-pack-nebari-data-science-pack` |
+| Nebi OIDC client ID | `<nebi.namespace>-<nebi.releaseName>-nebari-nebi-pack` | `nebi-nebi-pack-nebari-nebi-pack` |
 
 :::caution[Derivation needs a dotted hostname]
 The base domain is `keycloak.hostname` with its first label stripped. A single-label value

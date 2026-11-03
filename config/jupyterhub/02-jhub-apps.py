@@ -105,12 +105,18 @@ if get_config("custom.sharing-scopes-enabled", True):
             )
             break
 
-# Forward JUPYTERHUB_OIDC_CLIENT_SECRET to the jhub-apps subprocess so that
-# 03-nebi-envs.py (which is re-evaluated inside the subprocess via
-# get_jupyterhub_config()) can read it for Keycloak token exchange.
+# Forward JUPYTERHUB_OIDC_CLIENT_SECRET and JUPYTERHUB_OIDC_CLIENT_ID to the
+# jhub-apps subprocess so that 03-nebi-envs.py (which is re-evaluated inside
+# the subprocess via get_jupyterhub_config()) can read them for Keycloak
+# token exchange.
 _oidc_secret = os.environ.get("JUPYTERHUB_OIDC_CLIENT_SECRET", "")
-if _oidc_secret:
+_oidc_client_id = os.environ.get("JUPYTERHUB_OIDC_CLIENT_ID", "")
+if _oidc_secret or _oidc_client_id:
     for svc in c.JupyterHub.services:
         if svc.get("name") == "japps":
-            svc.setdefault("environment", {})["JUPYTERHUB_OIDC_CLIENT_SECRET"] = _oidc_secret
+            env = svc.setdefault("environment", {})
+            if _oidc_secret:
+                env["JUPYTERHUB_OIDC_CLIENT_SECRET"] = _oidc_secret
+            if _oidc_client_id:
+                env["JUPYTERHUB_OIDC_CLIENT_ID"] = _oidc_client_id
             break
