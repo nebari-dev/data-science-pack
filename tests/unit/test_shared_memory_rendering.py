@@ -156,14 +156,17 @@ def test_null_size_limit_warns_and_uses_chart_default(helm, monkeypatch, caplog)
     assert any("singleuser.sharedMemory.sizeLimit" in w for w in warnings), warnings
 
 
-def test_null_size_limit_is_ignored_when_disabled(helm, monkeypatch):
-    pod = _render_pod(
-        helm,
-        monkeypatch,
-        {"singleuser": {"sharedMemory": {"enabled": False, "sizeLimit": None}}},
-    )
+def test_null_size_limit_is_ignored_when_disabled(helm, monkeypatch, caplog):
+    with caplog.at_level("WARNING"):
+        pod = _render_pod(
+            helm,
+            monkeypatch,
+            {"singleuser": {"sharedMemory": {"enabled": False, "sizeLimit": None}}},
+        )
 
     _assert_shared_memory(pod, None)
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert not any("singleuser.sharedMemory.sizeLimit" in w for w in warnings), warnings
 
 
 @pytest.mark.parametrize("enabled", [True, False], ids=["enabled", "disabled"])
