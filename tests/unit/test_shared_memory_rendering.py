@@ -143,6 +143,27 @@ def test_chart_shared_memory_reaches_pod(
     _assert_shared_memory(pod, expected_size)
 
 
+def test_null_size_limit_stops_hub_with_clear_error(helm, monkeypatch):
+    # Sprig's quote renders nil as nothing, which is a syntax error in
+    # 00-chart-derived.py. The spawner's own validation should report it instead.
+    source, hub_values = _render_chart(
+        helm, {"singleuser": {"sharedMemory": {"sizeLimit": None}}}
+    )
+
+    with pytest.raises(ValueError, match="must be a non-empty string"):
+        _load_rendered_config(source, hub_values, monkeypatch)
+
+
+def test_null_size_limit_is_ignored_when_disabled(helm, monkeypatch):
+    pod = _render_pod(
+        helm,
+        monkeypatch,
+        {"singleuser": {"sharedMemory": {"enabled": False, "sizeLimit": None}}},
+    )
+
+    _assert_shared_memory(pod, None)
+
+
 @pytest.mark.parametrize("enabled", [True, False], ids=["enabled", "disabled"])
 def test_profile_shared_memory_preserves_gpu_image_variant(helm, monkeypatch, enabled):
     values = {
