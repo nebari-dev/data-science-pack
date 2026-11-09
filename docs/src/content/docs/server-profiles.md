@@ -74,6 +74,9 @@ jupyterhub:
           shm_size_limit: "16Gi"
 ```
 
+If a profile's `shm_size_limit` is empty or not a string, the hub logs a warning
+and that profile uses the chart-wide size.
+
 `sizeLimit` caps tmpfs consumption; it does not reserve memory. Pages written to
 `/dev/shm` count against the writing container's memory limit, so leave enough
 memory for the notebook and its worker processes. The effective filesystem

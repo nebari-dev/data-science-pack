@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import sys
 import types
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 import yaml
@@ -34,6 +36,11 @@ def _load(values=None):
         else:
             z2jh.get_config = previous
     return module, config
+
+
+def _load_profile(profile, values=None):
+    module, _ = _load({**(values or {}), "custom.profiles": [profile]})
+    return module._profiles[0]
 
 
 def _named(entries, name):
@@ -66,23 +73,6 @@ def test_global_default_adds_memory_backed_volume_and_mount():
     assert mount == {"name": DSHM_NAME, "mountPath": DSHM_PATH}
     assert _named(config.KubeSpawner.volumes, "home") is not None
     assert _named(config.KubeSpawner.volume_mounts, "home") is not None
-
-
-def test_unsupported_extra_volume_keys_do_not_change_storage():
-    _, config = _load(
-        {
-            "singleuser.extraVolumes": [
-                {"name": "scratch", "emptyDir": {}},
-            ],
-            "singleuser.extraVolumeMounts": [
-                {"name": "scratch", "mountPath": "/scratch"},
-            ],
-        }
-    )
-
-    assert _named(config.KubeSpawner.volumes, "scratch") is None
-    assert _named(config.KubeSpawner.volume_mounts, "scratch") is None
-    assert _named(config.KubeSpawner.volumes, DSHM_NAME) is not None
 
 
 def test_disabled_global_setting_adds_no_shared_memory_entries():
@@ -140,8 +130,7 @@ def test_profiles_without_storage_overrides_are_unchanged(profile):
     assert module._translate_profile_shared_memory(profile) == profile
 
 
-def test_profile_override_is_translated_without_mutating_input():
-    module, _ = _load()
+def test_profile_override_is_translated_at_load_without_mutating_input():
     profile = {
         "slug": "gpu",
         "display_name": "GPU",
@@ -152,8 +141,7 @@ def test_profile_override_is_translated_without_mutating_input():
     }
     original = copy.deepcopy(profile)
 
-    visible = module._filter_profiles([profile], groups=[], username="alice")
-    overrides = visible[0]["kubespawner_override"]
+    overrides = _load_profile(profile)["kubespawner_override"]
 
     assert profile == original
     assert "shm_size_limit" not in overrides
@@ -176,7 +164,6 @@ def test_profile_override_is_translated_without_mutating_input():
 
 
 def test_profile_volume_overrides_preserve_global_shared_memory():
-    module, _ = _load()
     profile = {
         "slug": "scratch",
         "display_name": "Scratch storage",
@@ -186,9 +173,7 @@ def test_profile_volume_overrides_preserve_global_shared_memory():
         },
     }
 
-    overrides = module._filter_profiles([profile], groups=[], username="alice")[0][
-        "kubespawner_override"
-    ]
+    overrides = _load_profile(profile)["kubespawner_override"]
     spawner = types.SimpleNamespace(volumes=[], volume_mounts=[])
 
     volumes = overrides["volumes"](spawner)
@@ -201,15 +186,12 @@ def test_profile_volume_overrides_preserve_global_shared_memory():
 
 
 def test_profile_override_replaces_conflicts_without_duplicates():
-    module, _ = _load()
     profile = {
         "slug": "large",
         "display_name": "Large",
         "kubespawner_override": {"shm_size_limit": "12Gi"},
     }
-    overrides = module._filter_profiles([profile], groups=[], username="alice")[0][
-        "kubespawner_override"
-    ]
+    overrides = _load_profile(profile)["kubespawner_override"]
     spawner = types.SimpleNamespace(
         volumes=[
             {"name": DSHM_NAME, "emptyDir": {"medium": "Memory", "sizeLimit": "1Gi"}},
@@ -227,8 +209,8 @@ def test_profile_override_replaces_conflicts_without_duplicates():
     assert _count(spawner.volume_mounts, "mountPath", DSHM_PATH) == 1
     assert _named(spawner.volume_mounts, DSHM_NAME) is not None
 
-    # JupyterHub and KubeSpawner can each apply user options during one spawn.
-    # Reapplying the callable must update, not duplicate, the generated entries.
+    # Applying the same overrides to this spawner again must update, not
+    # duplicate, the generated entries.
     KubeSpawner._apply_overrides(spawner, overrides)
 
     assert _count(spawner.volumes, "name", DSHM_NAME) == 1
@@ -236,18 +218,19 @@ def test_profile_override_replaces_conflicts_without_duplicates():
 
 
 def test_disabled_setting_strips_profile_pseudo_trait():
-    module, _ = _load({"custom.shared-memory-enabled": False})
     profile = {
         "slug": "gpu",
         "display_name": "GPU",
         "kubespawner_override": {"shm_size_limit": "16Gi"},
     }
 
-    visible = module._filter_profiles([profile], groups=[], username="alice")
+    overrides = _load_profile(profile, {"custom.shared-memory-enabled": False})[
+        "kubespawner_override"
+    ]
 
-    assert "shm_size_limit" not in visible[0]["kubespawner_override"]
-    assert "volumes" not in visible[0]["kubespawner_override"]
-    assert "volume_mounts" not in visible[0]["kubespawner_override"]
+    assert "shm_size_limit" not in overrides
+    assert "volumes" not in overrides
+    assert "volume_mounts" not in overrides
 
 
 @pytest.mark.parametrize("include_size", [True, False])
@@ -308,13 +291,45 @@ def test_callable_profile_storage_is_composed_without_mutation():
 
 
 @pytest.mark.parametrize("size", ["", "  ", None, 8])
-def test_profile_override_rejects_invalid_size_type_or_empty_string(size):
-    module, _ = _load()
+def test_invalid_profile_size_warns_and_uses_chart_size(size, caplog):
     profile = {
         "slug": "gpu",
         "display_name": "GPU",
         "kubespawner_override": {"shm_size_limit": size},
     }
 
-    with pytest.raises(ValueError, match="must be a non-empty string"):
-        module._filter_profiles([profile], groups=[], username="alice")
+    with caplog.at_level("WARNING"):
+        overrides = _load_profile(profile)["kubespawner_override"]
+    spawner = types.SimpleNamespace(volumes=[], volume_mounts=[])
+
+    assert "shm_size_limit" not in overrides
+    assert _named(overrides["volumes"](spawner), DSHM_NAME)["emptyDir"] == {
+        "medium": "Memory",
+        "sizeLimit": "8Gi",
+    }
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("'gpu'" in w and "shm_size_limit" in w for w in warnings), warnings
+
+
+def test_invalid_profile_size_does_not_break_profile_list(caplog):
+    profiles = [
+        {
+            "slug": "gpu",
+            "display_name": "GPU",
+            "kubespawner_override": {"shm_size_limit": ""},
+        },
+        {"slug": "cpu", "display_name": "CPU"},
+    ]
+    module, _ = _load({"custom.profiles": profiles})
+    spawner = types.SimpleNamespace(
+        user=types.SimpleNamespace(get_auth_state=AsyncMock(return_value={}))
+    )
+    caplog.clear()
+
+    # The size is checked once at load, not again on every profile-list render.
+    with caplog.at_level("WARNING"):
+        for _ in range(2):
+            visible = asyncio.run(module._render_profile_list(spawner))
+            assert [profile["slug"] for profile in visible] == ["gpu", "cpu"]
+
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]

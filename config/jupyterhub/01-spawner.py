@@ -457,26 +457,47 @@ c.KubeSpawner.environment = env
 # code changes. Empty list = no profile selector (single-instance mode).
 # Keys used only for group gating; KubeSpawner must never see them. They are
 # stripped per user in _filter_profiles because gating is a per-user decision.
-# ``image-variant`` is the other chart-only key — it is stripped once at load
+# ``image-variant`` is another chart-only key — it is stripped once at load
 # in _resolve_image_variants because its effect (image injection) is the same
 # for every user and jhub-apps reads the resolved list too. A future custom key
 # belongs in whichever of the two matches how it is evaluated.
 _PROFILE_GATING_KEYS = ("access", "groups", "users")
 
 
+def _profile_shared_memory_size(name, requested_size):
+    """Return a profile's valid size limit, or the chart-wide one."""
+    if requested_size is _MISSING_OVERRIDE:
+        return _shared_memory_size_limit
+    try:
+        return _normalize_shared_memory_size_limit(requested_size)
+    except ValueError:
+        log.warning(
+            "profiles: %r has shm_size_limit %r, expected a non-empty string; "
+            "using the chart-wide %s",
+            name, requested_size, _shared_memory_size_limit,
+        )
+        return _shared_memory_size_limit
+
+
 def _translate_profile_shared_memory(profile):
-    """Translate the chart-owned profile key into valid KubeSpawner traits."""
+    """Translate the chart-owned ``shm_size_limit`` into KubeSpawner traits.
+
+    Like ``image-variant``, this runs once at load because the result is the
+    same for every user. A bad size only warns and falls back to the
+    chart-wide size, because raising here would stop the hub for every user.
+    """
     translated = copy.deepcopy(profile)
     overrides = translated.get("kubespawner_override")
     if not isinstance(overrides, dict):
         return translated
 
+    name = translated.get("slug") or translated.get("display_name")
     requested_size = overrides.pop("shm_size_limit", _MISSING_OVERRIDE)
     if not _shared_memory_enabled:
         if requested_size is not _MISSING_OVERRIDE:
             log.warning(
                 "profiles: ignoring shm_size_limit for %r because shared memory is disabled",
-                translated.get("slug") or translated.get("display_name"),
+                name,
             )
         return translated
 
@@ -488,11 +509,7 @@ def _translate_profile_shared_memory(profile):
     if not overrides_shared_memory:
         return translated
 
-    size_limit = (
-        _shared_memory_size_limit
-        if requested_size is _MISSING_OVERRIDE
-        else _normalize_shared_memory_size_limit(requested_size)
-    )
+    size_limit = _profile_shared_memory_size(name, requested_size)
     configured_volumes = overrides.get("volumes", _MISSING_OVERRIDE)
     configured_mounts = overrides.get("volume_mounts", _MISSING_OVERRIDE)
     overrides["volumes"] = _profile_volumes_override(configured_volumes, size_limit)
@@ -583,7 +600,7 @@ def _filter_profiles(profiles, groups, username, keycloak_profile_slugs=()):
             )
             continue
         clean = {k: v for k, v in profile.items() if k not in _PROFILE_GATING_KEYS}
-        visible.append(_translate_profile_shared_memory(clean))
+        visible.append(clean)
     return visible
 
 
@@ -712,6 +729,7 @@ _profiles = _resolve_image_variants(
     get_config("singleuser.image.tag", ""),
     get_config("custom.image-variants", {}),
 )
+_profiles = [_translate_profile_shared_memory(profile) for profile in _profiles]
 if _profiles:
     c.KubeSpawner.profile_list = _render_profile_list
     log.info(
