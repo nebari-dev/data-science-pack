@@ -84,14 +84,22 @@ c.KubeSpawner.volume_mounts = [
 # translated in _translate_profile_shared_memory.
 _DSHM_NAME = "dshm"
 _DSHM_PATH = "/dev/shm"
+_DEFAULT_SHM_SIZE_LIMIT = "8Gi"
 _MISSING_OVERRIDE = object()
 
 
-def _normalize_shared_memory_size_limit(value):
-    """Require a non-empty size limit and strip surrounding whitespace."""
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError("shared-memory sizeLimit must be a non-empty string")
-    return value.strip()
+def _shared_memory_size_or(value, setting, fallback):
+    """Return ``value`` stripped, or warn and return ``fallback``.
+
+    A bad size only warns, because raising at load would stop the hub.
+    """
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    log.warning(
+        "%s is %r, expected a non-empty string; using %s",
+        setting, value, fallback,
+    )
+    return fallback
 
 
 def _shared_memory_volume(size_limit):
@@ -153,10 +161,14 @@ def _profile_volume_mounts_override(configured):
 
 
 _shared_memory_enabled = bool(get_chart_config("shared-memory-enabled", True))
-_shared_memory_size_limit = get_chart_config("shared-memory-size-limit", "8Gi")
+_shared_memory_size_limit = get_chart_config(
+    "shared-memory-size-limit", _DEFAULT_SHM_SIZE_LIMIT
+)
 if _shared_memory_enabled:
-    _shared_memory_size_limit = _normalize_shared_memory_size_limit(
-        _shared_memory_size_limit
+    _shared_memory_size_limit = _shared_memory_size_or(
+        _shared_memory_size_limit,
+        "singleuser.sharedMemory.sizeLimit",
+        _DEFAULT_SHM_SIZE_LIMIT,
     )
     c.KubeSpawner.volumes.append(_shared_memory_volume(_shared_memory_size_limit))
     c.KubeSpawner.volume_mounts.append(_shared_memory_mount())
@@ -472,15 +484,11 @@ def _profile_shared_memory_size(name, requested_size):
     """Return a profile's valid size limit, or the chart-wide one."""
     if requested_size is _MISSING_OVERRIDE:
         return _shared_memory_size_limit
-    try:
-        return _normalize_shared_memory_size_limit(requested_size)
-    except ValueError:
-        log.warning(
-            "profiles: %r has shm_size_limit %r, expected a non-empty string; "
-            "using the chart-wide %s",
-            name, requested_size, _shared_memory_size_limit,
-        )
-        return _shared_memory_size_limit
+    return _shared_memory_size_or(
+        requested_size,
+        f"profiles: {name!r} shm_size_limit",
+        _shared_memory_size_limit,
+    )
 
 
 def _translate_profile_shared_memory(profile):

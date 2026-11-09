@@ -143,15 +143,17 @@ def test_chart_shared_memory_reaches_pod(
     _assert_shared_memory(pod, expected_size)
 
 
-def test_null_size_limit_stops_hub_with_clear_error(helm, monkeypatch):
+def test_null_size_limit_warns_and_uses_chart_default(helm, monkeypatch, caplog):
     # Sprig's quote renders nil as nothing, which is a syntax error in
-    # 00-chart-derived.py. The spawner's own validation should report it instead.
-    source, hub_values = _render_chart(
-        helm, {"singleuser": {"sharedMemory": {"sizeLimit": None}}}
-    )
+    # 00-chart-derived.py, so the template renders "" and the spawner falls back.
+    with caplog.at_level("WARNING"):
+        pod = _render_pod(
+            helm, monkeypatch, {"singleuser": {"sharedMemory": {"sizeLimit": None}}}
+        )
 
-    with pytest.raises(ValueError, match="must be a non-empty string"):
-        _load_rendered_config(source, hub_values, monkeypatch)
+    _assert_shared_memory(pod, "8Gi")
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("singleuser.sharedMemory.sizeLimit" in w for w in warnings), warnings
 
 
 def test_null_size_limit_is_ignored_when_disabled(helm, monkeypatch):

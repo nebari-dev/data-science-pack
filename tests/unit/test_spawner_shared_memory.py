@@ -51,6 +51,10 @@ def _count(entries, key, value):
     return sum(entry.get(key) == value for entry in entries)
 
 
+def _warnings(caplog):
+    return [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+
+
 def test_values_enable_eight_gibibytes_by_default():
     values = yaml.safe_load((REPO_ROOT / "values.yaml").read_text())
 
@@ -106,9 +110,35 @@ def test_chart_storage_is_unchanged(enabled):
 
 
 @pytest.mark.parametrize("size", ["", "  ", None, 8])
-def test_global_setting_rejects_invalid_size_type_or_empty_string(size):
-    with pytest.raises(ValueError, match="must be a non-empty string"):
-        _load({"custom.shared-memory-size-limit": size})
+def test_invalid_global_size_warns_and_uses_chart_default(size, caplog):
+    with caplog.at_level("WARNING"):
+        _, config = _load({"custom.shared-memory-size-limit": size})
+
+    assert _named(config.KubeSpawner.volumes, DSHM_NAME)["emptyDir"] == {
+        "medium": "Memory",
+        "sizeLimit": "8Gi",
+    }
+    assert _named(config.KubeSpawner.volume_mounts, DSHM_NAME) is not None
+    warnings = _warnings(caplog)
+    assert any("singleuser.sharedMemory.sizeLimit" in w for w in warnings), warnings
+
+
+def test_invalid_global_size_falls_back_for_profiles():
+    profile = {
+        "slug": "scratch",
+        "display_name": "Scratch storage",
+        "kubespawner_override": {"volumes": [{"name": "scratch", "emptyDir": {}}]},
+    }
+
+    overrides = _load_profile(profile, {"custom.shared-memory-size-limit": ""})[
+        "kubespawner_override"
+    ]
+    spawner = types.SimpleNamespace(volumes=[], volume_mounts=[])
+
+    assert _named(overrides["volumes"](spawner), DSHM_NAME)["emptyDir"] == {
+        "medium": "Memory",
+        "sizeLimit": "8Gi",
+    }
 
 
 def test_global_size_is_trimmed():
@@ -307,7 +337,7 @@ def test_invalid_profile_size_warns_and_uses_chart_size(size, caplog):
         "medium": "Memory",
         "sizeLimit": "8Gi",
     }
-    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    warnings = _warnings(caplog)
     assert any("'gpu'" in w and "shm_size_limit" in w for w in warnings), warnings
 
 
