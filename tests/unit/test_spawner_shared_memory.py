@@ -247,20 +247,23 @@ def test_profile_override_replaces_conflicts_without_duplicates():
     assert _count(spawner.volume_mounts, "mountPath", DSHM_PATH) == 1
 
 
-def test_disabled_setting_strips_profile_pseudo_trait():
+def test_disabled_setting_strips_profile_pseudo_trait(caplog):
     profile = {
         "slug": "gpu",
         "display_name": "GPU",
         "kubespawner_override": {"shm_size_limit": "16Gi"},
     }
 
-    overrides = _load_profile(profile, {"custom.shared-memory-enabled": False})[
-        "kubespawner_override"
-    ]
+    with caplog.at_level("WARNING"):
+        overrides = _load_profile(profile, {"custom.shared-memory-enabled": False})[
+            "kubespawner_override"
+        ]
 
     assert "shm_size_limit" not in overrides
     assert "volumes" not in overrides
     assert "volume_mounts" not in overrides
+    warnings = _warnings(caplog)
+    assert any("'gpu'" in w and "shm_size_limit" in w for w in warnings), warnings
 
 
 @pytest.mark.parametrize("include_size", [True, False])
@@ -329,13 +332,16 @@ def test_invalid_profile_size_warns_and_uses_chart_size(size, caplog):
     }
 
     with caplog.at_level("WARNING"):
-        overrides = _load_profile(profile)["kubespawner_override"]
+        overrides = _load_profile(
+            profile, {"custom.shared-memory-size-limit": "2Gi"}
+        )["kubespawner_override"]
     spawner = types.SimpleNamespace(volumes=[], volume_mounts=[])
 
     assert "shm_size_limit" not in overrides
+    # A non-default chart-wide size shows the fallback is not just 8Gi.
     assert _named(overrides["volumes"](spawner), DSHM_NAME)["emptyDir"] == {
         "medium": "Memory",
-        "sizeLimit": "8Gi",
+        "sizeLimit": "2Gi",
     }
     warnings = _warnings(caplog)
     assert any("'gpu'" in w and "shm_size_limit" in w for w in warnings), warnings

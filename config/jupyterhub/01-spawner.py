@@ -475,7 +475,9 @@ c.KubeSpawner.environment = env
 # stripped per user in _filter_profiles because gating is a per-user decision.
 # ``image-variant`` is another chart-only key — it is stripped once at load
 # in _resolve_image_variants because its effect (image injection) is the same
-# for every user and jhub-apps reads the resolved list too. A future custom key
+# for every user and jhub-apps reads the resolved list too.
+# ``shm_size_limit`` is translated once at load in
+# _translate_profile_shared_memory for the same reason. A future custom key
 # belongs in whichever of the two matches how it is evaluated.
 _PROFILE_GATING_KEYS = ("access", "groups", "users")
 
