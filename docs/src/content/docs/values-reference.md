@@ -104,16 +104,9 @@ proxy pod IP *before* the subchart's pod-level policy is evaluated — without i
 cannot reach `https://<hub>/services/japps` or the Nebi host. Kubernetes unions egress rules
 across policies selecting the same pod, so it is harmless where it is not needed.
 
-Profiles inherit the chart-wide shared-memory size. Set
-`kubespawner_override.shm_size_limit` on a profile to replace only that profile's
-limit. Set `singleuser.sharedMemory.enabled: false` to disable the chart-managed
-mount and retain the runtime default, or to manage `/dev/shm` through explicit
-profile volume overrides. Those overrides remain unchanged when disabled;
-`shm_size_limit` is ignored. The size limit caps tmpfs usage but does not reserve
-memory; only pages written to `/dev/shm` count against the writing container's
-memory limit. Keep that limit large enough for both shared memory and the notebook
-processes. Node or pod memory constraints can reduce the effective filesystem
-capacity below the configured cap.
+Profiles can set their own shared-memory size with `kubespawner_override.shm_size_limit`.
+See [Shared memory](/server-profiles/#shared-memory) for how the size counts against
+memory limits and how it works with profile volume overrides.
 
 ## `singleuserCuller`
 

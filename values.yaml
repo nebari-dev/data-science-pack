@@ -145,18 +145,6 @@ nebariapp:
 # NetworkPolicy and unioned with the subchart's policy (Kubernetes
 # NetworkPolicy semantics).
 singleuser:
-  # Mount a memory-backed emptyDir at /dev/shm in every JupyterLab pod. This
-  # avoids the container runtime's 64 MiB default, which can make Ray fall back
-  # to disk and can crash multiprocessing PyTorch DataLoader workers.
-  sharedMemory:
-    # Disable to retain the runtime default or manage /dev/shm through
-    # explicit profile volume overrides instead of this chart-managed mount.
-    enabled: true
-    # This is a consumption cap, not a reservation. Used tmpfs pages count
-    # against the writing container's memory limit. Leave room for both
-    # shared memory and application processes within that limit.
-    # Ray commonly targets about 30% of available memory for its object store.
-    sizeLimit: "8Gi"
   networkPolicy:
     # Lets singleuser pods reach the Nebari gateway pod (Envoy Gateway proxy)
     # in its own namespace. Required on Hetzner k3s + any cluster where
@@ -171,6 +159,18 @@ singleuser:
     gatewayNamespace: envoy-gateway-system
     gatewayName: nebari-gateway
     gatewayPort: 10443
+  # Mount a memory-backed emptyDir at /dev/shm in every JupyterLab pod. This
+  # avoids the container runtime's 64 MiB default, which can make Ray fall back
+  # to disk and can crash multiprocessing PyTorch DataLoader workers.
+  sharedMemory:
+    # Disable to retain the runtime default or manage /dev/shm through
+    # explicit profile volume overrides instead of this chart-managed mount.
+    enabled: true
+    # This is a consumption cap, not a reservation. Used tmpfs pages count
+    # against the writing container's memory limit. Leave room for both
+    # shared memory and application processes within that limit.
+    # Ray commonly targets about 30% of available memory for its object store.
+    sizeLimit: "8Gi"
 
 # =============================================================================
 # Singleuser Idle Culler
