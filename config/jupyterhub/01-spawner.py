@@ -34,79 +34,6 @@ log = logging.getLogger(__name__)
 # KubeSpawner (escaped slug) vs base Spawner traits like notebook_dir (raw username),
 # causing a path mismatch when usernames contain special characters (e.g. emails).
 # Each user still gets an isolated PVC via claim-{username}.
-
-_DSHM_NAME = "dshm"
-_DSHM_PATH = "/dev/shm"
-_MISSING_OVERRIDE = object()
-
-
-def _normalize_shared_memory_size_limit(value):
-    """Require a non-empty size limit and strip surrounding whitespace."""
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError("shared-memory sizeLimit must be a non-empty string")
-    return value.strip()
-
-
-def _upsert_named(entries, addition):
-    """Return entries with exactly one item bearing ``addition``'s name."""
-    retained = [
-        entry
-        for entry in list(entries or [])
-        if entry.get("name") != addition["name"]
-    ]
-    return [*retained, addition]
-
-
-def _with_shared_memory_volume(volumes, size_limit):
-    return _upsert_named(
-        volumes,
-        {
-            "name": _DSHM_NAME,
-            "emptyDir": {"medium": "Memory", "sizeLimit": size_limit},
-        },
-    )
-
-
-def _with_shared_memory_mount(volume_mounts):
-    retained = [
-        mount
-        for mount in list(volume_mounts or [])
-        if mount.get("name") != _DSHM_NAME and mount.get("mountPath") != _DSHM_PATH
-    ]
-    return [*retained, {"name": _DSHM_NAME, "mountPath": _DSHM_PATH}]
-
-
-def _resolve_list_override(spawner, trait_name, configured):
-    if configured is _MISSING_OVERRIDE:
-        return getattr(spawner, trait_name, [])
-    if callable(configured):
-        return configured(spawner)
-    return configured
-
-
-def _profile_volumes_override(configured, size_limit):
-    def apply(spawner):
-        volumes = _resolve_list_override(spawner, "volumes", configured)
-        return _with_shared_memory_volume(volumes, size_limit)
-
-    return apply
-
-
-def _profile_volume_mounts_override(configured):
-    def apply(spawner):
-        mounts = _resolve_list_override(spawner, "volume_mounts", configured)
-        return _with_shared_memory_mount(mounts)
-
-    return apply
-
-
-_shared_memory_enabled = bool(get_chart_config("shared-memory-enabled", True))
-_shared_memory_size_limit = get_chart_config("shared-memory-size-limit", "8Gi")
-if _shared_memory_enabled:
-    _shared_memory_size_limit = _normalize_shared_memory_size_limit(
-        _shared_memory_size_limit
-    )
-
 c.KubeSpawner.storage_pvc_ensure = True
 c.KubeSpawner.storage_capacity = get_config("custom.storage-capacity", "20Gi")
 c.KubeSpawner.storage_access_modes = ["ReadWriteOnce"]
@@ -148,14 +75,91 @@ c.KubeSpawner.volume_mounts = [
     },
 ]
 
+# ---------------------------------------------------------------------------
+# Shared memory (/dev/shm)
+# ---------------------------------------------------------------------------
+# Container runtimes default /dev/shm to 64 MiB, which is too small for PyTorch
+# DataLoader workers and Ray's object store. Mount a memory-backed emptyDir
+# instead. Profiles can resize it with the chart-only ``shm_size_limit`` key,
+# translated in _translate_profile_shared_memory.
+_DSHM_NAME = "dshm"
+_DSHM_PATH = "/dev/shm"
+_MISSING_OVERRIDE = object()
+
+
+def _normalize_shared_memory_size_limit(value):
+    """Require a non-empty size limit and strip surrounding whitespace."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("shared-memory sizeLimit must be a non-empty string")
+    return value.strip()
+
+
+def _shared_memory_volume(size_limit):
+    return {
+        "name": _DSHM_NAME,
+        "emptyDir": {"medium": "Memory", "sizeLimit": size_limit},
+    }
+
+
+def _shared_memory_mount():
+    return {"name": _DSHM_NAME, "mountPath": _DSHM_PATH}
+
+
+def _upsert_named(entries, addition):
+    """Return entries with exactly one item bearing ``addition``'s name."""
+    retained = [
+        entry
+        for entry in list(entries or [])
+        if entry.get("name") != addition["name"]
+    ]
+    return [*retained, addition]
+
+
+def _with_shared_memory_volume(volumes, size_limit):
+    return _upsert_named(volumes, _shared_memory_volume(size_limit))
+
+
+def _with_shared_memory_mount(volume_mounts):
+    retained = [
+        mount
+        for mount in list(volume_mounts or [])
+        if mount.get("name") != _DSHM_NAME and mount.get("mountPath") != _DSHM_PATH
+    ]
+    return [*retained, _shared_memory_mount()]
+
+
+def _resolve_list_override(spawner, trait_name, configured):
+    if configured is _MISSING_OVERRIDE:
+        return getattr(spawner, trait_name, [])
+    if callable(configured):
+        return configured(spawner)
+    return configured
+
+
+def _profile_volumes_override(configured, size_limit):
+    def apply(spawner):
+        volumes = _resolve_list_override(spawner, "volumes", configured)
+        return _with_shared_memory_volume(volumes, size_limit)
+
+    return apply
+
+
+def _profile_volume_mounts_override(configured):
+    def apply(spawner):
+        mounts = _resolve_list_override(spawner, "volume_mounts", configured)
+        return _with_shared_memory_mount(mounts)
+
+    return apply
+
+
+_shared_memory_enabled = bool(get_chart_config("shared-memory-enabled", True))
+_shared_memory_size_limit = get_chart_config("shared-memory-size-limit", "8Gi")
 if _shared_memory_enabled:
-    c.KubeSpawner.volumes.append(
-        {
-            "name": _DSHM_NAME,
-            "emptyDir": {"medium": "Memory", "sizeLimit": _shared_memory_size_limit},
-        }
+    _shared_memory_size_limit = _normalize_shared_memory_size_limit(
+        _shared_memory_size_limit
     )
-    c.KubeSpawner.volume_mounts.append({"name": _DSHM_NAME, "mountPath": _DSHM_PATH})
+    c.KubeSpawner.volumes.append(_shared_memory_volume(_shared_memory_size_limit))
+    c.KubeSpawner.volume_mounts.append(_shared_memory_mount())
 
 # ---------------------------------------------------------------------------
 # Admin-provisioned nebi config (OCI registries, default-registry seed flag).
