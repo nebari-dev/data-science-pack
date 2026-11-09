@@ -48,6 +48,81 @@ satisfy leaves the server `Pending` forever with no message in the UI.
 `kubespawner_override` accepts any KubeSpawner trait — `node_selector`, `image`,
 `extra_resource_limits`, `tolerations`, `environment`, and the rest.
 
+## Image variants
+
+A profile that needs a different JupyterLab image than the CPU default should declare
+`image-variant: <name>` instead of pinning an image. The chart injects
+`<singleuser.image.name>-<name>:<singleuser.image.tag>`, so the profile follows every pack
+update exactly like the shipped CPU profiles. `gpu` is the only variant published today.
+
+This is the expected way to define a GPU profile:
+
+```yaml
+      - slug: gpu-instance
+        display_name: "G4 GPU Instance"
+        image-variant: gpu
+        access: yaml
+        groups:
+          - gpu-access
+        kubespawner_override:
+          # no image needed — the -gpu image is injected automatically
+          node_selector:
+            node.kubernetes.io/instance-type: g4dn.xlarge
+          extra_resource_limits:
+            nvidia.com/gpu: 1
+```
+
+Both JupyterLab images are built from the same commit and share the same `sha-` tag, so
+the derived ref (`nebari-data-science-pack-jupyterlab-gpu:<tag>`) exists on `quay.io/nebari`
+for every release. Nothing in the overlay goes stale
+([issue #230](https://github.com/nebari-dev/data-science-pack/issues/230)).
+The `access` and `groups` keys above are explained under
+[Gating profiles by group](#gating-profiles-by-group); getting the pod scheduled onto a GPU
+node is covered under [GPU profiles](#gpu-profiles).
+
+Like the gating keys, `image-variant` is stripped (whatever its value) before the profile
+reaches KubeSpawner. The hub logs the injected ref at startup:
+
+```bash
+kubectl -n data-science logs deploy/hub | grep "profiles:.*gpu"
+```
+
+:::caution[Mirrored registries]
+The derivation only rewrites the image *name*. If you point `jupyterhub.singleuser.image.name`
+at a mirror (ECR, an airgapped registry), the chart derives `<mirror>-gpu:<tag>`, which does
+not exist unless you mirrored it too. Nothing validates the ref at `helm upgrade` time — the
+first GPU spawn fails with `ImagePullBackOff`. Either mirror the `-gpu` image under that name
+or map it under `jupyterhub.custom.image-variants`:
+
+```yaml
+    image-variants:
+      gpu: 123456789012.dkr.ecr.us-east-1.amazonaws.com/lab-gpu:sha-abc1234
+```
+
+The `-gpu` image is built for `linux/amd64` only; the CPU image is multi-arch.
+
+The same applies to a misspelled variant: unlike a typo in a gating key, which fails closed,
+`image-variant: gup` does not fail at all. It derives `<name>-gup:<tag>`, which the startup log
+shows and the first spawn rejects with `ImagePullBackOff`. A misspelled key under
+`image-variants` (say `gpus:`) is different: it matches no profile, so the derived ref is used
+instead of your override, and the hub logs a warning naming the unclaimed key.
+:::
+
+Two things override the injection:
+
+- **An explicit `kubespawner_override.image`** always wins. Note that
+  `scripts/bump_image_tags.py` only rewrites the CPU image ref, so a hand-pinned `-gpu`
+  image stays frozen across releases — the exact problem `image-variant` exists to solve. Prefer
+  the key over pinning.
+- **`profile_options.image`**, the per-profile image dropdown described in the
+  [next section](#image-choices-within-a-profile). KubeSpawner applies the selected choice's
+  `kubespawner_override` *after* the profile-level one and replaces rather than merges, so
+  an image choice silently puts the CPU image on the GPU node (while jhub-apps' Create App
+  still displays the injected GPU image). The shipped CPU profiles carry such an option —
+  do not copy it onto an `image-variant` profile. The hub logs a warning if you do.
+
+`jupyterhub.custom.image-variants.<name>` changes which image gets injected for a variant chart-wide.
+
 ## Image choices within a profile
 
 `profile_options` adds a second dropdown under the selected profile:
@@ -75,6 +150,9 @@ satisfy leaves the server `Pending` forever with no message in the UI.
                   image: quay.io/nebari/nebari-data-science-pack-jupyterlab-r:sha-16c1922
 ```
 
+Do not add `profile_options.image` to an `image-variant` profile: the selected choice
+replaces the injected image (see [Image variants](#image-variants)).
+
 :::caution[The image tag appears in three places per profile]
 The outer `kubespawner_override.image` is what jhub-apps' Create App form reads for its
 image field; the inner `profile_options.image.choices.default` is what the JupyterLab
@@ -99,17 +177,20 @@ classic Nebari.
 | `keycloak` | users whose `jupyterlab-profiles` Keycloak role lists this profile's `slug` |
 
 ```yaml
-      - slug: gpu-instance
-        display_name: "G4 GPU Instance"
+      - slug: large-instance
+        display_name: "Large Instance"
         access: yaml
         groups:
-          - gpu-access
+          - data-engineering
         users:
           - alice
         kubespawner_override:
-          extra_resource_limits:
-            nvidia.com/gpu: 1
+          cpu_limit: 16
+          mem_limit: "64G"
 ```
+
+GPU profiles are gated the same way. The complete GPU recipe, including the image, is the
+example under [Image variants](#image-variants).
 
 :::note[Unknown access modes fail closed]
 Anything other than `all`, `yaml`, or `keycloak` hides the profile and logs a warning.
@@ -152,77 +233,9 @@ kubectl -n data-science logs deploy/hub | grep -i "profiles:\|groups"
 
 ## GPU profiles
 
-### The GPU image, without hardcoding a SHA
-
-Mark a profile `image-variant: gpu` and the chart injects the matching GPU JupyterLab image
-(`nebari-data-science-pack-jupyterlab-gpu`) at the chart's current tag:
-
-```yaml
-      - slug: gpu-instance
-        display_name: "G4 GPU Instance"
-        image-variant: gpu
-        access: yaml
-        groups:
-          - gpu-access
-        kubespawner_override:
-          # no image needed — the -gpu image is injected automatically
-          node_selector:
-            node.kubernetes.io/instance-type: g4dn.xlarge
-          extra_resource_limits:
-            nvidia.com/gpu: 1
-```
-
-Both JupyterLab images are built from the same commit and share the same `sha-` tag, so
-the derived ref (`<singleuser.image.name>-gpu:<singleuser.image.tag>`) exists on
-`quay.io/nebari` for every release and GPU profiles track pack updates exactly like CPU
-profiles — no more stale SHAs in the overlay
-([issue #230](https://github.com/nebari-dev/data-science-pack/issues/230)).
-
-The derivation is generic — `image-variant: <name>` resolves to
-`<singleuser.image.name>-<name>:<singleuser.image.tag>` — but `gpu` is the only variant
-published today. Like the gating keys, `image-variant` is stripped (whatever its value) before
-the profile reaches KubeSpawner. The hub logs the injected ref at startup:
-
-```bash
-kubectl -n data-science logs deploy/hub | grep "profiles:.*gpu"
-```
-
-:::caution[Mirrored registries]
-The derivation only rewrites the image *name*. If you point `jupyterhub.singleuser.image.name`
-at a mirror (ECR, an airgapped registry), the chart derives `<mirror>-gpu:<tag>`, which does
-not exist unless you mirrored it too. Nothing validates the ref at `helm upgrade` time — the
-first GPU spawn fails with `ImagePullBackOff`. Either mirror the `-gpu` image under that name
-or map it under `jupyterhub.custom.image-variants`:
-
-```yaml
-    image-variants:
-      gpu: 123456789012.dkr.ecr.us-east-1.amazonaws.com/lab-gpu:sha-abc1234
-```
-
-The `-gpu` image is built for `linux/amd64` only; the CPU image is multi-arch.
-
-The same applies to a misspelled variant: unlike a typo in a gating key, which fails closed,
-`image-variant: gup` does not fail at all. It derives `<name>-gup:<tag>`, which the startup log
-shows and the first spawn rejects with `ImagePullBackOff`. A misspelled key under
-`image-variants` (say `gpus:`) is different: it matches no profile, so the derived ref is used
-instead of your override, and the hub logs a warning naming the unclaimed key.
-:::
-
-Two things override the injection:
-
-- **An explicit `kubespawner_override.image`** always wins. Note that
-  `scripts/bump_image_tags.py` only rewrites the CPU image ref, so a hand-pinned `-gpu`
-  image stays frozen across releases — the exact problem `image-variant` exists to solve. Prefer
-  the key over pinning.
-- **`profile_options.image`.** KubeSpawner applies the selected choice's
-  `kubespawner_override` *after* the profile-level one and replaces rather than merges, so
-  an image choice silently puts the CPU image on the GPU node (while jhub-apps' Create App
-  still displays the injected GPU image). The shipped CPU profiles carry such an option —
-  do not copy it onto an `image-variant` profile. The hub logs a warning if you do.
-
-`jupyterhub.custom.image-variants.<name>` changes which image gets injected for a variant chart-wide.
-
-### Scheduling onto GPU nodes
+For the image, use `image-variant: gpu` rather than pinning a `-gpu` SHA; the full profile is
+the example under [Image variants](#image-variants). This section covers getting the pod onto
+a GPU node.
 
 A GPU profile requests the resource through `extra_resource_limits`, but scheduling onto a
 tainted GPU node group also needs a toleration — whether you must add it yourself depends on
