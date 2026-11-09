@@ -71,8 +71,25 @@ def teardown_cluster(name):
                    capture_output=True)
 
 
+def helm_dependency_update(attempts=3, delay=5):
+    """`helm dependency update` fetches the JupyterHub chart index from
+    hub.jupyter.org. A single TCP reset on a GitHub runner has killed an
+    otherwise-green e2e leg before its test ran; retry transient failures
+    rather than burning a whole matrix leg on one dropped connection.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return run("helm", "dependency", "update")
+        except subprocess.CalledProcessError:
+            if attempt == attempts:
+                raise
+            log.warning("helm dependency update failed (attempt %d/%d); "
+                        "retrying in %ds", attempt, attempts, delay)
+            time.sleep(delay)
+
+
 def helm_install(release, chart_dir, values_file):
-    run("helm", "dependency", "update")
+    helm_dependency_update()
     t0 = time.time()
     run("helm", "upgrade", "--install", release, chart_dir,
         "--namespace", NAMESPACE,

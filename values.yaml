@@ -191,6 +191,16 @@ singleuserCuller:
   server:
     shutdownNoActivityTimeout: 900  # 15 min — seconds after last kernel/terminal gone before server self-terminates
 
+# VS Code (code-server) idle-culling behavior. When enabled (default), VS
+# Code browser traffic does NOT count as jupyter activity — the bundled
+# nebari-activity-reporter extension reports real user interaction (typing,
+# scrolling, terminal use) instead, so idle VS Code tabs cull on the normal
+# schedule (https://github.com/nebari-dev/data-science-pack/issues/208).
+# Set enabled: false to revert to counting raw proxied traffic (the
+# pre-#208 behavior, which keeps pods alive while any tab is open).
+vscodeActivity:
+  enabled: true
+
 # Shared storage — per-group directories mounted at /shared/<group> in user pods.
 # Requires an RWX StorageClass on the cluster.
 #
@@ -271,6 +281,19 @@ nebi:
     # to the ~61s KernelSpecManager poll — no error is logged anywhere.
     tag: "sha-5ca877a"
     pullPolicy: IfNotPresent
+  # Set enabled: false when no Nebi server (nebari-nebi-pack) is deployed
+  # alongside this pack. remoteURL and internalURL then resolve to empty,
+  # which turns off the hub <-> Nebi token exchange and the Nebi launcher
+  # card, and the jhub-apps environment selector lists the user's own
+  # local Nebi workspaces (built in the JupyterLab Nebi tile or registered
+  # with `nebi init`) instead of the server's. The list comes from the
+  # user's main JupyterLab; the hub keeps a copy for while it is stopped.
+  # An app copies the selected workspace's
+  # pixi.toml and pixi.lock into its own pod and builds the environment
+  # there. Restart the hub after changing this: it only changes the hub's
+  # config files, which an upgrade alone does not reload.
+  remote:
+    enabled: true
   # External Nebi FQDN (browser-side, used for OIDC redirect).
   # If empty, derived from keycloak.hostname as
   # `https://<subdomains.nebi>.<base-domain>`.
@@ -558,7 +581,7 @@ jupyterhub:
           # The same value sits inside profile_options.image.choices.default
           # so the JupyterLab profile selector keeps showing it too.
           # scripts/bump_image_tags.py syncs all three on every bump.
-          image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-740eafb
+          image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-22afdc1
           cpu_limit: 1
           cpu_guarantee: 0.5
           mem_limit: "2G"
@@ -568,15 +591,15 @@ jupyterhub:
             display_name: Image
             choices:
               default:
-                display_name: "nebari-data-science-pack-jupyterlab:sha-740eafb"
+                display_name: "nebari-data-science-pack-jupyterlab:sha-22afdc1"
                 default: true
                 kubespawner_override:
-                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-740eafb
+                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-22afdc1
       - slug: medium-instance
         display_name: "Medium Instance"
         description: "4 CPU / 8 GB RAM — pandas / scikit-learn workloads on medium datasets."
         kubespawner_override:
-          image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-740eafb
+          image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-22afdc1
           cpu_limit: 4
           cpu_guarantee: 2
           mem_limit: "8G"
@@ -586,10 +609,10 @@ jupyterhub:
             display_name: Image
             choices:
               default:
-                display_name: "nebari-data-science-pack-jupyterlab:sha-740eafb"
+                display_name: "nebari-data-science-pack-jupyterlab:sha-22afdc1"
                 default: true
                 kubespawner_override:
-                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-740eafb
+                  image: quay.io/nebari/nebari-data-science-pack-jupyterlab:sha-22afdc1
     # Terminal customization: controls Starship prompt in JupyterLab terminals.
     # When false, falls back to the default bash prompt.
     terminal-customization: true
@@ -655,7 +678,7 @@ jupyterhub:
     # class clears current_user — id_token_hint now reaches KC).
     image:
       name: quay.io/nebari/nebari-data-science-pack-jupyterhub
-      tag: "sha-740eafb"
+      tag: "sha-22afdc1"
 
     config:
       JupyterHub:
@@ -758,7 +781,7 @@ jupyterhub:
     # keeps the two in sync on every automated bump instead.
     initContainers:
       - name: merge-ca-bundle
-        image: quay.io/nebari/nebari-data-science-pack-jupyterhub:sha-740eafb
+        image: quay.io/nebari/nebari-data-science-pack-jupyterhub:sha-22afdc1
         imagePullPolicy: IfNotPresent
         # z2jh's pod-level securityContext sets ``runAsNonRoot: true`` but
         # no explicit uid, and the hub image's default ``USER`` is root,
@@ -825,7 +848,7 @@ jupyterhub:
   singleuser:
     image:
       name: quay.io/nebari/nebari-data-science-pack-jupyterlab
-      tag: "sha-740eafb"
+      tag: "sha-22afdc1"
     defaultUrl: "/lab"
     extraEnv:
       JUPYTERHUB_SINGLEUSER_APP: "jupyter_server.serverapp.ServerApp"

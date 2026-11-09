@@ -3,6 +3,10 @@ ARG NEBI_IMAGE=""
 FROM ${BASE_IMAGE} AS builder
 LABEL MAINTAINER="Nebari development team"
 
+# Pinned pixi release; bump deliberately. Must match the version
+# used to generate the pixi.lock files in this repo.
+ARG PIXI_VERSION=v0.81.0
+
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -14,7 +18,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 COPY scripts /opt/scripts
 
-RUN curl -fsSL https://pixi.sh/install.sh | PIXI_HOME=/usr/local bash
+RUN curl -fsSL https://pixi.sh/install.sh | PIXI_VERSION=${PIXI_VERSION} PIXI_HOME=/usr/local bash
+RUN pixi --version | grep -qF "${PIXI_VERSION#v}"
 
 ENV PATH=/opt/scripts:${PATH}
 

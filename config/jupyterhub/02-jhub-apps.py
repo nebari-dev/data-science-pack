@@ -70,8 +70,18 @@ japps_config.setdefault(
 for key, value in japps_config.items():
     setattr(c.JAppsConfig, key, value)
 
+
+class _NebiKubeSpawner(KubeSpawner):
+    async def stop(self, now=False):
+        # Without a Nebi server, remember the workspaces of a JupyterLab that
+        # is stopping, so the app form can offer them while it is stopped.
+        # save_list_before_stop is defined in 03-nebi-envs.py.
+        await save_list_before_stop(self)
+        return await super().stop(now=now)
+
+
 # Install jhub-apps (sets up service, roles, etc.)
-c = install_jhub_apps(c, spawner_to_subclass=KubeSpawner)
+c = install_jhub_apps(c, spawner_to_subclass=_NebiKubeSpawner)
 
 # Extend the `user` role with the scopes the jhub-apps sharing dropdown
 # ("Individuals and group access") needs: the dropdown is (other hub users +
