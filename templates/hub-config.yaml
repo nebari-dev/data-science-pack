@@ -64,6 +64,13 @@ data:
         # syntax error that CrashLoops the hub), not as "". A deployer's
         # explicit 0 already means "disabled", so nothing real is swallowed.
         "shutdown-no-activity-timeout": {{ .Values.singleuserCuller.server.shutdownNoActivityTimeout | default 0 | quote }},
+        # Shared-memory defaults are chart-level values because the spawner
+        # owns the volume list. Profile-specific size overrides are translated
+        # in 01-spawner.py before KubeSpawner applies them. `default ""` is the
+        # same nil-safety as above; when enabled, the spawner warns about an
+        # empty size and uses 8Gi.
+        "shared-memory-enabled": {{ ternary "True" "False" .Values.singleuser.sharedMemory.enabled }},
+        "shared-memory-size-limit": {{ .Values.singleuser.sharedMemory.sizeLimit | default "" | quote }},
     }
 
 

@@ -92,6 +92,8 @@ Not to be confused with `jupyterhub.singleuser`, which is the upstream passthrou
 
 | Field | Default | What it does |
 |---|---|---|
+| `singleuser.sharedMemory.enabled` | `true` | Mount a memory-backed `emptyDir` at `/dev/shm` in singleuser pods. |
+| `singleuser.sharedMemory.sizeLimit` | `8Gi` | Maximum tmpfs consumption; used pages count against the writing container's memory limit. |
 | `singleuser.networkPolicy.allowEgressToGateway` | `true` | Renders a NetworkPolicy letting user pods reach the Envoy Gateway pod. |
 | `singleuser.networkPolicy.gatewayNamespace` | `envoy-gateway-system` | Where the gateway runs. |
 | `singleuser.networkPolicy.gatewayName` | `nebari-gateway` | Gateway name, matched on `gateway.envoyproxy.io/owning-gateway-name`. |
@@ -101,6 +103,10 @@ Required on Hetzner k3s and any cluster where kube-proxy DNATs the LoadBalancer 
 proxy pod IP *before* the subchart's pod-level policy is evaluated — without it, user pods
 cannot reach `https://<hub>/services/japps` or the Nebi host. Kubernetes unions egress rules
 across policies selecting the same pod, so it is harmless where it is not needed.
+
+Profiles can set their own shared-memory size with `kubespawner_override.shm_size_limit`.
+See [Shared memory](/server-profiles/#shared-memory) for how the size counts against
+memory limits and how it works with profile volume overrides.
 
 ## `singleuserCuller`
 

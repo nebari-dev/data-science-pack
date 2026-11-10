@@ -166,3 +166,10 @@ def test_shutdown_no_activity_timeout_reaches_spawner(rendered_chart_derived):
     string; the spawner int-parses it)."""
     ns = _exec_chart_derived(rendered_chart_derived, z2jh_values={})
     assert ns["get_chart_config"]("shutdown-no-activity-timeout") == "900"
+
+
+def test_shared_memory_defaults_are_available_to_spawner(rendered_chart_derived):
+    ns = _exec_chart_derived(rendered_chart_derived, z2jh_values={})
+
+    assert ns["get_chart_config"]("shared-memory-enabled") is True
+    assert ns["get_chart_config"]("shared-memory-size-limit") == "8Gi"
