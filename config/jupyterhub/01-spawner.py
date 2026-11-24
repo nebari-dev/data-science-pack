@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import posixpath
 import string
 import urllib.error
 import urllib.request
@@ -305,6 +306,12 @@ if nebi_remote_url:
     env["NEBI_REMOTE_URL"] = nebi_remote_url
 
 env["NEBI_STORAGE_WORKSPACES_DIR"] = "/var/lib/nebi/workspaces"
+
+# Tell jhub-app-proxy to activate an app's environment with pixi (it looks
+# the workspace up via `nebi workspace list`) instead of conda. Set for
+# every pod rather than only when a remote Nebi server is configured, so
+# apps can also run in the user's local Nebi workspaces.
+env["JHUB_APP_ENV_MANAGER"] = "pixi"
 
 # nebi's local-mode netguard only accepts loopback Origin headers by default.
 # Browsers send the hub's public origin on CORS-mode asset requests (the SPA
@@ -845,12 +852,6 @@ async def _nebi_pre_spawn_hook(spawner):
     NEBI_AUTH_TOKEN into the pod environment.
     Non-fatal: if any step fails, the pod still spawns without auto-auth.
     """
-    # Tell jhub-app-proxy to use pixi activation (instead of conda) for app pods.
-    # Set this first, before any early returns, because pixi activation is needed
-    # regardless of whether the token exchange succeeds — the nebi binary in the
-    # pod handles workspace pull and pixi env activation independently.
-    spawner.environment = {**spawner.environment, "JHUB_APP_ENV_MANAGER": "pixi"}
-
     auth_state = await spawner.user.get_auth_state()
     if not auth_state:
         log.warning("No auth_state for %s, skipping Nebi auto-auth", spawner.user.name)
@@ -889,86 +890,203 @@ async def _nebi_pre_spawn_hook(spawner):
         log.info("Nebi auto-auth succeeded for %s", spawner.user.name)
 
         # If a nebi workspace is selected (via jhub-apps environment selector),
-        # add an init container to pull it into an ephemeral volume.
-        # Each app pod gets its own emptyDir at /tmp/nebi-env so multiple apps
-        # don't overwrite each other's workspace files on the shared user PVC.
+        # pull it from the server into the pod's own directory.
         conda_env = getattr(spawner, "user_options", {}).get("conda_env", "")
         if conda_env:
             workspace_name = conda_env.rsplit("/", 1)[-1] if "/" in conda_env else conda_env
-            nebi_remote = get_chart_config("nebi-remote-url")
-            nebi_env_dir = "/tmp/nebi-env"
-            ws_dir = f"{nebi_env_dir}/workspace"
             log.info(
                 "Adding nebi-pull init container for workspace %s (user %s)",
                 workspace_name, spawner.user.name,
             )
-
-            # Add ephemeral volume for this pod's workspace files + nebi DB
-            spawner.volumes = list(spawner.volumes) + [{
-                "name": "nebi-env",
-                "emptyDir": {},
-            }]
-            # Mount in main container so nebi workspace list + pixi run can find it
-            spawner.volume_mounts = list(spawner.volume_mounts) + [{
-                "name": "nebi-env",
-                "mountPath": nebi_env_dir,
-            }]
-            # Tell nebi in the main container to use the ephemeral DB
-            spawner.environment = {
-                **spawner.environment,
-                "NEBI_DATA_DIR": nebi_env_dir,
-            }
-
-            nebi_pull_env = [
-                {"name": "HOME", "value": nebi_env_dir},
-                {"name": "NEBI_DATA_DIR", "value": nebi_env_dir},
-                {"name": "NEBI_AUTH_TOKEN", "value": nebi_jwt},
-                {"name": "NEBI_REMOTE_URL", "value": nebi_remote},
-            ]
-            nebi_pull_mounts = [
-                {"name": "nebi-bin", "mountPath": "/usr/local/bin/nebi", "subPath": "nebi"},
-                {"name": "nebi-env", "mountPath": nebi_env_dir},
-            ]
-            # When the org CA bundle is enabled, nebi-pull's own egress
-            # (`nebi pull` over HTTPS, `pixi install` from PyPI/conda) also goes
-            # through the inspecting proxy, so it needs the merged bundle too.
-            # _setup_trust_bundle ran first (see _pre_spawn_hook ordering), so
-            # the ca-merged volume exists and merge-ca-bundle precedes this in
-            # init-container order, leaving the merged file ready to mount.
-            if _trust_bundle_enabled:
-                nebi_pull_env += [
-                    {"name": "REQUESTS_CA_BUNDLE", "value": _MERGED_CA_PATH},
-                    {"name": "SSL_CERT_FILE", "value": _MERGED_CA_PATH},
-                    {"name": "NODE_EXTRA_CA_CERTS", "value": _MERGED_CA_PATH},
-                    {"name": "CURL_CA_BUNDLE", "value": _MERGED_CA_PATH},
-                    {"name": "GIT_SSL_CAINFO", "value": _MERGED_CA_PATH},
-                ]
-                nebi_pull_mounts += [
-                    {"name": "ca-merged", "mountPath": "/etc/ssl/certs-extra"},
-                ]
-
-            spawner.init_containers = list(spawner.init_containers) + [{
-                "name": "nebi-pull",
-                "image": spawner.image,
-                "workingDir": ws_dir,
-                "command": [
-                    "/bin/sh", "-c",
-                    # Pull workspace files into the ephemeral dir, then
-                    # pre-install the pixi environment so jhub-app-proxy's
-                    # `pixi run` doesn't hit the ready-check timeout.
-                    (
-                        f"mkdir -p {ws_dir} && "
-                        f"nebi pull {workspace_name} -o {ws_dir} --force && "
-                        f"pixi install --manifest-path {ws_dir}/pixi.toml && "
-                        f"chmod -R a+rw {nebi_env_dir}/nebi.db* || "
-                        f"echo 'WARNING: nebi pull or pixi install failed for {workspace_name}'"
-                    ),
-                ],
-                "env": nebi_pull_env,
-                "volumeMounts": nebi_pull_mounts,
-            }]
+            _add_workspace_build_container(
+                spawner,
+                name="nebi-pull",
+                fetch='nebi pull "$WORKSPACE_NAME" -o . --force',
+                env={
+                    "WORKSPACE_NAME": workspace_name,
+                    "NEBI_AUTH_TOKEN": nebi_jwt,
+                    "NEBI_REMOTE_URL": get_chart_config("nebi-remote-url"),
+                },
+            )
     except Exception:
         log.exception("Nebi auto-auth failed for %s (pod will still spawn)", spawner.user.name)
+
+
+# ---------------------------------------------------------------------------
+# An app's own copy of its workspace
+# ---------------------------------------------------------------------------
+# A jhub-apps app runs in the environment of the Nebi workspace picked for it.
+# The app pod never shares that environment, or a nebi database, with the
+# user's other pods: it gets the workspace's pixi.toml and pixi.lock into an
+# emptyDir of its own and builds the environment there. What crosses between
+# pods is the lockfile; nothing about the result depends on those pods sharing
+# a node, a volume that attaches to one node, or a SQLite file.
+
+_NEBI_ENV_DIR = "/tmp/nebi-env"
+_NEBI_ENV_WORKSPACE = f"{_NEBI_ENV_DIR}/workspace"
+
+
+def _add_workspace_build_container(spawner, name, fetch, env, mounts=()):
+    """Add an init container that fetches one workspace and builds its environment.
+
+    `fetch` is a shell command, run in the empty workspace directory, that
+    puts pixi.toml (and pixi.lock) there and registers the directory with
+    nebi. Anything chosen by the user reaches it through `env`, never as part
+    of the command text. The environment is installed here so jhub-app-proxy's
+    `pixi run` does not have to build it inside the app's ready-check window.
+
+    KubeSpawner runs `str.format` over every string of an init container to
+    expand `{username}` and friends, so neither `fetch` nor an `env` value may
+    contain a brace: an unknown field fails the whole spawn with a KeyError.
+
+    Not fatal: if any step fails the pod still starts, and jhub-app-proxy
+    reports that it ran the app without the environment.
+    """
+    _use_private_nebi_env_dir(spawner)
+
+    container_env = {"HOME": _NEBI_ENV_DIR, "NEBI_DATA_DIR": _NEBI_ENV_DIR, **env}
+    container_mounts = [
+        {"name": "nebi-bin", "mountPath": "/usr/local/bin/nebi", "subPath": "nebi"},
+        {"name": "nebi-env", "mountPath": _NEBI_ENV_DIR},
+        *mounts,
+    ]
+    trust_env, trust_mounts = _org_ca_for_init_container()
+    container_env.update(trust_env)
+    container_mounts += trust_mounts
+
+    spawner.init_containers = list(spawner.init_containers) + [{
+        "name": name,
+        "image": spawner.image,
+        "workingDir": _NEBI_ENV_WORKSPACE,
+        "command": ["/bin/sh", "-c", _workspace_build_script(fetch)],
+        "env": [{"name": key, "value": value} for key, value in container_env.items()],
+        "volumeMounts": container_mounts,
+    }]
+
+
+def _use_private_nebi_env_dir(spawner):
+    """Give the app pod its own emptyDir for the workspace and nebi database.
+
+    NEBI_DATA_DIR points every nebi process in the pod, jhub-app-proxy's
+    workspace lookup included, at the database in that directory.
+    """
+    spawner.volumes = list(spawner.volumes) + [{"name": "nebi-env", "emptyDir": {}}]
+    spawner.volume_mounts = list(spawner.volume_mounts) + [
+        {"name": "nebi-env", "mountPath": _NEBI_ENV_DIR},
+    ]
+    spawner.environment = {**spawner.environment, "NEBI_DATA_DIR": _NEBI_ENV_DIR}
+
+
+def _org_ca_for_init_container():
+    """Return the (env, volume mounts) an init container needs to trust the org CA.
+
+    Empty when the org CA bundle is not enabled. When it is, the container's
+    own egress (`nebi pull` over HTTPS, `pixi install` from PyPI/conda) goes
+    through the inspecting proxy too. _setup_trust_bundle ran first (see
+    _pre_spawn_hook ordering), so the ca-merged volume exists and
+    merge-ca-bundle precedes this in init-container order, leaving the merged
+    file ready to mount.
+    """
+    if not _trust_bundle_enabled:
+        return {}, []
+    env = {
+        "REQUESTS_CA_BUNDLE": _MERGED_CA_PATH,
+        "SSL_CERT_FILE": _MERGED_CA_PATH,
+        "NODE_EXTRA_CA_CERTS": _MERGED_CA_PATH,
+        "CURL_CA_BUNDLE": _MERGED_CA_PATH,
+        "GIT_SSL_CAINFO": _MERGED_CA_PATH,
+    }
+    return env, [{"name": "ca-merged", "mountPath": "/etc/ssl/certs-extra"}]
+
+
+def _workspace_build_script(fetch):
+    """The init container's shell script: fetch the workspace, then install it."""
+    return (
+        f"mkdir -p {_NEBI_ENV_WORKSPACE} && cd {_NEBI_ENV_WORKSPACE} && "
+        f"{fetch} && "
+        "pixi install && "
+        f"chmod -R a+rw {_NEBI_ENV_DIR}/nebi.db* || "
+        "echo \"WARNING: could not prepare the workspace environment for $WORKSPACE_NAME\""
+    )
+
+
+# With no Nebi server the environment selector offers the user's own
+# workspaces, each as the directory that holds its pixi.toml (see
+# 03-nebi-envs.py, which shares this switch).
+_local_nebi_workspaces = not get_chart_config("nebi-internal-url")
+
+# Where a user's workspaces can live: the home, and the workspace volume the
+# Nebi tile in JupyterLab creates them on.
+_LOCAL_WORKSPACE_ROOTS = ("/home/jovyan/", "/var/lib/nebi/workspaces/")
+
+
+def _local_workspace_dir(selection):
+    """Return `selection` if it is a directory path inside the user's own storage, else "".
+
+    Braces are refused too: the path travels in the init container's
+    environment, and KubeSpawner would expand them as a template.
+    """
+    path = posixpath.normpath(selection or "")
+    if path != selection or not path.startswith(_LOCAL_WORKSPACE_ROOTS):
+        return ""
+    if "{" in path or "}" in path:
+        return ""
+    return path
+
+
+# Copies the selected workspace's two files into the app's own directory and
+# registers the copy under the selection's last path segment, the name
+# jhub-app-proxy looks up. No braces: KubeSpawner runs str.format over it (see
+# _add_workspace_build_container).
+_COPY_LOCAL_WORKSPACE = (
+    'cp "$WORKSPACE_DIR/pixi.toml" . && '
+    'if [ -f "$WORKSPACE_DIR/pixi.lock" ]; then cp "$WORKSPACE_DIR/pixi.lock" .; fi && '
+    'pixi workspace name set "$WORKSPACE_NAME" && '
+    "nebi init"
+)
+
+
+def _add_local_workspace_container(spawner):
+    """Build the app's environment from the user's own workspace, if one is selected.
+
+    The selection is the workspace's directory. Only its pixi.toml and
+    pixi.lock are read, from volumes mounted read-only.
+    """
+    selection = getattr(spawner, "user_options", {}).get("conda_env", "")
+    if not selection:
+        return
+    workspace_dir = _local_workspace_dir(selection)
+    if not workspace_dir:
+        log.warning(
+            "local workspace %r for %s is not a directory in the user's storage, ignoring",
+            selection, spawner.user.name,
+        )
+        return
+
+    log.info(
+        "Adding nebi-local-workspace init container for %s (user %s)",
+        workspace_dir, spawner.user.name,
+    )
+    _add_workspace_build_container(
+        spawner,
+        name="nebi-local-workspace",
+        fetch=_COPY_LOCAL_WORKSPACE,
+        env={
+            "WORKSPACE_DIR": workspace_dir,
+            "WORKSPACE_NAME": posixpath.basename(workspace_dir),
+        },
+        mounts=_read_only_workspace_sources(spawner),
+    )
+
+
+def _read_only_workspace_sources(spawner):
+    """Mount the volumes a local workspace can live on, read-only, at their usual paths."""
+    sources = [{"name": "home", "mountPath": "/home/jovyan", "readOnly": True}]
+    if any(volume["name"] == "nebi-workspaces" for volume in spawner.volumes):
+        sources.append(
+            {"name": "nebi-workspaces", "mountPath": "/var/lib/nebi/workspaces", "readOnly": True}
+        )
+    return sources
 
 
 # ---------------------------------------------------------------------------
@@ -1363,6 +1481,16 @@ async def _pre_spawn_hook(spawner):
         spawner.volumes.append(workspaces_volume)
     if workspaces_volume_mount is not None:
         spawner.volume_mounts.append(workspaces_volume_mount)
+
+    # 2b. No Nebi server: an app builds its environment from the user's own
+    #     workspace (non-fatal). After the workspace PVC, which it may read.
+    if _local_nebi_workspaces:
+        try:
+            _add_local_workspace_container(spawner)
+        except Exception:
+            log.exception(
+                "pre-spawn: local workspace setup FAILED for %s (pod will still spawn)", username,
+            )
 
     # 3. Resolve groups from auth_state (stored by KeyCloakOAuthenticator)
     groups = _get_user_groups(auth_state)

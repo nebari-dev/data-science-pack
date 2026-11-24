@@ -199,6 +199,42 @@ jhub-apps offers a Nebi environment when deploying an app. Two things gate it:
   activate conda environments and silently fall back to the base environment, so an app
   launched into a Nebi environment comes up missing its packages.
 
+### Without a Nebi server
+
+When nebi-pack is not deployed, turn the server integration off:
+
+```yaml
+nebi:
+  remote:
+    enabled: false
+```
+
+The token exchange and the Nebi card are switched off, and the environment selector lists
+the user's own workspaces: the ones built in the Nebi tile inside JupyterLab, or registered
+from a terminal with `nebi init`. Each is offered as the directory that holds its
+`pixi.toml`. The user's side is in
+[Apps from your local Nebi environments](/apps-from-local-environments/).
+
+- **The list comes from the user's main JupyterLab.** The workspaces live on the user's
+  own volumes, which the hub cannot read, so the hub asks the running JupyterLab and saves
+  the answer under `/srv/jupyterhub/nebi-envs/` on its own volume, both when the app form
+  opens and when JupyterLab stops. While JupyterLab is stopped the selector offers that
+  saved list. Workspaces are expected to be created and changed only from the main
+  JupyterLab; a change made from anywhere else shows up once the main JupyterLab has run
+  again. A user who has never started JupyterLab has an empty list. Starting or
+  restarting an app does not need JupyterLab.
+- **An app builds its own copy of the environment.** At launch an init container copies
+  `pixi.toml` and `pixi.lock` out of that directory into the pod's own `emptyDir` and runs
+  `pixi install` there, the same way an app built from a Nebi server workspace does. The
+  app shares neither the installed environment nor the Nebi database with JupyterLab, so
+  nothing here depends on a user's pods sharing a node. A change to the workspace reaches
+  the app when the app is restarted.
+- **A Panel app's workspace needs `bokeh-root-cmd` as well as `panel`**, because jhub-apps
+  starts Panel through it.
+- **Restart the hub after changing this value.** It only changes the hub's config files,
+  which the hub reads at startup, and an upgrade that changes nothing else leaves the hub
+  pod running: `kubectl rollout restart deployment/hub`.
+
 ## Behind a TLS-inspecting proxy
 
 The init container that pre-pulls Nebi environments makes its own outbound HTTPS calls

@@ -2,7 +2,6 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { nebari } from '@nebari/starlight';
-import rehypeMermaid from 'rehype-mermaid';
 import remarkBaseLinks from './src/plugins/remark-base-links';
 
 // BASE and SITE are set by CI when deploying under a subpath
@@ -38,6 +37,7 @@ export default defineConfig({
             { label: 'Architecture', slug: 'architecture' },
             { label: 'Shared Storage', slug: 'shared-storage' },
             { label: 'Jupyter Gallery', slug: 'gallery' },
+            { label: 'Apps from your local Nebi environments', slug: 'apps-from-local-environments' },
           ],
         },
         {
@@ -65,9 +65,6 @@ export default defineConfig({
     }),
   ],
   markdown: {
-    // Turn Shiki off for mermaid so rehype-mermaid sees the raw graph source.
-    syntaxHighlight: { type: 'shiki', excludeLangs: ['mermaid'] },
     remarkPlugins: [[remarkBaseLinks, { base: process.env.BASE || '/' }]],
-    rehypePlugins: [[rehypeMermaid, { strategy: 'inline-svg' }]],
   },
 });
