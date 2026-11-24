@@ -67,13 +67,13 @@ jobs:
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
         with:
           path: ${{ steps.img.outputs.tar }}
-          key: singleuser-${{ steps.img.outputs.ref }}
+          key: singleuser-amd64-${{ steps.img.outputs.ref }}
 
       - name: Pull + save singleuser image (cache miss only)
         if: steps.img-cache.outputs.cache-hit != 'true'
         run: |
-          docker pull "${{ steps.img.outputs.ref }}"
-          docker save "${{ steps.img.outputs.ref }}" -o "${{ steps.img.outputs.tar }}"
+          docker pull --platform linux/amd64 "${{ steps.img.outputs.ref }}"
+          docker save --platform linux/amd64 "${{ steps.img.outputs.ref }}" -o "${{ steps.img.outputs.tar }}"
 
       - name: Collect e2e test node IDs into a JSON array
         id: collect
@@ -132,7 +132,7 @@ jobs:
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
         with:
           path: ${{ needs.prep.outputs.tar }}
-          key: singleuser-${{ needs.prep.outputs.ref }}
+          key: singleuser-amd64-${{ needs.prep.outputs.ref }}
           fail-on-cache-miss: true
 
       # Sanitise the pytest node id into a kind-cluster name: kind
